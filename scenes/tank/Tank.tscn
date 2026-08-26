@@ -12,6 +12,7 @@
 [ext_resource type="Script" path="res://scenes/tank/disguise_controller.gd" id="8_bx3sg"]
 [ext_resource type="Script" path="res://scenes/tank/collision_detector.gd" id="9_i6w10"]
 [ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="11_srjgo"]
+[ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_rsp0n"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_bfi3s"]
 size = Vector3(1.2, 0.6, 1.8)
@@ -86,6 +87,7 @@ script = ExtResource("7_srjgo")
 
 [node name="HealthComponent" type="Node" parent="." unique_id=1987941573]
 script = ExtResource("7_bx3sg")
+free_on_destroy = false
 
 [node name="DisguiseController" type="Node3D" parent="." unique_id=2059039948]
 script = ExtResource("8_bx3sg")
@@ -101,3 +103,8 @@ shape = SubResource("BoxShape3D_srjgo")
 
 [node name="TankAIController" type="Node" parent="." unique_id=929001885]
 script = ExtResource("11_srjgo")
+
+[node name="RespawnController" type="Node" parent="." unique_id=1029384756]
+script = ExtResource("12_rsp0n")
+
+[node name="RespawnTimer" type="Timer" parent="RespawnController" unique_id=1029384757]

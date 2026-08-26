@@ -1,0 +1,7 @@
+{
+  "move_speed": 6.0,
+  "acceleration": 12.0,
+  "turret_turn_speed": 1.0,
+  "projectile_launch_speed": 20.0,
+  "max_hits": 2
+}

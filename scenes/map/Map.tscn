@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" path="res://scenes/map/DisguiseSlot.tscn" id="1_ub3q0"]
 [ext_resource type="Script" path="res://scenes/map/disguise_slot.gd" id="2_nuen2"]
-[ext_resource type="Script" path="res://scenes/map/objective_zone.gd" id="3_nuen2"]
+[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="3_nuen2"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_nuen2"]
 size = Vector3(60, 0.5, 60)
@@ -20,9 +20,6 @@ size = Vector3(0.6, 0.6, 0.6)
 top_radius = 0.4
 bottom_radius = 0.4
 height = 0.8
-
-[sub_resource type="CylinderShape3D" id="CylinderShape3D_hgphw"]
-radius = 2.0
 
 [sub_resource type="BoxMesh" id="BoxMesh_nuen2"]
 size = Vector3(0.5, 0.5, 0.5)
@@ -166,6 +163,15 @@ bottom_radius = 2.9
 height = 1.5
 radial_segments = 4
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_hgphw"]
+size = Vector3(2, 2, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4yt6b"]
+albedo_color = Color(0.25, 0.28, 0.35, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_vyhe5"]
+size = Vector3(2, 2, 2)
+
 [node name="Map" type="Node3D" unique_id=53834246]
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=823185880]
@@ -196,27 +202,6 @@ collision_layer = 8
 collision_mask = 2
 script = ExtResource("2_nuen2")
 disguise_mesh = SubResource("CylinderMesh_4yt6b")
-
-[node name="ObjectiveZone" type="Area3D" parent="." unique_id=433107837]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.5, 0)
-collision_layer = 16
-collision_mask = 2
-script = ExtResource("3_nuen2")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="ObjectiveZone" unique_id=205055930]
-shape = SubResource("CylinderShape3D_hgphw")
-
-[node name="AmmoCrateSpawnPoint1" type="Node3D" parent="." unique_id=1067264340]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, 6)
-
-[node name="AmmoCrateSpawnPoint2" type="Node3D" parent="." unique_id=1241194374]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, 6)
-
-[node name="AmmoCrateSpawnPoint3" type="Node3D" parent="." unique_id=1236616583]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, -6)
-
-[node name="AmmoCrateSpawnPoint4" type="Node3D" parent="." unique_id=799774091]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, -6)
 
 [node name="DisguiseSlotCube" type="Area3D" parent="." unique_id=1157930578 instance=ExtResource("1_ub3q0")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.25, 5)
@@ -495,3 +480,17 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -29)
 
 [node name="DefenseSpawnPoint5" type="Node3D" parent="." unique_id=287209978]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 19)
+
+[node name="DestructibleObjective" type="StaticBody3D" parent="." unique_id=2039345402]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DestructibleObjective" unique_id=1597068673]
+shape = SubResource("BoxShape3D_hgphw")
+
+[node name="Mesh" type="MeshInstance3D" parent="DestructibleObjective" unique_id=601048293]
+material_override = SubResource("StandardMaterial3D_4yt6b")
+mesh = SubResource("BoxMesh_vyhe5")
+
+[node name="HealthComponent" type="Node" parent="DestructibleObjective" unique_id=614216465]
+script = ExtResource("3_nuen2")

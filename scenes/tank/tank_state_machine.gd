@@ -78,3 +78,14 @@ func _on_cooldown_timeout() -> void:
 
 func _on_reload_timeout() -> void:
 	_set_state(State.NORMAL)
+
+## Принудительный сброс в NORMAL при респауне (пост-ревью, см. respawn_controller.gd) —
+## глушит все таймеры состояний напрямую, минуя обычные переходы (танк мог умереть в любом
+## состоянии, например посреди RELOAD/DISGUISED). Если состояние было DISGUISED,
+## state_changed корректно долетает до DisguiseController._on_state_changed → визуал
+## маскировки снимается как обычно.
+func force_reset() -> void:
+	_disguise_timer.stop()
+	_cooldown_timer.stop()
+	_reload_timer.stop()
+	_set_state(State.NORMAL)

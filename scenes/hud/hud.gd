@@ -1,11 +1,16 @@
 extends CanvasLayer
-## HUD — минимальный HUD игрока (ТЗ §10): боезапас, статус танка с таймерами, таймер
-## раунда, прогресс objective, счёт команд, финальная стадия, экран результата. Подписка
+## HUD — минимальный HUD игрока (ТЗ §10): за какую команду игрок в этом раунде (пост-ревью),
+## боезапас, статус танка с таймерами, таймер раунда, прогресс objective, счёт команд,
+## финальная стадия, экран результата. Подписка
 ## на сигналы вместо поллинга — кроме отображения "сколько секунд осталось" у активных
 ## Timer-нод (нет сигнала на каждый тик).
+## RestartButton (пост-ревью) — появляется вместе с ResultLabel по round_ended, снимает
+## захват мыши (иначе по кнопке нечем кликнуть), по нажатию инвертирует MatchState.player_team
+## (autoload, см. team_spawner.gd) и рестартует сцену — команды меняются сторонами.
 
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
+@onready var _team_label: Label = $TeamLabel
 @onready var _ammo_label: Label = $AmmoLabel
 @onready var _state_label: Label = $StateLabel
 @onready var _round_timer_label: Label = $RoundTimerLabel
@@ -13,6 +18,7 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @onready var _score_label: Label = $ScoreLabel
 @onready var _final_stage_label: Label = $FinalStageLabel
 @onready var _result_label: Label = $ResultLabel
+@onready var _restart_button: Button = $RestartButton
 @onready var _crosshair: Control = $Crosshair
 
 var _fsm: Node
@@ -23,6 +29,12 @@ var _barrel: Node3D
 var _camera: Camera3D
 
 func _ready() -> void:
+	# MatchState.player_team, не tank.is_attacker(): дочерние _ready() (в т.ч. этот) отрабатывают
+	# РАНЬШЕ корневого Main._ready(), а TeamSpawner.spawn_team() (ставит tank.team) вызывается
+	# именно из Main._ready() — на момент этой строки tank.team ещё дефолтный, а не тот, что
+	# реально будет у игрока в этом раунде (грабля, поймана на смене сторон после рестарта).
+	_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
+
 	var tank: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
 	if tank != null:
 		_ammo = tank.get_node("AmmoComponent")
@@ -44,12 +56,14 @@ func _ready() -> void:
 		_score_manager.score_changed.connect(_on_score_changed)
 		_on_score_changed(_score_manager.attack_kills, _score_manager.defense_kills)
 
-	var objective: Node = get_tree().current_scene.get_node_or_null("Map/ObjectiveZone")
-	if objective != null:
-		objective.progress_changed.connect(_on_objective_progress)
-		_on_objective_progress(0.0, GameConfig.objective_hold_time_sec)
+	var objective_health: Node = get_tree().current_scene.get_node_or_null("Map/DestructibleObjective/HealthComponent")
+	if objective_health != null:
+		objective_health.damaged.connect(_on_objective_damaged)
+		_on_objective_damaged(0, GameConfig.objective_hits_required)
 
 	_final_stage_label.visible = false
+	_restart_button.visible = false
+	_restart_button.pressed.connect(_on_restart_pressed)
 
 func _process(_delta: float) -> void:
 	if _fsm != null:
@@ -84,8 +98,8 @@ func _update_round_timer_label() -> void:
 	var seconds: int = int(t) % 60
 	_round_timer_label.text = "Раунд: %02d:%02d" % [minutes, seconds]
 
-func _on_objective_progress(elapsed: float, required: float) -> void:
-	_objective_label.text = "Objective: %.1f/%.1f с" % [elapsed, required]
+func _on_objective_damaged(current_hits: int, max_hits: int) -> void:
+	_objective_label.text = "Objective: %d/%d попаданий" % [current_hits, max_hits]
 
 func _on_score_changed(attack_kills: int, defense_kills: int) -> void:
 	_score_label.text = "Атака %d : %d Оборона" % [attack_kills, defense_kills]
@@ -93,6 +107,12 @@ func _on_score_changed(attack_kills: int, defense_kills: int) -> void:
 func _on_round_ended(winner: String) -> void:
 	_result_label.text = "Победа атакующих!" if winner == "attack" else "Победа обороняющихся!"
 	_result_label.visible = true
+	_restart_button.visible = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE  # иначе кнопку нечем кликнуть — мышь захвачена CameraRig
+
+func _on_restart_pressed() -> void:
+	MatchState.player_team = 1 - MatchState.player_team  # команды меняются сторонами каждый новый раунд
+	get_tree().reload_current_scene()
 
 func _on_ammo_changed(current: int, max_ammo: int) -> void:
 	_ammo_label.text = "Боезапас: %d/%d" % [current, max_ammo]

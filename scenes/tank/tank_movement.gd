@@ -5,6 +5,7 @@ extends Node
 ## эту ноду отдельным путём движения.
 
 @export var move_speed: float = 6.0
+@export var acceleration: float = 12.0  # м/с² — разгон/торможение линейной скорости (не мгновенное применение)
 @export var turn_speed: float = 2.0  # рад/сек
 @export var is_player_controlled: bool = true
 
@@ -58,6 +59,9 @@ func _physics_process(delta: float) -> void:
 	else:
 		_body.velocity.y -= _gravity * delta
 
-	_body.velocity.x = forward.x * move_input * move_speed
-	_body.velocity.z = forward.z * move_input * move_speed
+	var target_horizontal: Vector3 = forward * move_input * move_speed
+	var current_horizontal := Vector3(_body.velocity.x, 0.0, _body.velocity.z)
+	var new_horizontal: Vector3 = current_horizontal.move_toward(target_horizontal, acceleration * delta)
+	_body.velocity.x = new_horizontal.x
+	_body.velocity.z = new_horizontal.z
 	_body.move_and_slide()

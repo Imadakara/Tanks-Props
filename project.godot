@@ -74,3 +74,4 @@ toggle_disguise={
 
 [autoload]
 GameConfig="*res://autoload/game_config.gd"
+MatchState="*res://autoload/match_state.gd"
