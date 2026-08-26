@@ -7,10 +7,16 @@ class_name TurretController
 ## обзора камерой (в пределах эпсилона) маскировку не снимает.
 ## is_player_controlled=true берёт target_yaw из CameraRig-сиблинга; для ботов
 ## (Этап 8) — false, TankAIController пишет target_yaw напрямую тем же полем.
+## Довод — rotate_toward (линейная угловая скорость, turn_speed = реальные рад/сек), не
+## lerp_angle: тот давал нелинейное ощущение (быстрый рывок на большом расхождении, потом
+## бесконечно замедляющийся "дотяг" на подходе — доля ОТ ОСТАВШЕГОСЯ угла в кадр, а не
+## постоянная скорость) — особенно било по бою у ботов (см. bot_sentry_controller.gd):
+## доворот на дальнюю цель ощущался быстрым, а финальная точная наводка — неестественно
+## медленной. rotate_toward идёт с постоянной скоростью и всё равно не мгновенна.
 
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
-@export var turn_speed: float = 1.0  # рад/сек — меньше, чем угловая скорость камеры
+@export var turn_speed: float = 1.0  # рад/сек — постоянная угловая скорость довода
 @export var freeze_epsilon_deg: float = 2.0
 @export var is_player_controlled: bool = true
 @export var target_yaw: float = 0.0
@@ -29,4 +35,4 @@ func _physics_process(delta: float) -> void:
 		else:
 			return  # башня заморожена, мелкий шум камеры не в счёт
 
-	rotation.y = lerp_angle(rotation.y, target_yaw, turn_speed * delta)
+	rotation.y = rotate_toward(rotation.y, target_yaw, turn_speed * delta)

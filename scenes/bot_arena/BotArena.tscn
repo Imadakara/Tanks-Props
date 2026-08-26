@@ -1,6 +1,7 @@
 [gd_scene format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_b63ln"]
+[ext_resource type="Script" path="res://scenes/bot_arena/bot_arena.gd" id="1_idf45"]
 [ext_resource type="Script" path="res://scenes/tank/tank.gd" id="2_7eip8"]
 [ext_resource type="Script" path="res://scenes/bot_arena/bot_sentry_controller.gd" id="3_idf45"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
@@ -24,6 +25,7 @@ albedo_color = Color(0.55, 0.55, 0.58, 1)
 size = Vector3(5.4, 2.2, 0.5)
 
 [node name="BotArena" type="Node3D" unique_id=1670398727]
+script = ExtResource("1_idf45")
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=1818898556]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
@@ -67,4 +69,4 @@ team = 1
 [node name="BotSentryController" type="Node" parent="BotTank" unique_id=1034079527]
 script = ExtResource("3_idf45")
 
-[node name="HUD" parent="." instance=ExtResource("4_hud")]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1621853834 instance=ExtResource("4_hud")]

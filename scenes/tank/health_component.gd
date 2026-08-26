@@ -23,10 +23,17 @@ signal destroyed(killer: Node)
 ## себя RespawnController: он подписан на destroyed и решает, что делать с телом сам, поэтому
 ## здесь освобождать узел нельзя (пост-ревью).
 @export var free_on_destroy: bool = true
+## true — попадания полностью игнорируются (ни damaged, ни destroyed, current_hits не растёт).
+## Используется точечно на конкретных инстансах (см. scenes/bot_arena/bot_arena.gd — игрок
+## неубиваем на этой тестовой сцене, чтобы respawn/смерть не мешали обкатывать ИИ бота),
+## не общий баланс — поэтому не в GameConfig, а прямое свойство на конкретном танке.
+@export var invincible: bool = false
 var current_hits: int = 0
 var is_alive: bool = true
 
 func take_hit(killer: Node = null) -> void:
+	if invincible:
+		return
 	if not is_alive:
 		return
 	if attackers_only and (killer == null or not killer.has_method("is_attacker") or not killer.is_attacker()):

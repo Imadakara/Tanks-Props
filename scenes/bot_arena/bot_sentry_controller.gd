@@ -7,11 +7,10 @@ extends Node
 ##
 ## Сектор обзора fov_min_deg..fov_max_deg (от направления корпуса при спавне) — ОДНО общее
 ## понятие для двух вещей: границы качания башни при сканировании И зона, в которой цель
-## вообще может быть замечена/удержана. Специально широкий (шире, чем было — игрок от 3-го
-## лица видит куда больше, чем строго вперёд по корпусу, вот и бот теперь тоже) — раньше
-## обзор был двойной: широкие границы качания + узкий 50°-конус вокруг МГНОВЕННОГО направления
-## башни поверх них (луч должен был буквально попасть на цель) — вот этот узкий конус убран,
-## сектор один на обе задачи.
+## вообще может быть замечена/удержана. Было ±120°=240° (бот "видел" почти периферийным
+## зрением в любую секунду, даже глядя совсем в другую сторону) — сузили до ±55°=110°, но
+## тогда цель ровно сбоку (~90° от корпуса, "параллельно") выпадала из сектора совсем.
+## ±100°=200° — компромисс: с запасом покрывает боковую цель, но не полный периметр.
 ##
 ## SEARCH — сканирование сектора туда-сюда, имитируя вращение камеры в поиске цели. Как
 ## только цель попадает в сектор (по азимуту от корпуса, не от текущего угла башни — сектор
@@ -27,16 +26,57 @@ extends Node
 ## Реакция на обстрел: HealthComponent.damaged() (см. health_component.gd) теперь несёт killer —
 ## при попадании бот разворачивает обзор (башню) в сторону, откуда прилетело, независимо от
 ## того, видна ли цель прямо сейчас; если после разворота она уже в секторе — сразу TRACK.
+##
+## Уровни сложности (difficulty) — все числовые @export ниже это тюнинг MEDIUM (тот самый
+## "текущий бот"), EASY/HARD — пресеты в _apply_difficulty_preset(), применяются поверх этих
+## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
+## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
 enum State { SEARCH, TRACK }
+enum Difficulty { EASY, MEDIUM, HARD }
+
+@export var difficulty: Difficulty = Difficulty.MEDIUM
 
 @export var vision_range: float = 18.0
 @export var fire_range: float = 14.0
 @export var fire_aim_tolerance_deg: float = 5.0
 @export var scan_speed_deg_per_sec: float = 25.0
-@export var fov_min_deg: float = -120.0  # относительно исходного направления корпуса при спавне
-@export var fov_max_deg: float = 120.0   # 240° суммарно — шире, чем раньше (было 200 качание / 50 обнаружение)
+@export var fov_min_deg: float = -100.0  # относительно исходного направления корпуса при спавне
+@export var fov_max_deg: float = 100.0   # 200° суммарно
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
+@export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd)
+
+## Дебажная отрисовка сектора обзора (ImmediateMesh, полупрозрачный веер + текущий "взгляд")
+## поверх земли под ботом — граница fov_min_deg..fov_max_deg на радиус vision_range, зелёный
+## в SEARCH, красный в TRACK, жёлтая линия — куда сейчас реально смотрит башня/_look_yaw.
+@export var show_fov_debug: bool = true
+
+## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
+## Разница по трём осям: осведомлённость (сектор/дальность/скорость сканирования), реакция
+## (think_interval — как часто бот вообще проверяет "вижу/не вижу"), меткость (допуск наводки
+## + скорость доворота башни).
+const _DIFFICULTY_PRESETS := {
+	Difficulty.EASY: {
+		"vision_range": 12.0,
+		"fire_range": 9.0,
+		"fire_aim_tolerance_deg": 9.0,
+		"scan_speed_deg_per_sec": 15.0,
+		"fov_min_deg": -70.0,
+		"fov_max_deg": 70.0,
+		"think_interval_sec": 0.25,
+		"turret_turn_speed": 0.8,
+	},
+	Difficulty.HARD: {
+		"vision_range": 24.0,
+		"fire_range": 18.0,
+		"fire_aim_tolerance_deg": 3.0,
+		"scan_speed_deg_per_sec": 35.0,
+		"fov_min_deg": -130.0,
+		"fov_max_deg": 130.0,
+		"think_interval_sec": 0.05,
+		"turret_turn_speed": 2.2,
+	},
+}
 
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
@@ -51,8 +91,11 @@ var _look_yaw: float = 0.0  # мировой угол обзора — куда 
 var _scan_dir: float = 1.0  # +1 сканирует вправо, -1 влево
 var _current_target: Node = null
 var _think_timer: float = 0.0
+var _fov_debug_mesh: MeshInstance3D
 
 func _ready() -> void:
+	_apply_difficulty_preset()
+
 	# Тот же трюк, что у TankAIController._initialize() — без этого бот читал бы Input
 	# игрока напрямую (is_player_controlled по умолчанию true у всех этих компонентов).
 	_movement.is_player_controlled = false
@@ -60,6 +103,7 @@ func _ready() -> void:
 	_barrel.is_player_controlled = false
 	_weapon.is_player_controlled = false
 	_disguise.is_player_controlled = false
+	_turret.turn_speed = turret_turn_speed
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
 
@@ -73,6 +117,25 @@ func _ready() -> void:
 	camera_rig.is_active = false
 	var camera: Camera3D = camera_rig.get_node("Camera3D")
 	camera.current = false
+
+	if show_fov_debug:
+		_setup_fov_debug_draw()
+
+## MEDIUM ничего не меняет (числа выше УЖЕ тюнинг medium). EASY/HARD перезаписывают поля
+## значениями из _DIFFICULTY_PRESETS — правки конкретных @export-полей в инспекторе этого
+## инстанса для EASY/HARD смысла не имеют, они всё равно будут перетёрты отсюда при старте.
+func _apply_difficulty_preset() -> void:
+	if not _DIFFICULTY_PRESETS.has(difficulty):
+		return
+	var preset: Dictionary = _DIFFICULTY_PRESETS[difficulty]
+	vision_range = preset["vision_range"]
+	fire_range = preset["fire_range"]
+	fire_aim_tolerance_deg = preset["fire_aim_tolerance_deg"]
+	scan_speed_deg_per_sec = preset["scan_speed_deg_per_sec"]
+	fov_min_deg = preset["fov_min_deg"]
+	fov_max_deg = preset["fov_max_deg"]
+	think_interval_sec = preset["think_interval_sec"]
+	turret_turn_speed = preset["turret_turn_speed"]
 
 func _physics_process(delta: float) -> void:
 	_movement.ai_move_input = 0.0
@@ -88,6 +151,9 @@ func _physics_process(delta: float) -> void:
 	else:
 		_scan(delta)
 		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+
+	if show_fov_debug:
+		_update_fov_debug_draw()
 
 func _think() -> void:
 	if state == State.TRACK:
@@ -178,3 +244,73 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
 	if state == State.SEARCH and _can_see(killer):
 		_enter_track(killer)
+
+## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
+## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
+## Node, у Node3D-детей под ним не было бы осмысленной мировой трансформации) — так веер сам
+## наследует позицию/поворот корпуса, координаты внутри считаем в ЛОКАЛЬНОМ пространстве бота.
+func _setup_fov_debug_draw() -> void:
+	_fov_debug_mesh = MeshInstance3D.new()
+	_fov_debug_mesh.name = "FovDebugMesh"
+	_fov_debug_mesh.mesh = ImmediateMesh.new()
+	_fov_debug_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.vertex_color_use_as_albedo = true
+	_fov_debug_mesh.material_override = mat
+	# call_deferred: _ready() всей ветки Tank-инстанса (в т.ч. _body) ещё выполняется в момент,
+	# когда доходит очередь до этого (последнего) сиблинга — add_child() в это окно падает
+	# с "Parent node is busy setting up children" (тот же класс проблемы, что и в main.gd).
+	_body.add_child.call_deferred(_fov_debug_mesh)
+
+## Точка на дуге сектора в ЛОКАЛЬНЫХ координатах бота: local_deg=0 — прямо вперёд по корпусу
+## (локальный -Z, та же система отсчёта, что и fov_min_deg/fov_max_deg/_can_see()).
+func _local_fov_point(local_deg: float, radius: float, height: float) -> Vector3:
+	var rad: float = deg_to_rad(local_deg)
+	return Vector3(-sin(rad) * radius, height, -cos(rad) * radius)
+
+func _update_fov_debug_draw() -> void:
+	var mesh: ImmediateMesh = _fov_debug_mesh.mesh
+	mesh.clear_surfaces()
+
+	const SEGMENTS := 24
+	const HEIGHT := 0.55  # чуть выше корпуса — видно поверх HullMesh, не тонет в земле
+	var radius: float = vision_range
+	var fill_color: Color = Color(1.0, 0.15, 0.1, 0.22) if state == State.TRACK else Color(0.15, 0.9, 0.2, 0.16)
+	var center := Vector3(0.0, HEIGHT, 0.0)
+
+	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	mesh.surface_set_color(fill_color)
+	var prev_point: Vector3 = _local_fov_point(fov_min_deg, radius, HEIGHT)
+	for i in range(1, SEGMENTS + 1):
+		var t: float = float(i) / float(SEGMENTS)
+		var deg: float = lerp(fov_min_deg, fov_max_deg, t)
+		var cur_point: Vector3 = _local_fov_point(deg, radius, HEIGHT)
+		mesh.surface_add_vertex(center)
+		mesh.surface_add_vertex(prev_point)
+		mesh.surface_add_vertex(cur_point)
+		prev_point = cur_point
+	mesh.surface_end()
+
+	# Контур сектора (боковые радиусы + дуга) — ярче заливки, чтобы границы читались чётко.
+	var outline_color := Color(fill_color.r, fill_color.g, fill_color.b, 0.9)
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	mesh.surface_set_color(outline_color)
+	mesh.surface_add_vertex(center)
+	for i in range(SEGMENTS + 1):
+		var t2: float = float(i) / float(SEGMENTS)
+		var deg2: float = lerp(fov_min_deg, fov_max_deg, t2)
+		mesh.surface_add_vertex(_local_fov_point(deg2, radius, HEIGHT))
+	mesh.surface_add_vertex(center)
+	mesh.surface_end()
+
+	# Текущее направление обзора/башни (_look_yaw) — куда бот реально смотрит прямо сейчас.
+	var local_look_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_set_color(Color(1.0, 1.0, 0.2, 0.95))
+	mesh.surface_add_vertex(center)
+	mesh.surface_add_vertex(_local_fov_point(local_look_deg, radius, HEIGHT))
+	mesh.surface_end()
