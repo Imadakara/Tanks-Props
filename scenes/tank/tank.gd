@@ -31,7 +31,7 @@ func clear_damage_paint() -> void:
 	if turret_mesh != null:
 		turret_mesh.material_override = null
 
-func _on_damaged(current_hits: int, max_hits: int) -> void:
+func _on_damaged(current_hits: int, max_hits: int, _killer: Node) -> void:
 	if current_hits >= max_hits:
 		return  # последний удар — танк сейчас уничтожится, красить незачем
 	if _damaged_material == null:

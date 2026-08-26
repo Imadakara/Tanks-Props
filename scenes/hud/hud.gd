@@ -98,7 +98,7 @@ func _update_round_timer_label() -> void:
 	var seconds: int = int(t) % 60
 	_round_timer_label.text = "Раунд: %02d:%02d" % [minutes, seconds]
 
-func _on_objective_damaged(current_hits: int, max_hits: int) -> void:
+func _on_objective_damaged(current_hits: int, max_hits: int, _killer: Node = null) -> void:
 	_objective_label.text = "Objective: %d/%d попаданий" % [current_hits, max_hits]
 
 func _on_score_changed(attack_kills: int, defense_kills: int) -> void:

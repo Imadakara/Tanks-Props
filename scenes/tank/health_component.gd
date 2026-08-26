@@ -5,7 +5,12 @@ extends Node
 ## (config/*_tank_config.json), DestructibleObjective — из GameConfig.objective_hits_required
 ## (оба выставляются извне, см. team_spawner.gd/match_manager.gd).
 
-signal damaged(current_hits: int, max_hits: int)
+## killer добавлен в damaged (не только в destroyed) — нужен на КАЖДОМ попадании, не только
+## смертельном, чтобы бот мог развернуться в сторону выстрела (см. bot_sentry_controller.gd).
+## ВАЖНО: Godot требует у подписчика ровно столько параметров, сколько эмитит сигнал (лишний
+## аргумент НЕ отбрасывается молча — рантайм-ошибка) — все существующие подписчики (tank.gd)
+## обновлены под новую сигнатуру.
+signal damaged(current_hits: int, max_hits: int, killer: Node)
 signal destroyed(killer: Node)
 
 @export var max_hits: int = 1
@@ -27,7 +32,7 @@ func take_hit(killer: Node = null) -> void:
 	if attackers_only and (killer == null or not killer.has_method("is_attacker") or not killer.is_attacker()):
 		return  # снаряд обороны просто гасится о цель, урона нет — без сигнала damaged
 	current_hits += 1
-	damaged.emit(current_hits, max_hits)
+	damaged.emit(current_hits, max_hits, killer)
 	if current_hits >= max_hits:
 		is_alive = false
 		destroyed.emit(killer)
