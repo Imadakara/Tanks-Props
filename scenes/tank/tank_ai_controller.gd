@@ -15,6 +15,7 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 const DisguiseSlotScript := preload("res://scenes/map/disguise_slot.gd")
 
 @export var enabled: bool = false
+@export var patrol_enabled: bool = true  # false — бот стоит на месте после спавна (Observe/Attack по-прежнему активны)
 @export var vision_range: float = 15.0
 @export var vision_angle_deg: float = 60.0
 @export var fire_range: float = 12.0
@@ -26,6 +27,7 @@ const DisguiseSlotScript := preload("res://scenes/map/disguise_slot.gd")
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
+@onready var _barrel: Node3D = get_parent().get_node("Turret/Barrel")
 @onready var _weapon: Node = get_parent().get_node("WeaponController")
 @onready var _disguise: Node = get_parent().get_node("DisguiseController")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
@@ -45,6 +47,7 @@ func _initialize() -> void:
 	_initialized = true
 	_movement.is_player_controlled = false
 	_turret.is_player_controlled = false
+	_barrel.is_player_controlled = false
 	_weapon.is_player_controlled = false
 	_disguise.is_player_controlled = false
 	_collect_patrol_points()
@@ -56,7 +59,9 @@ func _collect_patrol_points() -> void:
 	if map == null:
 		return
 	for child in map.get_children():
-		if child is Area3D and (child.get_script() == DisguiseSlotScript or child.has_signal("captured")):
+		var is_disguise_or_objective: bool = child is Area3D and (child.get_script() == DisguiseSlotScript or child.has_signal("captured"))
+		var is_patrol_waypoint: bool = String(child.name).begins_with("PatrolWaypoint")
+		if is_disguise_or_objective or is_patrol_waypoint:
 			_patrol_points.append(child)
 	_patrol_points.shuffle()
 
@@ -83,14 +88,17 @@ func _physics_process(delta: float) -> void:
 		_movement.ai_move_input = 0.0
 		_movement.ai_turn_input = 0.0
 		_aim_and_fire(_current_target)
-	else:
+	elif patrol_enabled:
 		_drive_toward(_target_position)
+	else:
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
 
 func _think() -> void:
 	if _state_machine.state != TankStateMachineScript.State.NORMAL:
 		return
 	_current_target = _scan_for_target()
-	if _current_target == null:
+	if _current_target == null and patrol_enabled:
 		_advance_patrol_if_needed()
 
 func _scan_for_target() -> Node:

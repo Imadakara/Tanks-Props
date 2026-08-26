@@ -7,6 +7,9 @@
 [sub_resource type="BoxShape3D" id="BoxShape3D_nuen2"]
 size = Vector3(60, 0.5, 60)
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_hgphw"]
+albedo_color = Color(0.15, 0.55, 0.15, 1)
+
 [sub_resource type="BoxMesh" id="BoxMesh_4yt6b"]
 size = Vector3(60, 0.5, 60)
 
@@ -91,6 +94,78 @@ size = Vector3(0.5, 2, 3)
 [sub_resource type="BoxMesh" id="BoxMesh_xbg8n"]
 size = Vector3(0.5, 2, 3)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_yajg5"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vyhe5"]
+albedo_color = Color(0.45, 0.28, 0.15, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_qfku7"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_48h8m"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_1covb"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ujv8u"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_u1hfc"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_om3rv"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_1g8o6"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_irtkn"]
+albedo_color = Color(0.65, 0.12, 0.1, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_t8pk8"]
+top_radius = 0.02
+bottom_radius = 2.9
+height = 1.5
+radial_segments = 4
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_j31rn"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jyou5"]
+albedo_color = Color(0.45, 0.28, 0.15, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_wpeqk"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_xbg8n"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_332yc"]
+size = Vector3(4, 2.5, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_mqcpj"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_gk87y"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_b4tp8"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_bwaei"]
+size = Vector3(0.2, 2.5, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2timc"]
+albedo_color = Color(0.65, 0.12, 0.1, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_xcekw"]
+top_radius = 0.02
+bottom_radius = 2.9
+height = 1.5
+radial_segments = 4
+
 [node name="Map" type="Node3D" unique_id=53834246]
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=823185880]
@@ -101,6 +176,7 @@ collision_mask = 0
 shape = SubResource("BoxShape3D_nuen2")
 
 [node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=336479267]
+material_override = SubResource("StandardMaterial3D_hgphw")
 mesh = SubResource("BoxMesh_4yt6b")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=856393741]
@@ -141,36 +217,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, -6)
 
 [node name="AmmoCrateSpawnPoint4" type="Node3D" parent="." unique_id=799774091]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, -6)
-
-[node name="AttackSpawnPoint1" type="Node3D" parent="." unique_id=669272128]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -15)
-
-[node name="AttackSpawnPoint2" type="Node3D" parent="." unique_id=527256901]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -15)
-
-[node name="AttackSpawnPoint3" type="Node3D" parent="." unique_id=1294511796]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -7)
-
-[node name="AttackSpawnPoint4" type="Node3D" parent="." unique_id=1279986234]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -23, 0, -15)
-
-[node name="AttackSpawnPoint5" type="Node3D" parent="." unique_id=2087521299]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -23)
-
-[node name="DefenseSpawnPoint1" type="Node3D" parent="." unique_id=1497054824]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 15)
-
-[node name="DefenseSpawnPoint2" type="Node3D" parent="." unique_id=818830520]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, 15)
-
-[node name="DefenseSpawnPoint3" type="Node3D" parent="." unique_id=1730864208]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 7)
-
-[node name="DefenseSpawnPoint4" type="Node3D" parent="." unique_id=404992970]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 0, 15)
-
-[node name="DefenseSpawnPoint5" type="Node3D" parent="." unique_id=1767906060]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 23)
 
 [node name="DisguiseSlotCube" type="Area3D" parent="." unique_id=1157930578 instance=ExtResource("1_ub3q0")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.25, 5)
@@ -291,3 +337,161 @@ shape = SubResource("BoxShape3D_wpeqk")
 
 [node name="Mesh" type="MeshInstance3D" parent="Bookshelf" unique_id=1842006408]
 mesh = SubResource("BoxMesh_xbg8n")
+
+[node name="House1" type="Node3D" parent="." unique_id=501791204]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0, -8)
+
+[node name="WallNorth" type="StaticBody3D" parent="House1" unique_id=1086100032]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, -2)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House1/WallNorth" unique_id=450721802]
+shape = SubResource("BoxShape3D_yajg5")
+
+[node name="Mesh" type="MeshInstance3D" parent="House1/WallNorth" unique_id=1619493181]
+material_override = SubResource("StandardMaterial3D_vyhe5")
+mesh = SubResource("BoxMesh_qfku7")
+
+[node name="WallSouth" type="StaticBody3D" parent="House1" unique_id=851239060]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 2)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House1/WallSouth" unique_id=1224354744]
+shape = SubResource("BoxShape3D_48h8m")
+
+[node name="Mesh" type="MeshInstance3D" parent="House1/WallSouth" unique_id=1359890140]
+material_override = SubResource("StandardMaterial3D_vyhe5")
+mesh = SubResource("BoxMesh_1covb")
+
+[node name="WallEast" type="StaticBody3D" parent="House1" unique_id=671401075]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House1/WallEast" unique_id=1994488055]
+shape = SubResource("BoxShape3D_ujv8u")
+
+[node name="Mesh" type="MeshInstance3D" parent="House1/WallEast" unique_id=299625839]
+material_override = SubResource("StandardMaterial3D_vyhe5")
+mesh = SubResource("BoxMesh_u1hfc")
+
+[node name="WallWest" type="StaticBody3D" parent="House1" unique_id=801791673]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House1/WallWest" unique_id=1889999637]
+shape = SubResource("BoxShape3D_om3rv")
+
+[node name="Mesh" type="MeshInstance3D" parent="House1/WallWest" unique_id=1356169286]
+material_override = SubResource("StandardMaterial3D_vyhe5")
+mesh = SubResource("BoxMesh_1g8o6")
+
+[node name="Roof" type="MeshInstance3D" parent="House1" unique_id=192617113]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0, 1, 0, -0.70710677, 0, 0.70710677, 0, 3.25, 0)
+material_override = SubResource("StandardMaterial3D_irtkn")
+mesh = SubResource("CylinderMesh_t8pk8")
+
+[node name="House2" type="Node3D" parent="." unique_id=1594257978]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0, 8)
+
+[node name="WallNorth" type="StaticBody3D" parent="House2" unique_id=1608846431]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, -2)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House2/WallNorth" unique_id=1872557562]
+shape = SubResource("BoxShape3D_j31rn")
+
+[node name="Mesh" type="MeshInstance3D" parent="House2/WallNorth" unique_id=2097849158]
+material_override = SubResource("StandardMaterial3D_jyou5")
+mesh = SubResource("BoxMesh_wpeqk")
+
+[node name="WallSouth" type="StaticBody3D" parent="House2" unique_id=1291330314]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 2)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House2/WallSouth" unique_id=1563962985]
+shape = SubResource("BoxShape3D_xbg8n")
+
+[node name="Mesh" type="MeshInstance3D" parent="House2/WallSouth" unique_id=1942614541]
+material_override = SubResource("StandardMaterial3D_jyou5")
+mesh = SubResource("BoxMesh_332yc")
+
+[node name="WallEast" type="StaticBody3D" parent="House2" unique_id=196879250]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House2/WallEast" unique_id=996017103]
+shape = SubResource("BoxShape3D_mqcpj")
+
+[node name="Mesh" type="MeshInstance3D" parent="House2/WallEast" unique_id=699051609]
+material_override = SubResource("StandardMaterial3D_jyou5")
+mesh = SubResource("BoxMesh_gk87y")
+
+[node name="WallWest" type="StaticBody3D" parent="House2" unique_id=1335272841]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="House2/WallWest" unique_id=500658586]
+shape = SubResource("BoxShape3D_b4tp8")
+
+[node name="Mesh" type="MeshInstance3D" parent="House2/WallWest" unique_id=888572076]
+material_override = SubResource("StandardMaterial3D_jyou5")
+mesh = SubResource("BoxMesh_bwaei")
+
+[node name="Roof" type="MeshInstance3D" parent="House2" unique_id=544354930]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0, 1, 0, -0.70710677, 0, 0.70710677, 0, 3.25, 0)
+material_override = SubResource("StandardMaterial3D_2timc")
+mesh = SubResource("CylinderMesh_xcekw")
+
+[node name="PatrolWaypoint1" type="Node3D" parent="." unique_id=780821812]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0, -8)
+
+[node name="PatrolWaypoint2" type="Node3D" parent="." unique_id=447607989]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0, 8)
+
+[node name="PatrolWaypoint3" type="Node3D" parent="." unique_id=1365019442]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 0)
+
+[node name="PatrolWaypoint4" type="Node3D" parent="." unique_id=884182295]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 0)
+
+[node name="PatrolWaypoint5" type="Node3D" parent="." unique_id=2116346029]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 15)
+
+[node name="PatrolWaypoint6" type="Node3D" parent="." unique_id=1178180584]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -15)
+
+[node name="PatrolWaypoint7" type="Node3D" parent="." unique_id=458021771]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 6)
+
+[node name="PatrolWaypoint8" type="Node3D" parent="." unique_id=1658018056]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -6)
+
+[node name="AttackSpawnPoint1" type="Node3D" parent="." unique_id=886950207]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -24)
+
+[node name="DefenseSpawnPoint1" type="Node3D" parent="." unique_id=1860610210]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 24)
+
+[node name="AttackSpawnPoint2" type="Node3D" parent="." unique_id=2021233469]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0, -24)
+
+[node name="DefenseSpawnPoint2" type="Node3D" parent="." unique_id=1282709286]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 0, 24)
+
+[node name="AttackSpawnPoint3" type="Node3D" parent="." unique_id=1210046128]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -19)
+
+[node name="DefenseSpawnPoint3" type="Node3D" parent="." unique_id=132548644]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 29)
+
+[node name="AttackSpawnPoint4" type="Node3D" parent="." unique_id=1201019625]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29, 0, -24)
+
+[node name="DefenseSpawnPoint4" type="Node3D" parent="." unique_id=1468019150]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0, 24)
+
+[node name="AttackSpawnPoint5" type="Node3D" parent="." unique_id=929747470]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -29)
+
+[node name="DefenseSpawnPoint5" type="Node3D" parent="." unique_id=287209978]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 19)

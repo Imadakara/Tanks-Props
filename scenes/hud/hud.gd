@@ -13,11 +13,14 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @onready var _score_label: Label = $ScoreLabel
 @onready var _final_stage_label: Label = $FinalStageLabel
 @onready var _result_label: Label = $ResultLabel
+@onready var _crosshair: Control = $Crosshair
 
 var _fsm: Node
 var _ammo: Node
 var _match_manager: Node
 var _score_manager: Node
+var _barrel: Node3D
+var _camera: Camera3D
 
 func _ready() -> void:
 	var tank: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
@@ -28,6 +31,8 @@ func _ready() -> void:
 		_fsm.state_changed.connect(_on_state_changed)
 		_on_ammo_changed(_ammo.current_ammo, _ammo.max_ammo)
 		_update_state_label()
+		_barrel = tank.get_node("Turret/Barrel")
+		_camera = tank.get_node("CameraRig/Camera3D")
 
 	_match_manager = get_tree().current_scene.get_node_or_null("MatchManager")
 	if _match_manager != null:
@@ -53,6 +58,18 @@ func _process(_delta: float) -> void:
 		_update_round_timer_label()
 		if _match_manager._final_stage_active:
 			_update_final_stage_label()
+	_update_crosshair()
+
+func _update_crosshair() -> void:
+	if _barrel == null or _camera == null:
+		return
+	var aim_point: Vector3 = _barrel.global_position + (-_barrel.global_transform.basis.z) * 20.0
+	if _camera.is_position_behind(aim_point):
+		_crosshair.visible = false
+		return
+	_crosshair.visible = true
+	var screen_pos: Vector2 = _camera.unproject_position(aim_point)
+	_crosshair.position = screen_pos - _crosshair.size * 0.5
 
 func _on_final_stage_started() -> void:
 	_final_stage_label.visible = true

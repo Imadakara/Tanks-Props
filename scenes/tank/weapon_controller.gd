@@ -1,8 +1,9 @@
 extends Node
-## WeaponController — стрельба по параболе (ТЗ §7). Направление выстрела — вперёд от
-## башни (только yaw) плюс фиксированный угол возвышения; сама дуга — от гравитации
-## снаряда, не от прицеливания по вертикали. Привязан к TankStateMachine.request_fire()
-## (обрабатывает и обычный выстрел, и выстрел из DISGUISED) и AmmoComponent.
+## WeaponController — стрельба по параболе (ТЗ §7, правка учёта наклона дула). Направление
+## выстрела берётся напрямую из ориентации Barrel (yaw башни + питч дула, см.
+## turret_controller.gd/barrel_controller.gd) — сама дуга по-прежнему от гравитации
+## снаряда. Привязан к TankStateMachine.request_fire() (обрабатывает и обычный выстрел, и
+## выстрел из DISGUISED) и AmmoComponent.
 
 const ProjectileScene := preload("res://scenes/projectile/Projectile.tscn")
 
@@ -10,12 +11,11 @@ signal fired()
 
 @export var is_player_controlled: bool = true
 @export var launch_speed: float = 20.0
-@export var launch_angle_deg: float = 35.0
-@export var muzzle_forward_offset: float = 0.6
-@export var muzzle_up_offset: float = 0.2
+@export var muzzle_forward_offset: float = 0.8
+@export var muzzle_up_offset: float = 0.0
 
 @onready var _body: Node3D = get_parent()
-@onready var _turret: Node3D = get_parent().get_node("Turret")
+@onready var _barrel: Node3D = get_parent().get_node("Turret/Barrel")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
 
@@ -37,10 +37,8 @@ func try_fire() -> bool:
 	return true
 
 func _spawn_projectile() -> void:
-	var forward: Vector3 = -_turret.global_transform.basis.z
-	var angle := deg_to_rad(launch_angle_deg)
-	var direction: Vector3 = (forward * cos(angle) + Vector3.UP * sin(angle)).normalized()
-	var muzzle: Vector3 = _turret.global_position + forward * muzzle_forward_offset + Vector3(0, muzzle_up_offset, 0)
+	var direction: Vector3 = -_barrel.global_transform.basis.z
+	var muzzle: Vector3 = _barrel.global_position + direction * muzzle_forward_offset + Vector3(0, muzzle_up_offset, 0)
 
 	var proj := ProjectileScene.instantiate()
 	get_tree().current_scene.add_child(proj)

@@ -10,6 +10,15 @@ const BotTankScene := preload("res://scenes/tank/Tank.tscn")
 
 @export var player_team: int = 0  # 0 = Tank.Team.ATTACK, 1 = Tank.Team.DEFENSE
 
+## Точки спавна лежат на y=0 (ровно на поверхности пола) — спавн ТОЧНО в этот y даёт
+## вырожденный (нулевая глубина) контакт с полом, на котором move_and_slide() у Jolt
+## ведёт себя нестабильно: тело проваливается сквозь пол вместо оседания (проверено
+## эмпирически — без зазора танк падал в бесконечность уже с первых кадров, is_on_floor()
+## при этом какое-то время ложно показывал true). Небольшой зазор даёт нормальное
+## естественное оседание за несколько кадров, как всегда было у игрока (transform.y=0.5
+## в исходном Main.tscn).
+const _spawn_clearance := Vector3(0, 0.3, 0)
+
 ## Вызывается из Main._ready() (см. main.gd) — не из собственного _ready(): add_child()
 ## на current_scene изнутри _ready() сиблинга падает, пока дерево ещё строится.
 func spawn_team() -> void:
@@ -25,7 +34,7 @@ func spawn_team() -> void:
 
 	player.team = player_team
 	if not player_points.is_empty():
-		player.global_position = player_points[0].global_position
+		player.global_position = player_points[0].global_position + _spawn_clearance
 
 	for i in range(1, GameConfig.team_size):
 		if i < player_points.size():
@@ -44,8 +53,16 @@ func _collect_points(map: Node, prefix: String) -> Array:
 
 func _spawn_bot(team: int, pos: Vector3) -> void:
 	var bot: CharacterBody3D = BotTankScene.instantiate()
-	get_tree().current_scene.add_child(bot)
+	# CameraRig.is_active гасит Camera3D.current уже В СВОЁМ _ready() — тот срабатывает
+	# синхронно ВНУТРИ add_child() (нода уже в активном дереве), раньше следующей строки.
+	# Выставляем is_active=false ДО add_child(), пока бот ещё orphan (это safe — свойства
+	# без обращения к глобальному transform можно ставить и вне дерева) — иначе камера
+	# бота на один кадр становится current=true и перехватывает активность у игрока
+	# (тот же класс бага, что был с TankAIController.enabled, см. базу знаний Godot №36).
 	bot.team = team
-	bot.global_position = pos
-	bot.get_node("TankAIController").enabled = true
 	bot.get_node("CameraRig").is_active = false
+	get_tree().current_scene.add_child(bot)
+	bot.global_position = pos + _spawn_clearance
+	var ai := bot.get_node("TankAIController")
+	ai.enabled = true
+	ai.patrol_enabled = false  # временно: боты стоят на месте, не бегают по вейпоинтам (см. дев-план)

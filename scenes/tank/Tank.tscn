@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scenes/tank/turret_controller.gd" id="3_bfi3s"]
 [ext_resource type="Script" path="res://scenes/tank/weapon_controller.gd" id="5_4jgmv"]
 [ext_resource type="Script" path="res://scenes/tank/tank_state_machine.gd" id="5_i6w10"]
+[ext_resource type="Script" path="res://scenes/tank/barrel_controller.gd" id="5_oswvf"]
 [ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="7_bx3sg"]
 [ext_resource type="Script" path="res://scenes/tank/ammo_component.gd" id="7_srjgo"]
 [ext_resource type="Script" path="res://scenes/tank/disguise_controller.gd" id="8_bx3sg"]
@@ -20,6 +21,11 @@ size = Vector3(1.2, 0.6, 1.8)
 
 [sub_resource type="BoxMesh" id="BoxMesh_mu8yi"]
 size = Vector3(0.5, 0.3, 0.8)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_v2yb2"]
+top_radius = 0.06
+bottom_radius = 0.08
+height = 0.8
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_srjgo"]
 size = Vector3(1.4, 0.7, 2)
@@ -38,7 +44,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 mesh = SubResource("BoxMesh_ysdyk")
 
 [node name="CameraRig" type="SpringArm3D" parent="." unique_id=243816718]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
 spring_length = 6.0
 script = ExtResource("1_ncjaw")
 
@@ -54,6 +60,14 @@ script = ExtResource("3_bfi3s")
 [node name="TurretMesh" type="MeshInstance3D" parent="Turret" unique_id=907928381]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.1)
 mesh = SubResource("BoxMesh_mu8yi")
+
+[node name="Barrel" type="Node3D" parent="Turret" unique_id=643352722]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.2)
+script = ExtResource("5_oswvf")
+
+[node name="BarrelMesh" type="MeshInstance3D" parent="Turret/Barrel" unique_id=1343414565]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, -0.4)
+mesh = SubResource("CylinderMesh_v2yb2")
 
 [node name="TankStateMachine" type="Node" parent="." unique_id=1996132899]
 script = ExtResource("5_i6w10")

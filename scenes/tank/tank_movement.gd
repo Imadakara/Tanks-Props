@@ -13,6 +13,11 @@ extends Node
 var ai_move_input: float = 0.0
 var ai_turn_input: float = 0.0
 
+## Последнее применённое значение move_input — читает CameraRig, чтобы обнаружить задний
+## ход и плавно довернуть камеру за корму (GTA-style), не завязываясь на Input напрямую
+## (актуально и для ботов, если им когда-нибудь понадобится та же логика).
+var last_move_input: float = 0.0
+
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
 @onready var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
@@ -34,6 +39,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		turn_input = ai_turn_input
 		move_input = ai_move_input
+	last_move_input = move_input
 
 	# Корпус зафиксирован во время маскировки (ТЗ §6); попытка движения — триггер
 	# досрочного снятия маскировки (ТЗ §5.1), сам ход применяется уже следующим кадром,

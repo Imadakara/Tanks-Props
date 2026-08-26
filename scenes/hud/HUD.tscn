@@ -1,6 +1,7 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://scenes/hud/hud.gd" id="1_fdg6f"]
+[ext_resource type="Script" path="res://scenes/hud/crosshair.gd" id="2_xvj7f"]
 
 [node name="root" type="CanvasLayer" unique_id=1886000725]
 script = ExtResource("1_fdg6f")
@@ -53,3 +54,11 @@ offset_left = 400.0
 offset_top = 300.0
 offset_right = 400.0
 offset_bottom = 300.0
+
+[node name="Crosshair" type="Control" parent="." unique_id=1772123823]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 24.0
+offset_bottom = 24.0
+mouse_filter = 2
+script = ExtResource("2_xvj7f")
