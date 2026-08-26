@@ -1,3 +1,293 @@
 [gd_scene format=3]
 
-[node name="root" type="Node3D" unique_id=1761135697]
+[ext_resource type="PackedScene" path="res://scenes/map/DisguiseSlot.tscn" id="1_ub3q0"]
+[ext_resource type="Script" path="res://scenes/map/disguise_slot.gd" id="2_nuen2"]
+[ext_resource type="Script" path="res://scenes/map/objective_zone.gd" id="3_nuen2"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_nuen2"]
+size = Vector3(60, 0.5, 60)
+
+[sub_resource type="BoxMesh" id="BoxMesh_4yt6b"]
+size = Vector3(60, 0.5, 60)
+
+[sub_resource type="BoxMesh" id="BoxMesh_hgphw"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_4yt6b"]
+top_radius = 0.4
+bottom_radius = 0.4
+height = 0.8
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_hgphw"]
+radius = 2.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_nuen2"]
+size = Vector3(0.5, 0.5, 0.5)
+
+[sub_resource type="SphereMesh" id="SphereMesh_hgphw"]
+radius = 0.3
+height = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_yajg5"]
+size = Vector3(0.8, 0.1, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_vyhe5"]
+top_radius = 0.05
+bottom_radius = 0.05
+height = 1.2
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_qfku7"]
+top_radius = 0.3
+bottom_radius = 0.25
+height = 0.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_48h8m"]
+size = Vector3(0.4, 0.4, 0.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_0e3jb"]
+size = Vector3(0.8, 0.3, 0.4)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_1covb"]
+top_radius = 0.05
+bottom_radius = 0.25
+height = 0.6
+
+[sub_resource type="SphereMesh" id="SphereMesh_ujv8u"]
+radius = 0.4
+height = 0.8
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_u1hfc"]
+top_radius = 0.25
+bottom_radius = 0.25
+height = 0.5
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_bt1e1"]
+size = Vector3(4, 1.5, 0.5)
+
+[sub_resource type="BoxMesh" id="BoxMesh_om3rv"]
+size = Vector3(4, 1.5, 0.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_1g8o6"]
+size = Vector3(2, 1, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_irtkn"]
+size = Vector3(2, 1, 2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_t8pk8"]
+size = Vector3(1, 2, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_j31rn"]
+size = Vector3(1, 2, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_jyou5"]
+size = Vector3(3, 1, 1.5)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ri4vm"]
+size = Vector3(3, 1, 1.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_wpeqk"]
+size = Vector3(0.5, 2, 3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_xbg8n"]
+size = Vector3(0.5, 2, 3)
+
+[node name="Map" type="Node3D" unique_id=53834246]
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=823185880]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1623189830]
+shape = SubResource("BoxShape3D_nuen2")
+
+[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=336479267]
+mesh = SubResource("BoxMesh_4yt6b")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=856393741]
+transform = Transform3D(0.70710677, 0.49999997, -0.49999997, 0, 0.70710677, 0.70710677, 0.70710677, -0.49999997, 0.49999997, 0, 0, 0)
+light_energy = 1.2
+
+[node name="DisguiseSlotA" type="Area3D" parent="." unique_id=1482066052 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.5, 0)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("BoxMesh_hgphw")
+
+[node name="DisguiseSlotB" type="Area3D" parent="." unique_id=664090987 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0.5, 3)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("CylinderMesh_4yt6b")
+
+[node name="ObjectiveZone" type="Area3D" parent="." unique_id=433107837]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.5, 0)
+collision_layer = 16
+collision_mask = 2
+script = ExtResource("3_nuen2")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="ObjectiveZone" unique_id=205055930]
+shape = SubResource("CylinderShape3D_hgphw")
+
+[node name="AmmoCrateSpawnPoint1" type="Node3D" parent="." unique_id=1067264340]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, 6)
+
+[node name="AmmoCrateSpawnPoint2" type="Node3D" parent="." unique_id=1241194374]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, 6)
+
+[node name="AmmoCrateSpawnPoint3" type="Node3D" parent="." unique_id=1236616583]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, -6)
+
+[node name="AmmoCrateSpawnPoint4" type="Node3D" parent="." unique_id=799774091]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, -6)
+
+[node name="AttackSpawnPoint1" type="Node3D" parent="." unique_id=669272128]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -15)
+
+[node name="AttackSpawnPoint2" type="Node3D" parent="." unique_id=527256901]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -15)
+
+[node name="AttackSpawnPoint3" type="Node3D" parent="." unique_id=1294511796]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -7)
+
+[node name="AttackSpawnPoint4" type="Node3D" parent="." unique_id=1279986234]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -23, 0, -15)
+
+[node name="AttackSpawnPoint5" type="Node3D" parent="." unique_id=2087521299]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, -23)
+
+[node name="DefenseSpawnPoint1" type="Node3D" parent="." unique_id=1497054824]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 15)
+
+[node name="DefenseSpawnPoint2" type="Node3D" parent="." unique_id=818830520]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, 15)
+
+[node name="DefenseSpawnPoint3" type="Node3D" parent="." unique_id=1730864208]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 7)
+
+[node name="DefenseSpawnPoint4" type="Node3D" parent="." unique_id=404992970]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 0, 15)
+
+[node name="DefenseSpawnPoint5" type="Node3D" parent="." unique_id=1767906060]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0, 23)
+
+[node name="DisguiseSlotCube" type="Area3D" parent="." unique_id=1157930578 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.25, 5)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("BoxMesh_nuen2")
+
+[node name="DisguiseSlotBall" type="Area3D" parent="." unique_id=2091978978 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.3, 5)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("SphereMesh_hgphw")
+
+[node name="DisguiseSlotBook" type="Area3D" parent="." unique_id=1651930094 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.1, -10)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("BoxMesh_yajg5")
+
+[node name="DisguiseSlotPencil" type="Area3D" parent="." unique_id=697215129 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.05, -10)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("CylinderMesh_vyhe5")
+
+[node name="DisguiseSlotCup" type="Area3D" parent="." unique_id=1332902063 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 10)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("CylinderMesh_qfku7")
+
+[node name="DisguiseSlotRubik" type="Area3D" parent="." unique_id=1046716850 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.2, -10)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("BoxMesh_48h8m")
+
+[node name="DisguiseSlotToyCar" type="Area3D" parent="." unique_id=1102758540 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.15, -10)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("BoxMesh_0e3jb")
+
+[node name="DisguiseSlotSkittle" type="Area3D" parent="." unique_id=1238142882 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -15)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("CylinderMesh_1covb")
+
+[node name="DisguiseSlotPlush" type="Area3D" parent="." unique_id=1510598155 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0.4, 5)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("SphereMesh_ujv8u")
+
+[node name="DisguiseSlotBlock" type="Area3D" parent="." unique_id=1261519124 instance=ExtResource("1_ub3q0")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0.25, -5)
+collision_layer = 8
+collision_mask = 2
+script = ExtResource("2_nuen2")
+disguise_mesh = SubResource("CylinderMesh_u1hfc")
+
+[node name="Shelf" type="StaticBody3D" parent="." unique_id=2016403524]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, -8)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Shelf" unique_id=875570192]
+shape = SubResource("BoxShape3D_bt1e1")
+
+[node name="Mesh" type="MeshInstance3D" parent="Shelf" unique_id=1451401038]
+mesh = SubResource("BoxMesh_om3rv")
+
+[node name="ToyBox" type="StaticBody3D" parent="." unique_id=559652354]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.5, 8)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="ToyBox" unique_id=2109396109]
+shape = SubResource("BoxShape3D_1g8o6")
+
+[node name="Mesh" type="MeshInstance3D" parent="ToyBox" unique_id=1070418076]
+mesh = SubResource("BoxMesh_irtkn")
+
+[node name="TableLeg" type="StaticBody3D" parent="." unique_id=938983730]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1, 8)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TableLeg" unique_id=207371644]
+shape = SubResource("BoxShape3D_t8pk8")
+
+[node name="Mesh" type="MeshInstance3D" parent="TableLeg" unique_id=1309224276]
+mesh = SubResource("BoxMesh_j31rn")
+
+[node name="Couch" type="StaticBody3D" parent="." unique_id=644248336]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, -5)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Couch" unique_id=735500292]
+shape = SubResource("BoxShape3D_jyou5")
+
+[node name="Mesh" type="MeshInstance3D" parent="Couch" unique_id=398814464]
+mesh = SubResource("BoxMesh_ri4vm")
+
+[node name="Bookshelf" type="StaticBody3D" parent="." unique_id=957110086]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 5)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Bookshelf" unique_id=699519732]
+shape = SubResource("BoxShape3D_wpeqk")
+
+[node name="Mesh" type="MeshInstance3D" parent="Bookshelf" unique_id=1842006408]
+mesh = SubResource("BoxMesh_xbg8n")

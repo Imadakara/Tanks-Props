@@ -1,3 +1,20 @@
 [gd_scene format=3]
 
-[node name="root" type="Area3D" unique_id=224681894]
+[ext_resource type="Script" path="res://scenes/ammo_crate/ammo_crate.gd" id="1_cisac"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_kdsmc"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_sp712"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[node name="AmmoCrate" type="Area3D" unique_id=1648911781]
+collision_layer = 32
+collision_mask = 2
+script = ExtResource("1_cisac")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=211872527]
+shape = SubResource("BoxShape3D_kdsmc")
+
+[node name="CrateMesh" type="MeshInstance3D" parent="." unique_id=1967053328]
+mesh = SubResource("BoxMesh_sp712")

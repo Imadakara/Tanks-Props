@@ -1,3 +1,89 @@
 [gd_scene format=3]
 
-[node name="root" type="CharacterBody3D" unique_id=1871575520]
+[ext_resource type="Script" path="res://scenes/tank/tank.gd" id="1_3lrxo"]
+[ext_resource type="Script" path="res://scenes/tank/camera_rig.gd" id="1_ncjaw"]
+[ext_resource type="Script" path="res://scenes/tank/tank_movement.gd" id="2_ejt3n"]
+[ext_resource type="Script" path="res://scenes/tank/turret_controller.gd" id="3_bfi3s"]
+[ext_resource type="Script" path="res://scenes/tank/weapon_controller.gd" id="5_4jgmv"]
+[ext_resource type="Script" path="res://scenes/tank/tank_state_machine.gd" id="5_i6w10"]
+[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="7_bx3sg"]
+[ext_resource type="Script" path="res://scenes/tank/ammo_component.gd" id="7_srjgo"]
+[ext_resource type="Script" path="res://scenes/tank/disguise_controller.gd" id="8_bx3sg"]
+[ext_resource type="Script" path="res://scenes/tank/collision_detector.gd" id="9_i6w10"]
+[ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="11_srjgo"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_bfi3s"]
+size = Vector3(1.2, 0.6, 1.8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ysdyk"]
+size = Vector3(1.2, 0.6, 1.8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_mu8yi"]
+size = Vector3(0.5, 0.3, 0.8)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_srjgo"]
+size = Vector3(1.4, 0.7, 2)
+
+[node name="Tank" type="CharacterBody3D" unique_id=677005994]
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("1_3lrxo")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=18573484]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
+shape = SubResource("BoxShape3D_bfi3s")
+
+[node name="HullMesh" type="MeshInstance3D" parent="." unique_id=219442370]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
+mesh = SubResource("BoxMesh_ysdyk")
+
+[node name="CameraRig" type="SpringArm3D" parent="." unique_id=243816718]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 0)
+spring_length = 6.0
+script = ExtResource("1_ncjaw")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=888496267]
+
+[node name="TankMovement" type="Node" parent="." unique_id=144656680]
+script = ExtResource("2_ejt3n")
+
+[node name="Turret" type="Node3D" parent="." unique_id=821121836]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
+script = ExtResource("3_bfi3s")
+
+[node name="TurretMesh" type="MeshInstance3D" parent="Turret" unique_id=907928381]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.1)
+mesh = SubResource("BoxMesh_mu8yi")
+
+[node name="TankStateMachine" type="Node" parent="." unique_id=1996132899]
+script = ExtResource("5_i6w10")
+
+[node name="DisguiseTimer" type="Timer" parent="TankStateMachine" unique_id=1320364162]
+
+[node name="CooldownTimer" type="Timer" parent="TankStateMachine" unique_id=1195592364]
+
+[node name="ReloadTimer" type="Timer" parent="TankStateMachine" unique_id=199468316]
+
+[node name="WeaponController" type="Node" parent="." unique_id=355321899]
+script = ExtResource("5_4jgmv")
+
+[node name="AmmoComponent" type="Node" parent="." unique_id=697966439]
+script = ExtResource("7_srjgo")
+
+[node name="HealthComponent" type="Node" parent="." unique_id=1987941573]
+script = ExtResource("7_bx3sg")
+
+[node name="DisguiseController" type="Node3D" parent="." unique_id=2059039948]
+script = ExtResource("8_bx3sg")
+
+[node name="CollisionDetector" type="Area3D" parent="." unique_id=666713500]
+collision_layer = 2
+collision_mask = 2
+script = ExtResource("9_i6w10")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CollisionDetector" unique_id=216666300]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
+shape = SubResource("BoxShape3D_srjgo")
+
+[node name="TankAIController" type="Node" parent="." unique_id=929001885]
+script = ExtResource("11_srjgo")

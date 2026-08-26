@@ -1,0 +1,32 @@
+extends Node3D
+class_name TurretController
+## TurretController — поворот башни к направлению камеры с задержкой (ТЗ §4).
+## Пока танк в DISGUISED, башня заморожена (§6: «корпус и башня фиксируются»):
+## расхождение целевого направления с текущим сверх freeze_epsilon_deg трактуется
+## как «игрок повернул башню» и снимает маскировку (§5.1) — мелкий шум от свободного
+## обзора камерой (в пределах эпсилона) маскировку не снимает.
+## is_player_controlled=true берёт target_yaw из CameraRig-сиблинга; для ботов
+## (Этап 8) — false, TankAIController пишет target_yaw напрямую тем же полем.
+
+const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
+
+@export var turn_speed: float = 1.0  # рад/сек — меньше, чем угловая скорость камеры
+@export var freeze_epsilon_deg: float = 2.0
+@export var is_player_controlled: bool = true
+@export var target_yaw: float = 0.0
+
+@onready var _camera_rig: Node3D = get_parent().get_node_or_null("CameraRig")
+@onready var _state_machine: Node = get_parent().get_node_or_null("TankStateMachine")
+
+func _physics_process(delta: float) -> void:
+	if is_player_controlled and _camera_rig != null:
+		target_yaw = _camera_rig.rotation.y
+
+	if _state_machine != null and _state_machine.state == TankStateMachineScript.State.DISGUISED:
+		var diff := absf(wrapf(target_yaw - rotation.y, -PI, PI))
+		if rad_to_deg(diff) > freeze_epsilon_deg:
+			_state_machine.break_disguise("turret_rotation")
+		else:
+			return  # башня заморожена, мелкий шум камеры не в счёт
+
+	rotation.y = lerp_angle(rotation.y, target_yaw, turn_speed * delta)
