@@ -1,31 +1,36 @@
 extends Node
 ## BotSentryController — тестовый ИИ для песочницы "Bot Arena" (scenes/bot_arena/BotArena.tscn).
 ## Отдельно от продакшен-ИИ scenes/tank/tank_ai_controller.gd (ТЗ §9, патруль/маскировка) —
-## тот не трогаем. Здесь обкатывается конечный автомат чисто боевого поведения: бот НЕ
-## двигается (задача №1 — только обзор/наводка/стрельба), но крутит башню влево-вправо,
-## имитируя вращение камеры-головы.
+## тот не трогаем. Бот НЕ двигается (задача №1 — только обзор/наводка/стрельба).
 ##
-## Сектор обзора fov_min_deg..fov_max_deg (от направления корпуса при спавне) — ОДНО общее
-## понятие для двух вещей: границы качания башни при сканировании И зона, в которой цель
-## вообще может быть замечена/удержана. Было ±120°=240° (бот "видел" почти периферийным
-## зрением в любую секунду, даже глядя совсем в другую сторону) — сузили до ±55°=110°, но
-## тогда цель ровно сбоку (~90° от корпуса, "параллельно") выпадала из сектора совсем.
-## ±100°=200° — компромисс: с запасом покрывает боковую цель, но не полный периметр.
+## Модель обзора — по аналогии с игроком: у игрока камера смотрит в конкретную сторону, и то,
+## что вне её кадра, он просто не видит, пока не развернёт камеру (см. camera_rig.gd —
+## is_player_controlled=true у TurretController берёт target_yaw НАПРЯМУЮ из направления камеры).
+## У бота роль "камеры" играет _look_yaw — им управляет ТОЛЬКО этот скрипт (никогда не сам
+## игрок). Триггер обнаружения цели — попадание в ТЕКУЩИЙ конус (look_cone_deg, центр —
+## _look_yaw, радиус — vision_range), а не в какую-то фиксированную зону вокруг корпуса.
+## Башня — не мозг, а просто следует за _look_yaw (target_yaw = f(_look_yaw), физический
+## доворот делает TurretController.rotate_toward, см. turret_controller.gd) — ровно так же,
+## как у игрока башня трогается вслед за камерой с задержкой, а не сама решает, куда смотреть.
 ##
-## SEARCH — сканирование сектора туда-сюда, имитируя вращение камеры в поиске цели. Как
-## только цель попадает в сектор (по азимуту от корпуса, не от текущего угла башни — сектор
-## статичен) и есть прямая видимость (raycast, стенка её перекрывает) — переход в TRACK.
+## SEARCH — блуждание "камеры" (_wander()), имитация того, как игрок ворочает обзор осматриваясь:
+## выбирает случайный угол в пределах wander_min_deg..wander_max_deg (сколько бот вообще может
+## увести взгляд от направления корпуса — практический предел разворота, НЕ сам конус обзора),
+## доворачивает туда (тем же rotate_toward, что и башня — довод получается "тот же язык
+## движения", что и наводка), держит там wander_hold_min_sec..wander_hold_max_sec (по умолчанию
+## 1-2 сек — "то вперёд, то назад, то влево, то вправо"), затем — новый случайный угол, по
+## кругу в хаотичном порядке. Пока смотрит куда-то — конус обзора (look_cone_deg вокруг
+## _look_yaw) следует за этим направлением; попала туда цель, дальность и видимость (raycast,
+## стенка перекрывает) сошлись — переход в TRACK.
 ##
-## TRACK (слежение) — башня доворачивается точно на цель и дальше каждый кадр пересчитывается
-## по её ЖИВОЙ позиции, то есть движется вслед за движением цели, пока та остаётся в секторе
-## обзора (дальность/азимут/видимость проверяются каждый think-тик). Стрельба — как только
-## наводка и дальность позволяют, огонь по готовности (перезарядка/боекомплект — как обычно).
-## Если цель покидает сектор/дальность или пропадает видимость — назад в SEARCH, сканирование
-## продолжается с текущего угла (не сбрасывается на исходный).
+## TRACK (слежение) — _look_yaw и башня каждый кадр пересчитываются на ЖИВУЮ позицию цели
+## (движется вслед за её перемещением), огонь по готовности прицела/дальности/боекомплекта.
+## Пропала видимость/дальность — назад в SEARCH; блуждание возобновляется с текущего угла
+## (не сбрасывается на исходный).
 ##
-## Реакция на обстрел: HealthComponent.damaged() (см. health_component.gd) теперь несёт killer —
-## при попадании бот разворачивает обзор (башню) в сторону, откуда прилетело, независимо от
-## того, видна ли цель прямо сейчас; если после разворота она уже в секторе — сразу TRACK.
+## Реакция на обстрел: HealthComponent.damaged() (см. health_component.gd) несёт killer — при
+## попадании бот разворачивает "камеру" (значит и башню) в сторону выстрела; видна оттуда —
+## сразу TRACK.
 ##
 ## Уровни сложности (difficulty) — все числовые @export ниже это тюнинг MEDIUM (тот самый
 ## "текущий бот"), EASY/HARD — пресеты в _apply_difficulty_preset(), применяются поверх этих
@@ -35,44 +40,60 @@ extends Node
 enum State { SEARCH, TRACK }
 enum Difficulty { EASY, MEDIUM, HARD }
 
+const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "камера" дошла до выбранного угла
+
 @export var difficulty: Difficulty = Difficulty.MEDIUM
 
-@export var vision_range: float = 18.0
-@export var fire_range: float = 14.0
+## Радиус и полуширина ТЕКУЩЕГО (движущегося) конуса обзора — реальный триггер обнаружения.
+## Раньше это была большая статичная зона вокруг корпуса — теперь узкий "прожектор", который
+## реально нужно навести на цель взглядом, как у игрока с камерой.
+@export var vision_range: float = 10.0
+@export var look_cone_deg: float = 55.0  # полный угол конуса вокруг _look_yaw
+@export var fire_range: float = 8.0
 @export var fire_aim_tolerance_deg: float = 5.0
-@export var scan_speed_deg_per_sec: float = 25.0
-@export var fov_min_deg: float = -100.0  # относительно исходного направления корпуса при спавне
-@export var fov_max_deg: float = 100.0   # 200° суммарно
-@export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
-@export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd)
 
-## Дебажная отрисовка сектора обзора (ImmediateMesh, полупрозрачный веер + текущий "взгляд")
-## поверх земли под ботом — граница fov_min_deg..fov_max_deg на радиус vision_range, зелёный
-## в SEARCH, красный в TRACK, жёлтая линия — куда сейчас реально смотрит башня/_look_yaw.
+## Практические границы, куда вообще может увести взгляд блуждание (относительно направления
+## корпуса при спавне) — НЕ сам конус обзора, а диапазон возможных направлений _look_yaw.
+@export var wander_min_deg: float = -75.0
+@export var wander_max_deg: float = 75.0
+@export var wander_hold_min_sec: float = 1.0  # задержка на выбранном угле после доворота
+@export var wander_hold_max_sec: float = 2.0
+
+@export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
+@export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
+
+## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: зелёный/красный веер — ТЕКУЩИЙ
+## конус обзора (look_cone_deg вокруг _look_yaw, радиус vision_range) — зелёный в SEARCH,
+## красный в TRACK, движется вместе с _look_yaw. Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
+## башня (может немного отставать от конуса — та же инерция, что и у башни игрока за камерой).
 @export var show_fov_debug: bool = true
 
 ## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
-## Разница по трём осям: осведомлённость (сектор/дальность/скорость сканирования), реакция
-## (think_interval — как часто бот вообще проверяет "вижу/не вижу"), меткость (допуск наводки
-## + скорость доворота башни).
+## Разница по четырём осям: осведомлённость (радиус/угол конуса, границы блуждания), реакция
+## (think_interval), меткость (допуск наводки + скорость доворота — та же скорость и для
+## блуждания), "непоседливость" взгляда (wander_hold — у HARD короче, дольше не засиживается).
 const _DIFFICULTY_PRESETS := {
 	Difficulty.EASY: {
-		"vision_range": 12.0,
-		"fire_range": 9.0,
+		"vision_range": 6.0,
+		"look_cone_deg": 40.0,
+		"fire_range": 5.0,
 		"fire_aim_tolerance_deg": 9.0,
-		"scan_speed_deg_per_sec": 15.0,
-		"fov_min_deg": -70.0,
-		"fov_max_deg": 70.0,
+		"wander_min_deg": -50.0,
+		"wander_max_deg": 50.0,
+		"wander_hold_min_sec": 2.0,
+		"wander_hold_max_sec": 3.5,
 		"think_interval_sec": 0.25,
 		"turret_turn_speed": 0.8,
 	},
 	Difficulty.HARD: {
-		"vision_range": 24.0,
-		"fire_range": 18.0,
+		"vision_range": 14.0,
+		"look_cone_deg": 70.0,
+		"fire_range": 11.0,
 		"fire_aim_tolerance_deg": 3.0,
-		"scan_speed_deg_per_sec": 35.0,
-		"fov_min_deg": -130.0,
-		"fov_max_deg": 130.0,
+		"wander_min_deg": -100.0,
+		"wander_max_deg": 100.0,
+		"wander_hold_min_sec": 0.5,
+		"wander_hold_max_sec": 1.2,
 		"think_interval_sec": 0.05,
 		"turret_turn_speed": 2.2,
 	},
@@ -87,11 +108,16 @@ const _DIFFICULTY_PRESETS := {
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 
 var state: State = State.SEARCH
-var _look_yaw: float = 0.0  # мировой угол обзора — куда сейчас "смотрит" бот, ведёт башню
-var _scan_dir: float = 1.0  # +1 сканирует вправо, -1 влево
+var _look_yaw: float = 0.0  # мировой угол "камеры" бота — центр конуса обзора, ведёт башню
 var _current_target: Node = null
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
+
+## Состояние блуждания взгляда в SEARCH (см. _wander()): пока не "дошли" до выбранного угла —
+## просто ждём (сам доворот делает TurretController, target_yaw уже выставлен); дошли — считаем
+## задержку _wander_hold_timer, по истечении выбираем новый случайный угол.
+var _wander_holding: bool = false
+var _wander_hold_timer: float = 0.0
 
 func _ready() -> void:
 	_apply_difficulty_preset()
@@ -129,11 +155,13 @@ func _apply_difficulty_preset() -> void:
 		return
 	var preset: Dictionary = _DIFFICULTY_PRESETS[difficulty]
 	vision_range = preset["vision_range"]
+	look_cone_deg = preset["look_cone_deg"]
 	fire_range = preset["fire_range"]
 	fire_aim_tolerance_deg = preset["fire_aim_tolerance_deg"]
-	scan_speed_deg_per_sec = preset["scan_speed_deg_per_sec"]
-	fov_min_deg = preset["fov_min_deg"]
-	fov_max_deg = preset["fov_max_deg"]
+	wander_min_deg = preset["wander_min_deg"]
+	wander_max_deg = preset["wander_max_deg"]
+	wander_hold_min_sec = preset["wander_hold_min_sec"]
+	wander_hold_max_sec = preset["wander_hold_max_sec"]
 	think_interval_sec = preset["think_interval_sec"]
 	turret_turn_speed = preset["turret_turn_speed"]
 
@@ -149,7 +177,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.TRACK and _current_target != null and is_instance_valid(_current_target):
 		_aim_and_fire(_current_target)
 	else:
-		_scan(delta)
+		_wander(delta)
 		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 
 	if show_fov_debug:
@@ -164,19 +192,26 @@ func _think() -> void:
 	if target != null:
 		_enter_track(target)
 
-## Сканирование сектора fov_min_deg..fov_max_deg (от направления корпуса на спавне) —
-## имитация вращения камеры туда-сюда в поиске цели.
-func _scan(delta: float) -> void:
-	var base_yaw: float = _body.rotation.y
-	var local_deg: float = rad_to_deg(wrapf(_look_yaw - base_yaw, -PI, PI))
-	local_deg += _scan_dir * scan_speed_deg_per_sec * delta
-	if local_deg >= fov_max_deg:
-		local_deg = fov_max_deg
-		_scan_dir = -1.0
-	elif local_deg <= fov_min_deg:
-		local_deg = fov_min_deg
-		_scan_dir = 1.0
-	_look_yaw = base_yaw + deg_to_rad(local_deg)
+## Блуждание "камеры" в SEARCH — имитация того, как игрок крутит камеру осматриваясь: то
+## вперёд, то в сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw —
+## просто ждём (доворот делает TurretController); дошли — держим wander_hold_min_sec..
+## wander_hold_max_sec, затем выбираем новый случайный угол в пределах wander_min_deg..
+## wander_max_deg (границы допустимого разворота взгляда, не сам конус обзора — см. _can_see()).
+func _wander(delta: float) -> void:
+	if _wander_holding:
+		_wander_hold_timer -= delta
+		if _wander_hold_timer <= 0.0:
+			_pick_new_wander_target()
+		return
+	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
+	if aim_diff_deg <= _WANDER_ARRIVE_TOLERANCE_DEG:
+		_wander_holding = true
+		_wander_hold_timer = randf_range(wander_hold_min_sec, wander_hold_max_sec)
+
+func _pick_new_wander_target() -> void:
+	var target_local_deg: float = randf_range(wander_min_deg, wander_max_deg)
+	_look_yaw = _body.rotation.y + deg_to_rad(target_local_deg)
+	_wander_holding = false
 
 func _scan_for_target() -> Node:
 	for other in get_tree().get_nodes_in_group("tanks"):
@@ -188,18 +223,19 @@ func _scan_for_target() -> Node:
 			return other
 	return null
 
-## Сектор проверяется от направления КОРПУСА (fov_min_deg..fov_max_deg), а не от текущего
-## угла башни — цель считается видимой, если она вообще в пределах общего сектора обзора,
-## независимо от того, куда именно сейчас смотрит башня во время сканирования. Так и
-## сканирование, и слежение (TRACK) пользуются одной и той же зоной.
+## Триггер обнаружения — попадание в ТЕКУЩИЙ конус обзора: полуширина look_cone_deg/2 ВОКРУГ
+## _look_yaw (куда сейчас направлена "камера" бота), а не вокруг направления корпуса — конус
+## движется вместе с блужданием взгляда/слежением за целью, ровно как обзор игрока следует за
+## его камерой. Цель вне текущего кадра "камеры" не видна, даже если формально близко и без
+## препятствий — в этом и суть модели (см. заголовок файла).
 func _can_see(target: Node3D) -> bool:
 	var to_target: Vector3 = target.global_position - _turret.global_position
 	var dist: float = to_target.length()
 	if dist > vision_range or dist < 0.01:
 		return false
 	var world_yaw: float = _yaw_to_world_point(_turret.global_position, target.global_position)
-	var local_bearing_deg: float = rad_to_deg(wrapf(world_yaw - _body.rotation.y, -PI, PI))
-	if local_bearing_deg < fov_min_deg or local_bearing_deg > fov_max_deg:
+	var angle_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - _look_yaw, -PI, PI)))
+	if angle_diff_deg > look_cone_deg * 0.5:
 		return false
 	var space_state := _body.get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
@@ -218,11 +254,12 @@ func _enter_track(target: Node) -> void:
 func _enter_search() -> void:
 	state = State.SEARCH
 	_current_target = null
-	# _look_yaw не сбрасывается — сканирование в _scan() продолжится с того же угла.
+	# Ни _look_yaw, ни _wander_holding не сбрасываются — блуждание взгляда продолжится с
+	# текущего направления (не с исходного).
 
-## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — башня физически движется вслед
-## за её перемещением (не за фиксированной точкой), пока цель остаётся в секторе (проверяет
-## _think(), см. выше).
+## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня физически
+## движутся вслед за её перемещением (не за фиксированной точкой), пока цель остаётся видна
+## (проверяет _think(), см. выше).
 func _aim_and_fire(target: Node3D) -> void:
 	_look_yaw = _yaw_to_world_point(_turret.global_position, target.global_position)
 	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
@@ -236,12 +273,13 @@ func _yaw_to_world_point(from: Vector3, to_point: Vector3) -> float:
 	var d: Vector3 = to_point - from
 	return atan2(-d.x, -d.z)
 
-## Реакция на попадание (ТЗ этой сессии) — разворот обзора/башни туда, откуда стреляли,
-## даже если цель сейчас не видна. Если после разворота она уже в секторе — сразу в TRACK.
+## Реакция на попадание (ТЗ этой сессии) — разворот "камеры" (значит и башни) туда, откуда
+## стреляли, даже если цель сейчас не видна. Если после разворота она уже в конусе — сразу TRACK.
 func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	if killer == null or not is_instance_valid(killer) or killer == _body:
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
+	_wander_holding = false
 	if state == State.SEARCH and _can_see(killer):
 		_enter_track(killer)
 
@@ -265,9 +303,9 @@ func _setup_fov_debug_draw() -> void:
 	# с "Parent node is busy setting up children" (тот же класс проблемы, что и в main.gd).
 	_body.add_child.call_deferred(_fov_debug_mesh)
 
-## Точка на дуге сектора в ЛОКАЛЬНЫХ координатах бота: local_deg=0 — прямо вперёд по корпусу
-## (локальный -Z, та же система отсчёта, что и fov_min_deg/fov_max_deg/_can_see()).
-func _local_fov_point(local_deg: float, radius: float, height: float) -> Vector3:
+## Точка в ЛОКАЛЬНЫХ координатах бота: local_deg=0 — прямо вперёд по корпусу (локальный -Z,
+## та же система отсчёта, что и rotation.y у Turret).
+func _local_point(local_deg: float, radius: float, height: float) -> Vector3:
 	var rad: float = deg_to_rad(local_deg)
 	return Vector3(-sin(rad) * radius, height, -cos(rad) * radius)
 
@@ -275,42 +313,49 @@ func _update_fov_debug_draw() -> void:
 	var mesh: ImmediateMesh = _fov_debug_mesh.mesh
 	mesh.clear_surfaces()
 
-	const SEGMENTS := 24
+	const SEGMENTS := 16
 	const HEIGHT := 0.55  # чуть выше корпуса — видно поверх HullMesh, не тонет в земле
 	var radius: float = vision_range
-	var fill_color: Color = Color(1.0, 0.15, 0.1, 0.22) if state == State.TRACK else Color(0.15, 0.9, 0.2, 0.16)
+	var fill_color: Color = Color(1.0, 0.15, 0.1, 0.28) if state == State.TRACK else Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
+
+	# ТЕКУЩИЙ конус обзора — центр на _look_yaw (в локальных координатах бота), не на
+	# направлении корпуса: веер движется вместе с блужданием/слежением взгляда.
+	var look_local_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	var cone_min_deg: float = look_local_deg - look_cone_deg * 0.5
+	var cone_max_deg: float = look_local_deg + look_cone_deg * 0.5
 
 	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 	mesh.surface_set_color(fill_color)
-	var prev_point: Vector3 = _local_fov_point(fov_min_deg, radius, HEIGHT)
+	var prev_point: Vector3 = _local_point(cone_min_deg, radius, HEIGHT)
 	for i in range(1, SEGMENTS + 1):
 		var t: float = float(i) / float(SEGMENTS)
-		var deg: float = lerp(fov_min_deg, fov_max_deg, t)
-		var cur_point: Vector3 = _local_fov_point(deg, radius, HEIGHT)
+		var deg: float = lerp(cone_min_deg, cone_max_deg, t)
+		var cur_point: Vector3 = _local_point(deg, radius, HEIGHT)
 		mesh.surface_add_vertex(center)
 		mesh.surface_add_vertex(prev_point)
 		mesh.surface_add_vertex(cur_point)
 		prev_point = cur_point
 	mesh.surface_end()
 
-	# Контур сектора (боковые радиусы + дуга) — ярче заливки, чтобы границы читались чётко.
+	# Контур конуса (боковые радиусы + дуга) — ярче заливки, чтобы границы читались чётко.
 	var outline_color := Color(fill_color.r, fill_color.g, fill_color.b, 0.9)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	mesh.surface_set_color(outline_color)
 	mesh.surface_add_vertex(center)
 	for i in range(SEGMENTS + 1):
 		var t2: float = float(i) / float(SEGMENTS)
-		var deg2: float = lerp(fov_min_deg, fov_max_deg, t2)
-		mesh.surface_add_vertex(_local_fov_point(deg2, radius, HEIGHT))
+		var deg2: float = lerp(cone_min_deg, cone_max_deg, t2)
+		mesh.surface_add_vertex(_local_point(deg2, radius, HEIGHT))
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
-	# Текущее направление обзора/башни (_look_yaw) — куда бот реально смотрит прямо сейчас.
-	var local_look_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	# Текущее РЕАЛЬНОЕ направление башни (не конус "камеры", а куда башня уже физически
+	# довернула) — turret уже дочерний узел _body, rotation.y у неё локальный без пересчёта.
+	var turret_local_deg: float = rad_to_deg(_turret.rotation.y)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	mesh.surface_set_color(Color(1.0, 1.0, 0.2, 0.95))
 	mesh.surface_add_vertex(center)
-	mesh.surface_add_vertex(_local_fov_point(local_look_deg, radius, HEIGHT))
+	mesh.surface_add_vertex(_local_point(turret_local_deg, radius, HEIGHT))
 	mesh.surface_end()
