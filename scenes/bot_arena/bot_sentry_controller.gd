@@ -221,6 +221,11 @@ var _has_waypoint_target: bool = false
 ## (локальный, относительно корпуса) выбранного луча-направления объезда — только для дебаг-отрисовки.
 var _avoid_side: int = 0
 var _avoid_active: bool = false
+## true, если выбранный сейчас борт объезда РЕАЛЬНО свободен (dist >= avoid_trigger_range), а не
+## просто "менее плохой" из двух. Пока false — ai_move_input держим на 0 (см. _drive_to_waypoint()):
+## танк доворачивается на месте, но НЕ едет туда, где ещё не убедился, что реально проедет —
+## иначе на пограничной дистанции он всё равно чиркает препятствие бортом на подъезде.
+var _avoid_chosen_clear: bool = true
 var _chosen_avoid_local_deg: float = 0.0
 var _last_lidar_fan: Array = []
 var _lidar_debug_mesh: MeshInstance3D
@@ -237,14 +242,22 @@ var _center_sweep_deg: float = 0.0
 var _center_sweep_dir: float = 1.0
 var _center_sweep_max_deg: float = 0.0
 
-## Антизастрял (см. заголовок @export-блока выше). _stuck_timer копится, пока едем без реального
-## продвижения; _stuck_reverse_timer > 0 — сейчас идёт короткий аварийный реверс.
-## _stuck_trigger_count — сколько раз подряд срабатывал реверс без обычного (не застрявшего)
-## движения между ними: 2 подряд на одной и той же стороне объезда → сторона явно не работает
-## на этом препятствии, пробуем другую (см. _drive_to_waypoint()).
+## Антизастрял, 4 эскалирующих тира (см. _drive_to_waypoint()) — каждый следующий включается,
+## когда предыдущий уже пробовался и не помог: (1) короткий аварийный реверс — _stuck_timer
+## копится, пока едем без реального продвижения, _stuck_reverse_timer>0 — реверс идёт прямо
+## сейчас; (2) 2 реверса подряд на ОДНОЙ стороне объезда — сторона явно не работает на этом
+## препятствии, флип на другую (_stuck_trigger_count); (3) флип стороны УЖЕ пробовали на этой же
+## цели и он тоже не спас (_stuck_side_flip_count) — проблема не в стороне, а в самом угле подхода
+## к точке (узкий проход под углом, а не влево/вправо-развилка) — бросаем текущую точку внутри
+## вейпоинта, берём новую случайную (другая точка почти всегда даёт другой угол подхода); (4) и
+## смена точки внутри вейпоинта не спасла ВТОРОЙ раз подряд (_stuck_reroute_count) — не долбим
+## третий раз в то же геометрическое узкое место, идём к следующему вейпоинту, вернёмся сюда
+## обычным ходом патруля позже.
 var _stuck_timer: float = 0.0
 var _stuck_reverse_timer: float = 0.0
 var _stuck_trigger_count: int = 0
+var _stuck_side_flip_count: int = 0
+var _stuck_reroute_count: int = 0
 var _brain_debug_label: Label
 
 func _ready() -> void:
@@ -536,27 +549,55 @@ func _drive_to_waypoint(delta: float) -> void:
 	# ДЛИННЫМ путём и на развороте, близком к 180°, залипал на антиподе цели, до конца не сходясь
 	# — ai_turn_input каждый кадр дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
 	_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
-	_movement.ai_move_input = 1.0 if absf(yaw_diff) < deg_to_rad(60.0) else 0.0
+	# Едем, только если направление либо не требует объезда вообще, либо выбранный борт объезда
+	# УЖЕ подтверждён реально свободным (_avoid_chosen_clear) — пока не подтверждён, доворачиваемся
+	# на месте (move_input=0), но НЕ едем туда, где ещё не убедились, что реально проедем. Раньше
+	# ехали к "менее плохому" борту сразу — на пограничной дистанции корпус чиркал препятствие,
+	# что физически выглядело как боковое скольжение (см. также фикс в tank_movement.gd).
+	var can_advance: bool = (not _avoid_active) or _avoid_chosen_clear
+	_movement.ai_move_input = 1.0 if (can_advance and absf(yaw_diff) < deg_to_rad(60.0)) else 0.0
 
 	# Антизастрял: едем, но физически почти не скользим (застряли на углу препятствия — лучей
-	# всего 3, геометрию корнера они иногда не ловят, см. @export-блок выше) — копим таймер,
-	# по истечении — короткий аварийный реверс.
+	# всего 3, геометрию корнера они иногда не ловят, см. @export-блок выше), ЛИБО стоим и ждём
+	# подтверждения свободного борта (can_advance=false) — оба случая копим тем же таймером, по
+	# истечении — короткий аварийный реверс (без этого "стоим и ждём" сам по себе не запускал бы
+	# ниже эскалацию — ai_move_input тут же 0, а ожидание свободного борта может не наступить
+	# никогда на симметрично узком препятствии).
 	var actual_speed: float = Vector2(_body.velocity.x, _body.velocity.z).length()
-	if _movement.ai_move_input > 0.5 and actual_speed < stuck_min_speed:
+	var waiting_for_clear_side: bool = _avoid_active and not _avoid_chosen_clear
+	if (_movement.ai_move_input > 0.5 or waiting_for_clear_side) and actual_speed < stuck_min_speed:
 		_stuck_timer += delta
 		if _stuck_timer >= stuck_detect_sec:
 			_stuck_timer = 0.0
 			_stuck_reverse_timer = stuck_reverse_sec
 			_stuck_trigger_count += 1
-			# Застряли подряд ДВАЖДЫ на одной и той же выбранной стороне объезда — сама сторона
-			# явно не работает на этом препятствии (например, реально более узкий проход именно
-			# там), пробуем другую вместо того, чтобы совершать один и тот же манёвр по кругу.
+			# Тир 2: застряли подряд ДВАЖДЫ на одной и той же выбранной стороне объезда — сама
+			# сторона явно не работает на этом препятствии, пробуем другую.
 			if _stuck_trigger_count >= 2 and _avoid_side != 0:
 				_avoid_side = -_avoid_side
 				_stuck_trigger_count = 0
+				_stuck_side_flip_count += 1
+				# Тир 3: флип стороны на ЭТОЙ ЖЕ цели уже пробовали, и снова застряли — не
+				# помогает ни одна из двух локальных сторон объезда, значит дело не в стороне,
+				# а в самом угле подхода (узкий проход под углом между двумя препятствиями —
+				# см. Bot AI Sandbox §11.4). Бросаем текущую точку, берём новую случайную внутри
+				# того же вейпоинта — другая точка почти всегда даёт другой угол подхода.
+				if _stuck_side_flip_count >= 2:
+					_stuck_side_flip_count = 0
+					_avoid_side = 0
+					_avoid_active = false
+					_stuck_reroute_count += 1
+					# Тир 4: смена точки внутри вейпоинта ТОЖЕ не спасла второй раз подряд — не
+					# долбим третий раз в то же геометрическое узкое место, идём к следующему
+					# вейпоинту (_advance_waypoint() сам резетит _stuck_reroute_count).
+					if _stuck_reroute_count >= 2:
+						_advance_waypoint()
+					else:
+						_has_waypoint_target = false
 	else:
 		_stuck_timer = 0.0
 		_stuck_trigger_count = 0
+		_stuck_side_flip_count = 0
 
 ## Продвигает оба качания на один физ.кадр — оба УГЛОМ, оба из одной и той же точки (центр
 ## корпуса): бортовые лучи — 0..avoid_sweep_max_deg (как дворники), центральный — вокруг
@@ -626,6 +667,7 @@ func _compute_travel_yaw(desired_world_yaw: float, rays: Array) -> float:
 	if center["dist"] >= avoid_trigger_range:
 		_avoid_side = 0
 		_avoid_active = false
+		_avoid_chosen_clear = true
 		return desired_world_yaw
 
 	_avoid_active = true
@@ -633,6 +675,9 @@ func _compute_travel_yaw(desired_world_yaw: float, rays: Array) -> float:
 		_avoid_side = -1 if sweep_left["dist"] >= sweep_right["dist"] else 1
 
 	var chosen: Dictionary = sweep_left if _avoid_side < 0 else sweep_right
+	# Выбранный борт может сам быть "просто менее плохим", а не реально свободным (оба сейчас
+	# ближе avoid_trigger_range) — в этом случае ai_move_input держим на нуле, см. _drive_to_waypoint().
+	_avoid_chosen_clear = chosen["dist"] >= avoid_trigger_range
 	_chosen_avoid_local_deg = chosen["local_deg"]
 	return chosen["world_yaw"]
 
@@ -650,6 +695,7 @@ func _pick_new_waypoint_target() -> void:
 func _advance_waypoint() -> void:
 	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 	_has_waypoint_target = false
+	_stuck_reroute_count = 0  # новый вейпоинт — прежнее узкое место больше не актуально
 
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain

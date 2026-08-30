@@ -43,6 +43,19 @@ func _try_capture_mouse() -> void:
 		return
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
+## Публичный переключатель для внешнего спектатор-режима (см. bot_arena.gd — камеры 1/2/3) —
+## делает то же, что произошло бы естественно при фокусе окна/потере фокуса, но по явной команде,
+## а не по событию окна.
+func activate() -> void:
+	is_active = true
+	_camera.current = true
+	if get_window().has_focus():
+		_try_capture_mouse()
+
+func deactivate() -> void:
+	is_active = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
 func _on_window_focus_entered() -> void:
 	_try_capture_mouse()
 

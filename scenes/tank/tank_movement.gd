@@ -64,4 +64,18 @@ func _physics_process(delta: float) -> void:
 	var new_horizontal: Vector3 = current_horizontal.move_toward(target_horizontal, acceleration * delta)
 	_body.velocity.x = new_horizontal.x
 	_body.velocity.z = new_horizontal.z
+
+	var right: Vector3 = _body.global_transform.basis.x
+	var pos_before: Vector3 = _body.global_position
 	_body.move_and_slide()
+
+	# Танк — гусеничный, боком двигаться не может НИКОГДА (см. CLAUDE.md). move_and_slide()
+	# при контакте с препятствием под углом штатно "съезжает" вдоль касательной поверхности —
+	# нормальное поведение для персонажа, но недопустимо для танка (визуально читается как
+	# скольжение бортом). Гасим боковую (вдоль right, перпендикулярно корпусу) составляющую
+	# ФАКТИЧЕСКОГО смещения этого кадра — оставляем только вперёд/назад; вертикаль (гравитация/
+	# пол) не трогаем, только горизонтальный снос.
+	var actual_delta: Vector3 = _body.global_position - pos_before
+	var lateral_delta: float = actual_delta.dot(right)
+	_body.global_position -= right * lateral_delta
+	_body.velocity -= right * right.dot(_body.velocity)

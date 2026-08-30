@@ -36,13 +36,25 @@ albedo_color = Color(0.25, 0.28, 0.35, 1)
 size = Vector3(2, 2, 2)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2uusy"]
-size = Vector3(4, 2.5, 4)
+size = Vector3(2, 1.25, 2)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_execi"]
 albedo_color = Color(0.6, 0.35, 0.15, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_j8k2e"]
-size = Vector3(4, 2.5, 4)
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_execi"]
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_0hb1j"]
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_oubrc"]
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_usroo"]
+size = Vector3(2, 1.25, 2)
 
 [node name="BotArena" type="Node3D" unique_id=281684750]
 script = ExtResource("1_idf45")
@@ -118,7 +130,7 @@ script = ExtResource("3_idf45")
 script = ExtResource("7_execi")
 
 [node name="Obstacle1" type="StaticBody3D" parent="." unique_id=380999417]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.33, 1.25, -17.5)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.33, 0.625, -17.5)
 collision_mask = 0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacle1" unique_id=76324787]
@@ -127,3 +139,33 @@ shape = SubResource("BoxShape3D_2uusy")
 [node name="Mesh" type="MeshInstance3D" parent="Obstacle1" unique_id=455874593]
 material_override = SubResource("StandardMaterial3D_execi")
 mesh = SubResource("BoxMesh_j8k2e")
+
+[node name="Obstacle2" type="StaticBody3D" parent="." unique_id=166984192]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.625, -25)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacle2" unique_id=2030595045]
+shape = SubResource("BoxShape3D_execi")
+
+[node name="Mesh" type="MeshInstance3D" parent="Obstacle2" unique_id=86441561]
+material_override = SubResource("StandardMaterial3D_execi")
+mesh = SubResource("BoxMesh_0hb1j")
+
+[node name="Obstacle3" type="StaticBody3D" parent="." unique_id=870157358]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.33, 0.625, -17.5)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacle3" unique_id=2043710748]
+shape = SubResource("BoxShape3D_oubrc")
+
+[node name="Mesh" type="MeshInstance3D" parent="Obstacle3" unique_id=1685520976]
+material_override = SubResource("StandardMaterial3D_execi")
+mesh = SubResource("BoxMesh_usroo")
+
+[node name="ObjectiveCamera" type="Camera3D" parent="." unique_id=1090300878]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13, -6)
+
+[node name="OverviewCamera" type="Camera3D" parent="." unique_id=134165703]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 45, 0)
+projection = 1
+size = 80.0

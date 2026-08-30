@@ -41,7 +41,15 @@ misconfiguration. Point it back at `Main.tscn` to run the actual 5×5 game.
 under the root (`tank.gd`, which only holds `team`/`is_attacker()`), each independently
 toggled between player and AI control via its own `is_player_controlled: bool`:
 
-- `TankMovement` — tracks, reads `Input` or `ai_move_input`/`ai_turn_input`.
+- `TankMovement` — tracks, reads `Input` or `ai_move_input`/`ai_turn_input`. Only forward/back +
+  hull rotation are ever commanded (no strafe axis exists), but `move_and_slide()` on its own will
+  still glide the body sideways along a collision tangent when it contacts geometry at an angle —
+  normal for a generic character, wrong for a tank. `_physics_process()` corrects for this every
+  frame: after `move_and_slide()`, it discards whatever component of the frame's *actual* resulting
+  displacement/velocity is perpendicular to the hull's forward axis, keeping only forward/back. Found
+  via the bot-AI sandbox's obstacle-avoidance work (see the Bot AI Sandbox vault doc) when the bot
+  visibly skidded sideways brushing a corner — same underlying `move_and_slide()` behavior applies to
+  the player too, just less obvious since a human steers away from corners instinctively.
 - `CameraRig` (`SpringArm3D`) — player only; free-look orbit independent of hull rotation. Its
   `rotation.y` is recomputed every physics frame as `world_yaw − body.rotation.y`, so turning the
   hull never drags the camera with it.
