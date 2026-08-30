@@ -3,17 +3,24 @@ extends Node
 ## Отдельно от продакшен-ИИ scenes/tank/tank_ai_controller.gd (ТЗ §9, патруль/маскировка) —
 ## тот не трогаем.
 ##
-## Модель обзора — по аналогии с игроком: у игрока камера смотрит в конкретную сторону, и то,
-## что вне её кадра, он просто не видит, пока не развернёт камеру (см. camera_rig.gd).
-## У бота роль "камеры" играет _look_yaw — им управляет ТОЛЬКО этот скрипт. Триггер обнаружения
-## цели — попадание в ОСНОВНОЙ конус (look_cone_deg, центр — _look_yaw, радиус — vision_range)
-## ИЛИ в доп. секторе (secondary_cone_deg, зафиксирован на РЕАЛЬНОМ угле башни, а не на _look_yaw
-## — см. _can_see()): без него цель, оказавшаяся ровно там, откуда взгляд только что увели на
-## новый угол блуждания, на миг выпадала бы из вида — основной конус скачет мгновенно вместе с
-## _look_yaw, а башня туда ещё доворачивается.
-## Башня — не мозг, а просто следует за _look_yaw (target_yaw = f(_look_yaw), физический
-## доворот делает TurretController.rotate_toward) — ровно так же, как у игрока башня трогается
-## вслед за камерой с задержкой, а не сама решает, куда смотреть.
+## Модель обзора (v2, по прямому запросу — "как в других играх"): бот ВСЕГДА видит то, что перед
+## корпусом, ПЛЮС то, куда сейчас физически повёрнута башня. Два независимых конуса, оба нужны
+## для _can_see():
+## - ГЛАВНЫЙ (look_cone_deg, радиус vision_range) — жёстко зафиксирован на направлении КОРПУСА
+##   (_body.rotation.y), НЕ блуждает и не зависит от башни/взгляда вообще. Широкий (шире, чем был
+##   раньше) — "видит противника перед собой" безусловно, пока цель физически в поле зрения и не
+##   загорожена.
+## - ПРИЦЕЛЬНЫЙ (secondary_cone_deg, тот же vision_range) — узкий, зафиксирован на РЕАЛЬНОМ
+##   текущем угле башни (_body.rotation.y + _turret.rotation.y) — "или в направлении поворота
+##   башни", как ствол/прицел в других танковых играх.
+## Случайное блуждание (_wander()/_look_yaw, см. ниже) управляет ТОЛЬКО башней, никакого влияния
+## на главный конус больше нет: сначала (в _pick_new_wander_target()) выбирается угол, куда нужно
+## повернуться — тот самый "линией определяем угол", — затем TurretController.rotate_toward()
+## физически доворачивает башню туда, и уже РЕАЛЬНЫЙ (не целевой) угол башни двигает прицельный
+## конус. Раньше было наоборот (абстрактная "камера" мгновенно скакала на новый угол блуждания,
+## двигая главный конус, а башня только физически догоняла её с задержкой) — эта версия проще и
+## буквально соответствует тому, что игрок видит на экране: обзор бота = хулл-конус + туда, куда
+## сейчас направлен ствол, без скрытой "невидимой камеры".
 ##
 ## РОЛЬ (role) + ДВИЖОК ВЫБОРА СТЕЙТА (_think()) — приоритет один и тот же для всех ролей:
 ##   1. Видна цель (только что замечена ЛИБО уже отслеживаемая и всё ещё видна) → DEFEND.
@@ -94,18 +101,19 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var role: Role = Role.ACHIEVER
 @export var difficulty: Difficulty = Difficulty.MEDIUM
 
-## Радиус и полуширина ТЕКУЩЕГО (движущегося) конуса обзора — реальный триггер обнаружения.
+## Радиус обзора (общий для обоих конусов) и полуширина ГЛАВНОГО конуса — жёстко на направлении
+## корпуса, всегда активен, независимо от башни/блуждания (см. _can_see() и заголовок файла).
+## Шире, чем в v1 (была движущаяся "камера") — по прямому запросу, "как в других играх".
 @export var vision_range: float = 10.0
-@export var look_cone_deg: float = 55.0  # полный угол конуса вокруг _look_yaw
+@export var look_cone_deg: float = 100.0  # полный угол конуса вокруг направления корпуса
 @export var fire_range: float = 8.0
 @export var fire_aim_tolerance_deg: float = 5.0
 
-## Доп. сектор — зафиксирован на РЕАЛЬНОМ текущем угле башни (не на _look_yaw, куда башня
-## только стремится): когда _look_yaw скачком меняется на новый угол блуждания, башня довора́
-## чивается туда не мгновенно, а основной конус уже переехал на новое место — цель, которая
-## буквально только что была на границе СТАРОГО направления, на миг выпадает из вида, хотя
-## башня физически ещё смотрит рядом с ней. Этот сектор закрывает именно этот промежуток.
-## См. _can_see() — засчитывается, если цель попала В ЛЮБОЙ из двух секторов.
+## ПРИЦЕЛЬНЫЙ сектор — узкий, зафиксирован на РЕАЛЬНОМ текущем угле башни (не на _look_yaw, куда
+## башня только стремится, а именно на _turret.rotation.y — куда ствол физически повёрнут прямо
+## сейчас). Даёт видеть цель в стороне/сзади корпуса, если бот как раз довернул туда башню
+## (блуждание, слежение за целью, разворот на выстрел) — "или в направлении поворота башни".
+## См. _can_see() — засчитывается, если цель попала В ЛЮБОЙ из двух секторов (главный ИЛИ этот).
 @export var secondary_cone_deg: float = 15.0
 
 ## Обзор при блуждании (IDLE и, с уклоном, PATROL) — полный круг: следующий угол может быть
@@ -167,9 +175,10 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var avoid_close_range: float = 1.5
 @export var avoid_close_turn_tolerance_deg: float = 8.0
 
-## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ТЕКУЩИЙ конус обзора
-## (look_cone_deg вокруг _look_yaw, радиус vision_range); цвет = текущий стейт (зелёный IDLE,
-## голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута башня.
+## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ГЛАВНЫЙ конус обзора
+## (look_cone_deg, жёстко по направлению корпуса, радиус vision_range); цвет = текущий стейт
+## (зелёный IDLE, голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
+## башня; узкий белый контур вокруг неё — прицельный конус (secondary_cone_deg).
 @export var show_fov_debug: bool = true
 ## Веер лучей объезда препятствий (зелёный — чисто, оранжевый — замечено, красный — перекрыто в
 ## пределах avoid_trigger_range, голубой — выбранное направление объезда). Виден только в PATROL.
@@ -186,7 +195,7 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 const _DIFFICULTY_PRESETS := {
 	Difficulty.EASY: {
 		"vision_range": 6.0,
-		"look_cone_deg": 40.0,
+		"look_cone_deg": 75.0,
 		"fire_range": 5.0,
 		"fire_aim_tolerance_deg": 9.0,
 		"wander_hold_min_sec": 2.0,
@@ -196,7 +205,7 @@ const _DIFFICULTY_PRESETS := {
 	},
 	Difficulty.HARD: {
 		"vision_range": 14.0,
-		"look_cone_deg": 70.0,
+		"look_cone_deg": 130.0,
 		"fire_range": 11.0,
 		"fire_aim_tolerance_deg": 3.0,
 		"wander_hold_min_sec": 0.5,
@@ -216,7 +225,9 @@ const _DIFFICULTY_PRESETS := {
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 
 var state: State = State.IDLE
-var _look_yaw: float = 0.0  # мировой угол "камеры" бота — центр конуса обзора, ведёт башню
+## Мировой угол, куда сейчас должна повернуться БАШНЯ (v2 — только башня, на главный конус
+## обзора больше не влияет, см. заголовок файла).
+var _look_yaw: float = 0.0
 var _current_target: Node = null
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
@@ -410,14 +421,11 @@ func _scan_for_target() -> Node:
 			return other
 	return null
 
-## Триггер обнаружения — попадание в ЛЮБОЙ из двух секторов: основной (look_cone_deg вокруг
-## _look_yaw — куда бот сейчас "хочет" смотреть/блуждает/следит) ИЛИ дополнительный
-## (secondary_cone_deg вокруг РЕАЛЬНОГО угла башни _turret.rotation.y — куда она физически
-## повёрнута прямо сейчас). Оба движутся, но по-разному: основной скачет мгновенно на новый
-## _look_yaw при смене угла блуждания, а башня довора́чивается туда плавно — доп. сектор
-## перекрывает как раз тот промежуток, что основной уже покинул, а башня ещё нет (см. @export
-## выше). Конусы движутся вместе с блужданием взгляда/слежением за целью, ровно как обзор
-## игрока следует за его камерой.
+## Триггер обнаружения — попадание в ЛЮБОЙ из двух конусов (v2, см. заголовок файла): ГЛАВНЫЙ
+## (look_cone_deg, жёстко на направлении корпуса — "видит перед собой" безусловно) ИЛИ
+## ПРИЦЕЛЬНЫЙ (secondary_cone_deg вокруг РЕАЛЬНОГО угла башни _turret.rotation.y — "или в
+## направлении поворота башни"). Главный конус вообще не двигается сам по себе (только корпус
+## поворотом); прицельный следует за физическим поворотом башни (блуждание/слежение за целью).
 func _can_see(target: Node3D) -> bool:
 	var to_target: Vector3 = target.global_position - _turret.global_position
 	var dist: float = to_target.length()
@@ -425,14 +433,14 @@ func _can_see(target: Node3D) -> bool:
 		return false
 	var world_yaw: float = _yaw_to_world_point(_turret.global_position, target.global_position)
 
-	var look_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - _look_yaw, -PI, PI)))
-	var in_main_cone: bool = look_diff_deg <= look_cone_deg * 0.5
+	var hull_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - _body.rotation.y, -PI, PI)))
+	var in_hull_cone: bool = hull_diff_deg <= look_cone_deg * 0.5
 
 	var turret_world_yaw: float = _body.rotation.y + _turret.rotation.y
 	var turret_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - turret_world_yaw, -PI, PI)))
-	var in_secondary_cone: bool = turret_diff_deg <= secondary_cone_deg * 0.5
+	var in_turret_cone: bool = turret_diff_deg <= secondary_cone_deg * 0.5
 
-	if not (in_main_cone or in_secondary_cone):
+	if not (in_hull_cone or in_turret_cone):
 		return false
 	var space_state := _body.get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
@@ -473,11 +481,12 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	if state != State.DEFEND and _can_see(killer):
 		_enter_defend(killer)
 
-## Блуждание "камеры" в IDLE/PATROL — имитация того, как игрок крутит камеру осматриваясь: то
-## вперёд, то в сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw —
-## просто ждём (доворот делает TurretController); дошли — держим wander_hold_min_sec..
-## wander_hold_max_sec, затем выбираем новый угол. biased_forward=true (PATROL) — чаще смотрим
-## по ходу движения, а не куда попало.
+## Блуждание БАШНИ в IDLE/PATROL (v2 — только башня, см. заголовок файла) — то вперёд, то в
+## сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw — просто ждём
+## (физический доворот делает TurretController.rotate_toward()); дошли — держим
+## wander_hold_min_sec..wander_hold_max_sec, затем выбираем новый угол (_pick_new_wander_target()
+## — "сперва линией определяем угол"). biased_forward=true (PATROL) — чаще целимся по ходу
+## движения, а не куда попало.
 func _wander(delta: float, biased_forward: bool) -> void:
 	if _wander_holding:
 		_wander_hold_timer -= delta
@@ -770,11 +779,10 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
 
-	# ТЕКУЩИЙ конус обзора — центр на _look_yaw (в локальных координатах бота), не на
-	# направлении корпуса: веер движется вместе с блужданием/слежением взгляда.
-	var look_local_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
-	var cone_min_deg: float = look_local_deg - look_cone_deg * 0.5
-	var cone_max_deg: float = look_local_deg + look_cone_deg * 0.5
+	# ГЛАВНЫЙ конус обзора (v2) — жёстко на направлении корпуса (0° в локальных координатах
+	# бота), НЕ двигается сам по себе — только вместе с поворотом всего корпуса.
+	var cone_min_deg: float = -look_cone_deg * 0.5
+	var cone_max_deg: float = look_cone_deg * 0.5
 
 	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -802,8 +810,8 @@ func _update_fov_debug_draw() -> void:
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
-	# Текущее РЕАЛЬНОЕ направление башни (не конус "камеры", а куда башня уже физически
-	# довернула) — turret уже дочерний узел _body, rotation.y у неё локальный без пересчёта.
+	# Текущее РЕАЛЬНОЕ направление башни (куда башня уже физически довернула, не куда стремится) —
+	# turret уже дочерний узел _body, rotation.y у неё локальный без пересчёта.
 	var turret_local_deg: float = rad_to_deg(_turret.rotation.y)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	mesh.surface_set_color(Color(1.0, 1.0, 0.2, 0.95))
@@ -811,9 +819,9 @@ func _update_fov_debug_draw() -> void:
 	mesh.surface_add_vertex(_local_point(turret_local_deg, radius, HEIGHT))
 	mesh.surface_end()
 
-	# Доп. сектор (см. _can_see()) — узкий контур белым, зафиксирован на РЕАЛЬНОМ угле башни
-	# (том же turret_local_deg, что и жёлтая линия выше), не на _look_yaw. Только контур, не
-	# заливка — чтобы не забивать читаемость основного конуса поверх него.
+	# Прицельный сектор (см. _can_see()) — узкий контур белым, зафиксирован на РЕАЛЬНОМ угле
+	# башни (том же turret_local_deg, что и жёлтая линия выше), не на _look_yaw. Только контур,
+	# не заливка — чтобы не забивать читаемость главного конуса поверх него.
 	var sec_min_deg: float = turret_local_deg - secondary_cone_deg * 0.5
 	var sec_max_deg: float = turret_local_deg + secondary_cone_deg * 0.5
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
@@ -824,6 +832,17 @@ func _update_fov_debug_draw() -> void:
 		var deg3: float = lerp(sec_min_deg, sec_max_deg, t3)
 		mesh.surface_add_vertex(_local_point(deg3, radius, HEIGHT))
 	mesh.surface_add_vertex(center)
+	mesh.surface_end()
+
+	# Целевой угол блуждания башни (_look_yaw — куда башня СЕЙЧАС стремится довернуться, "линия",
+	# см. заголовок файла) — короткая пунктирная-по-цвету (сплошная линия, ImmediateMesh не умеет
+	# пунктир) фиолетовая метка ближе к центру, чтобы не путать с реальным углом башни (жёлтая,
+	# полной длины) выше — видно, куда башня едет, ДО того как физически туда довернёт.
+	var wander_target_local_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_set_color(Color(0.85, 0.2, 0.95, 0.9))
+	mesh.surface_add_vertex(center)
+	mesh.surface_add_vertex(_local_point(wander_target_local_deg, radius * 0.5, HEIGHT))
 	mesh.surface_end()
 
 ## Тот же приём, что и с конусом обзора (_setup_fov_debug_draw) — отдельный MeshInstance3D,
