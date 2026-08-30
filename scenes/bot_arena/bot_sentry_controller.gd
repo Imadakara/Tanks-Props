@@ -153,6 +153,20 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
 
+## Множитель к TankMovement.move_speed (см. _ready()) — по прямому запросу боты EASY/MEDIUM должны
+## быть медленнее танка игрока, 0.75 = на 25% медленнее. HARD возвращает полную скорость игрока
+## обратно в своём пресете (см. _DIFFICULTY_PRESETS) — сложность в первую очередь про осведомлённость
+## и реакцию, не про то, что HARD-бот физически едет быстрее MEDIUM/EASY.
+@export var move_speed_multiplier: float = 0.75
+
+## Дистанция, ближе которой препятствие считается "практически вплотную" — резко доворачивать
+## ВО ВРЕМЯ движения на такой дистанции реально задевает препятствие корпусом (шире, чем тонкий
+## луч-датчик, который его засёк). См. _drive_to_waypoint() — на этой дистанции бот полностью
+## останавливается и доворачивается НА МЕСТЕ (гусеницы это позволяют без всякого "обмана" — тот
+## же принцип, что и обычный поворот корпуса), едет дальше только когда почти довернул.
+@export var avoid_close_range: float = 1.5
+@export var avoid_close_turn_tolerance_deg: float = 8.0
+
 ## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ТЕКУЩИЙ конус обзора
 ## (look_cone_deg вокруг _look_yaw, радиус vision_range); цвет = текущий стейт (зелёный IDLE,
 ## голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута башня.
@@ -189,6 +203,7 @@ const _DIFFICULTY_PRESETS := {
 		"wander_hold_max_sec": 1.2,
 		"think_interval_sec": 0.05,
 		"turret_turn_speed": 2.2,
+		"move_speed_multiplier": 1.0,  # единственный уровень БЕЗ замедления — как танк игрока
 	},
 }
 
@@ -272,6 +287,7 @@ func _ready() -> void:
 	_weapon.is_player_controlled = false
 	_disguise.is_player_controlled = false
 	_turret.turn_speed = turret_turn_speed
+	_movement.move_speed *= move_speed_multiplier
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
 	_collect_waypoints()
@@ -309,6 +325,8 @@ func _apply_difficulty_preset() -> void:
 	wander_hold_max_sec = preset["wander_hold_max_sec"]
 	think_interval_sec = preset["think_interval_sec"]
 	turret_turn_speed = preset["turret_turn_speed"]
+	if preset.has("move_speed_multiplier"):
+		move_speed_multiplier = preset["move_speed_multiplier"]
 
 ## Вейпоинты ищутся на КОРНЕ текущей сцены (не в "Map" — у этой тестовой арены нет отдельного
 ## Map-узла, всё лежит прямо в BotArena.tscn), по префиксу имени "Waypoint", сортировка по
@@ -549,22 +567,34 @@ func _drive_to_waypoint(delta: float) -> void:
 	# ДЛИННЫМ путём и на развороте, близком к 180°, залипал на антиподе цели, до конца не сходясь
 	# — ai_turn_input каждый кадр дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
 	_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
+
+	# Препятствие "практически вплотную" (center-луч короче avoid_close_range) — резкий доворот
+	# ВО ВРЕМЯ движения на такой дистанции реально задевает его корпусом (луч тонкий, корпус
+	# широкий). По прямому запросу: на этой дистанции ХОДОВАЯ полностью останавливается и корпус
+	# доворачивается НА МЕСТЕ (гусеницы это позволяют без обмана — тот же поворот, что и всегда,
+	# просто без одновременного хода), едем дальше только когда угол почти сошёлся
+	# (avoid_close_turn_tolerance_deg — узкий допуск, а не обычные 60°, которые нормально дают
+	# смягчённую дугу на безопасной дистанции, но здесь означали бы въезд боком в препятствие).
+	var center_dist: float = _last_lidar_fan[0]["dist"]
+	var too_close: bool = _avoid_active and center_dist < avoid_close_range
+	var turn_tolerance_deg: float = avoid_close_turn_tolerance_deg if too_close else 60.0
+
 	# Едем, только если направление либо не требует объезда вообще, либо выбранный борт объезда
 	# УЖЕ подтверждён реально свободным (_avoid_chosen_clear) — пока не подтверждён, доворачиваемся
 	# на месте (move_input=0), но НЕ едем туда, где ещё не убедились, что реально проедем. Раньше
 	# ехали к "менее плохому" борту сразу — на пограничной дистанции корпус чиркал препятствие,
 	# что физически выглядело как боковое скольжение (см. также фикс в tank_movement.gd).
 	var can_advance: bool = (not _avoid_active) or _avoid_chosen_clear
-	_movement.ai_move_input = 1.0 if (can_advance and absf(yaw_diff) < deg_to_rad(60.0)) else 0.0
+	_movement.ai_move_input = 1.0 if (can_advance and absf(yaw_diff) < deg_to_rad(turn_tolerance_deg)) else 0.0
 
 	# Антизастрял: едем, но физически почти не скользим (застряли на углу препятствия — лучей
 	# всего 3, геометрию корнера они иногда не ловят, см. @export-блок выше), ЛИБО стоим и ждём
-	# подтверждения свободного борта (can_advance=false) — оба случая копим тем же таймером, по
-	# истечении — короткий аварийный реверс (без этого "стоим и ждём" сам по себе не запускал бы
-	# ниже эскалацию — ai_move_input тут же 0, а ожидание свободного борта может не наступить
+	# (подтверждения свободного борта, ИЛИ доворота на месте у самого препятствия) — все три случая
+	# копим тем же таймером, по истечении — короткий аварийный реверс (без этого "стоим и ждём" сам
+	# по себе не запускал бы ниже эскалацию — ai_move_input тут же 0, а ожидание может не наступить
 	# никогда на симметрично узком препятствии).
 	var actual_speed: float = Vector2(_body.velocity.x, _body.velocity.z).length()
-	var waiting_for_clear_side: bool = _avoid_active and not _avoid_chosen_clear
+	var waiting_for_clear_side: bool = _avoid_active and (not _avoid_chosen_clear or too_close)
 	if (_movement.ai_move_input > 0.5 or waiting_for_clear_side) and actual_speed < stuck_min_speed:
 		_stuck_timer += delta
 		if _stuck_timer >= stuck_detect_sec:
