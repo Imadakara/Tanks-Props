@@ -44,16 +44,21 @@ albedo_color = Color(0.6, 0.35, 0.15, 1)
 [sub_resource type="BoxMesh" id="BoxMesh_j8k2e"]
 size = Vector3(2, 1.25, 2)
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_execi"]
-size = Vector3(2, 1.25, 2)
-
-[sub_resource type="BoxMesh" id="BoxMesh_0hb1j"]
-size = Vector3(2, 1.25, 2)
-
 [sub_resource type="BoxShape3D" id="BoxShape3D_oubrc"]
 size = Vector3(2, 1.25, 2)
 
 [sub_resource type="BoxMesh" id="BoxMesh_usroo"]
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_execi"]
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_j8k2e"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.95, 0.15, 0.05, 0.55)
+
+[sub_resource type="BoxMesh" id="BoxMesh_0hb1j"]
 size = Vector3(2, 1.25, 2)
 
 [node name="BotArena" type="Node3D" unique_id=281684750]
@@ -140,17 +145,6 @@ shape = SubResource("BoxShape3D_2uusy")
 material_override = SubResource("StandardMaterial3D_execi")
 mesh = SubResource("BoxMesh_j8k2e")
 
-[node name="Obstacle2" type="StaticBody3D" parent="." unique_id=166984192]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.625, -25)
-collision_mask = 0
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacle2" unique_id=2030595045]
-shape = SubResource("BoxShape3D_execi")
-
-[node name="Mesh" type="MeshInstance3D" parent="Obstacle2" unique_id=86441561]
-material_override = SubResource("StandardMaterial3D_execi")
-mesh = SubResource("BoxMesh_0hb1j")
-
 [node name="Obstacle3" type="StaticBody3D" parent="." unique_id=870157358]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.33, 0.625, -17.5)
 collision_mask = 0
@@ -169,3 +163,15 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13, -6)
 transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 45, 0)
 projection = 1
 size = 80.0
+
+[node name="HazardZone1" type="Area3D" parent="." unique_id=110586392]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.625, -25)
+collision_layer = 4
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="HazardZone1" unique_id=900768991]
+shape = SubResource("BoxShape3D_execi")
+
+[node name="Mesh" type="MeshInstance3D" parent="HazardZone1" unique_id=1760489742]
+material_override = SubResource("StandardMaterial3D_j8k2e")
+mesh = SubResource("BoxMesh_0hb1j")

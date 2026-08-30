@@ -72,6 +72,15 @@ extends Node
 ## ВСЕГДА смена желаемого угла поворота корпуса, а не какое-либо боковое смещение; сам разворот
 ## идёт тем же путём, что и обычная наводка на цель (ai_turn_input/ai_move_input, TankMovement).
 ##
+## Hazard-зоны (ямы/пропасти/границы карты — по прямому запросу) — те же три луча, тот же
+## _compute_travel_yaw(), никакой отдельной логики: query.collide_with_areas=true +
+## collision_mask |= 4 в _scan_obstacle_rays(), маркеры — Area3D на слое 4 (см. HazardZoneN в
+## BotArena.tscn). Area3D физически инертна по определению Godot — раз она не входит в
+## collision_mask самих танков, ни игрок, ни бот об неё не спотыкаются, но луч её видит и
+## объезжает как обычное препятствие. Один и тот же механизм что для сплошной коробки, что для
+## дыры в полу — разница только в том, что кладёт level-дизайнер: StaticBody3D (толкает всех) или
+## Area3D на слое 4 (видна только этому лучу).
+##
 ## Реакция на обстрел: HealthComponent.damaged() несёт killer — при попадании (в любом стейте,
 ## кроме уже-DEFEND) бот разворачивает "камеру" в сторону выстрела; видна оттуда — сразу DEFEND.
 ##
@@ -284,6 +293,12 @@ var _stuck_reverse_timer: float = 0.0
 var _stuck_trigger_count: int = 0
 var _stuck_side_flip_count: int = 0
 var _stuck_reroute_count: int = 0
+
+## Кэш последней проверки заднего луча (_check_rear_clear()) — только для дебаг-отрисовки/панели,
+## не для логики (сама логика читает возврат функции напрямую в момент вызова).
+var _last_rear_dist: float = 0.0
+var _last_rear_clear: bool = true
+
 var _brain_debug_label: Label
 
 func _ready() -> void:
@@ -608,7 +623,13 @@ func _drive_to_waypoint(delta: float) -> void:
 		_stuck_timer += delta
 		if _stuck_timer >= stuck_detect_sec:
 			_stuck_timer = 0.0
-			_stuck_reverse_timer = stuck_reverse_sec
+			# Слепой реверс мог сдать назад в стену за кормой или (после hazard-зон) прямо в яму —
+			# перед реверсом ОДИН раз (не каждый кадр, см. _check_rear_clear()) смотрим задним
+			# лучом, свободно ли сзади; если нет — физически не сдаём назад, но счётчик всё равно
+			# растёт, эскалация тиров ниже продолжается как обычно (иначе бот, зажатый спереди и
+			# сзади, стоял бы вечно, так и не дойдя до смены точки/маршрута).
+			if _check_rear_clear():
+				_stuck_reverse_timer = stuck_reverse_sec
 			_stuck_trigger_count += 1
 			# Тир 2: застряли подряд ДВАЖДЫ на одной и той же выбранной стороне объезда — сама
 			# сторона явно не работает на этом препятствии, пробуем другую.
@@ -682,7 +703,11 @@ func _scan_obstacle_rays(desired_world_yaw: float) -> Array:
 		var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
 		var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * avoid_sensor_range)
 		query.exclude = [_body]
-		query.collision_mask = 1 | 2  # environment (препятствия) + tanks
+		query.collision_mask = 1 | 2 | 4  # environment + tanks + hazard zones (см. HazardZoneN)
+		# Hazard-зоны (ямы/пропасти/границы карты) — Area3D на слое 4, физически инертны для
+		# самих танков (не в их collision_mask), опознаются ТОЛЬКО этим лучом. Без этого флага
+		# raycast Area3D вообще не видит — только PhysicsBody3D (StaticBody/CharacterBody).
+		query.collide_with_areas = true
 		var result: Dictionary = space_state.intersect_ray(query)
 		var dist: float = avoid_sensor_range
 		var hit: bool = not result.is_empty()
@@ -690,6 +715,27 @@ func _scan_obstacle_rays(desired_world_yaw: float) -> Array:
 			dist = origin.distance_to(result["position"])
 		rays.append({"id": def["id"], "local_deg": rad_to_deg(wrapf(ray_yaw - body_yaw, -PI, PI)), "world_yaw": ray_yaw, "dist": dist, "hit": hit, "origin": origin, "dir": dir})
 	return rays
+
+## Луч СТРОГО назад от корпуса — считается ТОЛЬКО в момент срабатывания аварийного реверса (см.
+## _drive_to_waypoint()), не каждый физ.кадр, как основной 3-лучевой "лидар" выше: нужен редко,
+## не стоит тратить на него бюджет каждого тика (тот же принцип экономии, что и у самого лидара —
+## см. заголовок файла про масштаб 10×10+ ботов). Та же маска, что у лидара (окружение + танки +
+## hazard-зоны, слой 4) — без этого слепой реверс мог сдать назад в стену за кормой или (после
+## появления hazard-зон, §11.2) прямо в яму/пропасть. Результат кэшируется в _last_rear_dist/
+## _last_rear_clear только ради дебаг-отрисовки (_update_lidar_debug_draw()), не для логики.
+func _check_rear_clear() -> bool:
+	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
+	var rear_yaw: float = _body.rotation.y + PI
+	var dir := Vector3(-sin(rear_yaw), 0.0, -cos(rear_yaw))
+	var space_state := _body.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * avoid_sensor_range)
+	query.exclude = [_body]
+	query.collision_mask = 1 | 2 | 4
+	query.collide_with_areas = true
+	var result: Dictionary = space_state.intersect_ray(query)
+	_last_rear_dist = avoid_sensor_range if result.is_empty() else origin.distance_to(result["position"])
+	_last_rear_clear = _last_rear_dist >= avoid_trigger_range
+	return _last_rear_clear
 
 ## Решает, куда РЕАЛЬНО рулить: на цель напрямую, либо в объезд препятствия. "center"-луч
 ## (см. _scan_obstacle_rays()) перекрыт ближе avoid_trigger_range → включаем объезд: один раз
@@ -902,6 +948,20 @@ func _update_lidar_debug_draw() -> void:
 		mesh.surface_add_vertex(local_origin)
 		mesh.surface_add_vertex(to_local)
 	mesh.surface_end()
+
+	# Задний луч (см. _check_rear_clear()) — виден только пока реверс реально идёт (нет смысла
+	# показывать устаревшую проверку долгую секунду простоя между срабатываниями). Голубой —
+	# сзади свободно (реверс идёт по-настоящему), оранжевый — не свободно (реверс пропущен на
+	# этом срабатывании, см. _drive_to_waypoint()).
+	if _stuck_reverse_timer > 0.0:
+		var rear_color: Color = Color(0.2, 0.7, 0.95, 0.9) if _last_rear_clear else Color(0.95, 0.55, 0.1, 0.9)
+		mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+		mesh.surface_set_color(rear_color)
+		var rear_local_origin := Vector3(0.0, HEIGHT, 0.0)
+		var rear_to_local: Vector3 = rear_local_origin + Vector3(0.0, 0.0, 1.0) * _last_rear_dist
+		mesh.surface_add_vertex(rear_local_origin)
+		mesh.surface_add_vertex(rear_to_local)
+		mesh.surface_end()
 
 ## Текстовая панель "что сейчас в голове у бота" — отдельный CanvasLayer+Label поверх HUD (не
 ## трогаем разметку самого HUD.tscn — это дебаг конкретно этой песочницы, не часть продакшен-UI).
