@@ -301,6 +301,18 @@ var _last_rear_clear: bool = true
 
 var _brain_debug_label: Label
 
+## Статистика для дебаг-панели (по прямому запросу) — обе копятся с _ready(), никогда не
+## сбрасываются сами (переживают смену стейта/цели, в отличие от вейпоинт-прогресса):
+## _total_time_sec — сколько игрового времени (delta, значит уважает паузу/time_scale) прошло с
+## момента запуска этого бота; _leg_timer — копится, пока бот пытается дойти до ТЕКУЩЕГО
+## вейпоинта (см. _drive_to_waypoint()), сбрасывается в 0 при каждом _advance_waypoint(), но
+## непосредственно ПЕРЕД сбросом обновляет _max_leg_time_sec, если это новый рекорд — та самая
+## "максимальная обновляемая" метрика: растёт, если бот когда-либо шёл до вейпоинта дольше, чем
+## раньше (включая время застреваний/реверсов — это тоже часть "времени достижения").
+var _total_time_sec: float = 0.0
+var _leg_timer: float = 0.0
+var _max_leg_time_sec: float = 0.0
+
 func _ready() -> void:
 	_apply_difficulty_preset()
 	_center_sweep_max_deg = rad_to_deg(atan(hull_half_width / center_sweep_ref_distance))
@@ -365,6 +377,7 @@ func _collect_waypoints() -> void:
 	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
 
 func _physics_process(delta: float) -> void:
+	_total_time_sec += delta
 	_think_timer -= delta
 	if _think_timer <= 0.0:
 		_think_timer = think_interval_sec
@@ -550,6 +563,7 @@ func _pick_forward_biased_deg(current_local_deg: float) -> float:
 ## следующему (индекс всегда по модулю — патруль бесконечный). Тот же принцип наведения
 ## корпуса, что и в tank_ai_controller.gd._drive_toward().
 func _drive_to_waypoint(delta: float) -> void:
+	_leg_timer += delta  # копится, пока пытаемся дойти до текущего вейпоинта — см. _advance_waypoint()
 	if _waypoints.is_empty():
 		_movement.ai_move_input = 0.0
 		_movement.ai_turn_input = 0.0
@@ -778,6 +792,8 @@ func _pick_new_waypoint_target() -> void:
 	_has_waypoint_target = true
 
 func _advance_waypoint() -> void:
+	_max_leg_time_sec = max(_max_leg_time_sec, _leg_timer)  # рекорд — только обновляется, никогда не сбрасывается
+	_leg_timer = 0.0
 	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 	_has_waypoint_target = false
 	_stuck_reroute_count = 0  # новый вейпоинт — прежнее узкое место больше не актуально
@@ -992,6 +1008,7 @@ func _update_brain_debug_label() -> void:
 		return
 	var lines: Array = []
 	lines.append("=== BOT BRAIN ===")
+	lines.append("session: %.1f min   record leg: %.1fs" % [_total_time_sec / 60.0, _max_leg_time_sec])
 	lines.append("role: %s   difficulty: %s" % [Role.keys()[role], Difficulty.keys()[difficulty]])
 	lines.append("state: %s" % State.keys()[state])
 	match state:
