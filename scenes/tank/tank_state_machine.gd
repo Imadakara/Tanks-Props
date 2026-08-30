@@ -22,7 +22,11 @@ func _ready() -> void:
 	_reload_timer.one_shot = true
 	_disguise_timer.wait_time = GameConfig.disguise_duration_sec
 	_cooldown_timer.wait_time = GameConfig.disguise_cooldown_sec
-	_reload_timer.wait_time = GameConfig.reload_duration_sec
+	# reload_timer.wait_time НЕ кэшируется здесь — читается заново в request_fire() при каждом
+	# выстреле (см. ниже). Кэш в _ready() дал бы устаревшее значение там, где GameConfig
+	# переопределяется точечно уже ПОСЛЕ готовности этого узла (см. scenes/bot_arena/bot_arena.gd —
+	# кулдаун=1с для тестовой сцены, выставляется из корневого _ready(), а корневой _ready()
+	# срабатывает ПОСЛЕДНИМ, когда все танки уже готовы).
 	_disguise_timer.timeout.connect(_on_disguise_timeout)
 	_cooldown_timer.timeout.connect(_on_cooldown_timeout)
 	_reload_timer.timeout.connect(_on_reload_timeout)
@@ -49,6 +53,7 @@ func request_fire() -> bool:
 	if state == State.DISGUISED:
 		_disguise_timer.stop()
 	_set_state(State.RELOAD)
+	_reload_timer.wait_time = GameConfig.reload_duration_sec
 	_reload_timer.start()
 	return true
 

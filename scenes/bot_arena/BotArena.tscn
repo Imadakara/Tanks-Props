@@ -2,71 +2,108 @@
 
 [ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_b63ln"]
 [ext_resource type="Script" path="res://scenes/bot_arena/bot_arena.gd" id="1_idf45"]
+[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="2_2uusy"]
 [ext_resource type="Script" path="res://scenes/tank/tank.gd" id="2_7eip8"]
 [ext_resource type="Script" path="res://scenes/bot_arena/bot_sentry_controller.gd" id="3_idf45"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_vfn3m"]
-size = Vector3(24, 0.5, 24)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2uusy"]
-albedo_color = Color(0.15, 0.55, 0.15, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_execi"]
-size = Vector3(24, 0.5, 24)
+[ext_resource type="Script" path="res://scenes/hud/hud.gd" id="7_execi"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_j8k2e"]
-size = Vector3(5.4, 2.2, 0.5)
+size = Vector3(72, 0.5, 72)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0hb1j"]
-albedo_color = Color(0.55, 0.55, 0.58, 1)
+albedo_color = Color(0.15, 0.55, 0.15, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_oubrc"]
+size = Vector3(72, 0.5, 72)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_usroo"]
 size = Vector3(5.4, 2.2, 0.5)
 
-[node name="BotArena" type="Node3D" unique_id=1670398727]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_oypt0"]
+albedo_color = Color(0.55, 0.55, 0.58, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_5mwi5"]
+size = Vector3(5.4, 2.2, 0.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_mhw8u"]
+size = Vector3(2, 2, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_utd6a"]
+albedo_color = Color(0.25, 0.28, 0.35, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_vgxt8"]
+size = Vector3(2, 2, 2)
+
+[node name="BotArena" type="Node3D" unique_id=281684750]
 script = ExtResource("1_idf45")
 
-[node name="Ground" type="StaticBody3D" parent="." unique_id=1818898556]
+[node name="Ground" type="StaticBody3D" parent="." unique_id=403914143]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
 collision_mask = 0
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1617797982]
-shape = SubResource("BoxShape3D_vfn3m")
-
-[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=624825597]
-material_override = SubResource("StandardMaterial3D_2uusy")
-mesh = SubResource("BoxMesh_execi")
-
-[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1743593401]
-transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49999997, -0.49999997, 0.70710677, 0.49999997, 0, 0, 0)
-light_energy = 1.2
-
-[node name="Wall" type="StaticBody3D" parent="." unique_id=699544459]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
-collision_mask = 0
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Wall" unique_id=798804070]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=960187119]
 shape = SubResource("BoxShape3D_j8k2e")
 
-[node name="Mesh" type="MeshInstance3D" parent="Wall" unique_id=125947611]
+[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=1212328147]
 material_override = SubResource("StandardMaterial3D_0hb1j")
 mesh = SubResource("BoxMesh_oubrc")
 
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2025781862]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49999997, -0.49999997, 0.70710677, 0.49999997, 0, 0, 0)
+light_energy = 1.2
+
+[node name="Wall" type="StaticBody3D" parent="." unique_id=393840546]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Wall" unique_id=1252619961]
+shape = SubResource("BoxShape3D_usroo")
+
+[node name="Mesh" type="MeshInstance3D" parent="Wall" unique_id=221430193]
+material_override = SubResource("StandardMaterial3D_oypt0")
+mesh = SubResource("BoxMesh_5mwi5")
+
+[node name="Objective" type="StaticBody3D" parent="." unique_id=1513394338]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -20)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Objective" unique_id=1286592346]
+shape = SubResource("BoxShape3D_mhw8u")
+
+[node name="Mesh" type="MeshInstance3D" parent="Objective" unique_id=1450705468]
+material_override = SubResource("StandardMaterial3D_utd6a")
+mesh = SubResource("BoxMesh_vgxt8")
+
+[node name="HealthComponent" type="Node" parent="Objective" unique_id=1661619236]
+script = ExtResource("2_2uusy")
+max_hits = 10
+attackers_only = true
+
+[node name="Waypoint1" type="Node3D" parent="." unique_id=2010171112]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -10)
+
+[node name="Waypoint2" type="Node3D" parent="." unique_id=1713996609]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.66, 0, -25)
+
+[node name="Waypoint3" type="Node3D" parent="." unique_id=834255405]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.66, 0, -25)
+
 [node name="PlayerTank" type="CharacterBody3D" parent="." unique_id=677005994 instance=ExtResource("1_b63ln")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 6)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 18)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
 
-[node name="BotTank" type="CharacterBody3D" parent="." unique_id=2098542819 instance=ExtResource("1_b63ln")]
-transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0.3, -6)
+[node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0.3, -17)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
 team = 1
 
-[node name="BotSentryController" type="Node" parent="BotTank" unique_id=1034079527]
+[node name="BotSentryController" type="Node" parent="BotTank" unique_id=1729385129]
 script = ExtResource("3_idf45")
 
-[node name="HUD" type="CanvasLayer" parent="." unique_id=1621853834 instance=ExtResource("4_hud")]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
+script = ExtResource("7_execi")

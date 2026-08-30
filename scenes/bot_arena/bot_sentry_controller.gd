@@ -1,85 +1,107 @@
 extends Node
 ## BotSentryController — тестовый ИИ для песочницы "Bot Arena" (scenes/bot_arena/BotArena.tscn).
 ## Отдельно от продакшен-ИИ scenes/tank/tank_ai_controller.gd (ТЗ §9, патруль/маскировка) —
-## тот не трогаем. Бот НЕ двигается (задача №1 — только обзор/наводка/стрельба).
+## тот не трогаем.
 ##
 ## Модель обзора — по аналогии с игроком: у игрока камера смотрит в конкретную сторону, и то,
-## что вне её кадра, он просто не видит, пока не развернёт камеру (см. camera_rig.gd —
-## is_player_controlled=true у TurretController берёт target_yaw НАПРЯМУЮ из направления камеры).
-## У бота роль "камеры" играет _look_yaw — им управляет ТОЛЬКО этот скрипт (никогда не сам
-## игрок). Триггер обнаружения цели — попадание в ТЕКУЩИЙ конус (look_cone_deg, центр —
-## _look_yaw, радиус — vision_range), а не в какую-то фиксированную зону вокруг корпуса.
+## что вне её кадра, он просто не видит, пока не развернёт камеру (см. camera_rig.gd).
+## У бота роль "камеры" играет _look_yaw — им управляет ТОЛЬКО этот скрипт. Триггер обнаружения
+## цели — попадание в ТЕКУЩИЙ конус (look_cone_deg, центр — _look_yaw, радиус — vision_range).
 ## Башня — не мозг, а просто следует за _look_yaw (target_yaw = f(_look_yaw), физический
-## доворот делает TurretController.rotate_toward, см. turret_controller.gd) — ровно так же,
-## как у игрока башня трогается вслед за камерой с задержкой, а не сама решает, куда смотреть.
+## доворот делает TurretController.rotate_toward) — ровно так же, как у игрока башня трогается
+## вслед за камерой с задержкой, а не сама решает, куда смотреть.
 ##
-## SEARCH — блуждание "камеры" (_wander()), имитация того, как игрок ворочает обзор осматриваясь:
-## выбирает случайный угол в пределах wander_min_deg..wander_max_deg (сколько бот вообще может
-## увести взгляд от направления корпуса — практический предел разворота, НЕ сам конус обзора),
-## доворачивает туда (тем же rotate_toward, что и башня — довод получается "тот же язык
-## движения", что и наводка), держит там wander_hold_min_sec..wander_hold_max_sec (по умолчанию
-## 1-2 сек — "то вперёд, то назад, то влево, то вправо"), затем — новый случайный угол, по
-## кругу в хаотичном порядке. Пока смотрит куда-то — конус обзора (look_cone_deg вокруг
-## _look_yaw) следует за этим направлением; попала туда цель, дальность и видимость (raycast,
-## стенка перекрывает) сошлись — переход в TRACK.
+## РОЛЬ (role) + ДВИЖОК ВЫБОРА СТЕЙТА (_think()) — приоритет один и тот же для всех ролей:
+##   1. Видна цель (только что замечена ЛИБО уже отслеживаемая и всё ещё видна) → DEFEND.
+##   2. Иначе — "домашнее" поведение роли: ACHIEVER с расставленными вейпоинтами → PATROL;
+##      KILLER — пока НЕ реализован (нет стейта "охота", см. дев-план ниже) → падает в IDLE,
+##      это временная заглушка, не финальное поведение убийцы.
+##   3. Нет вообще ничего подходящего (ACHIEVER без вейпоинтов на карте) → IDLE.
+## Явный класс-приоритет, а не набор независимых if — переход между PATROL/IDLE и DEFEND всегда
+## решается заново каждый think-тик, поэтому оба направления (заметил/потерял цель) идут через
+## одну и ту же точку принятия решения, не рассинхронизируются.
 ##
-## TRACK (слежение) — _look_yaw и башня каждый кадр пересчитываются на ЖИВУЮ позицию цели
-## (движется вслед за её перемещением), огонь по готовности прицела/дальности/боекомплекта.
-## Пропала видимость/дальность — назад в SEARCH; блуждание возобновляется с текущего угла
-## (не сбрасывается на исходный).
+## Стейты:
+## - IDLE ("ожидание") — бот неподвижен, взгляд блуждает по всему кругу (360°, см. _wander()).
+## - PATROL ("патруль") — бесконечное движение по вейпоинтам (см. ниже), взгляд блуждает С
+##   УКЛОНОМ ВПЕРЁД (forward_look_bias) — чаще смотрит по ходу движения, реже — по сторонам/назад.
+## - DEFEND ("оборона позиции") — стоит на месте, башня/взгляд каждый кадр наводятся на ЖИВУЮ
+##   позицию цели, огонь по готовности прицела/дальности/боекомплекта.
+## Обнаружил цель в PATROL/IDLE → мгновенно (в рамках think_interval_sec) переход в DEFEND,
+## движение останавливается. Потерял цель (вышла из конуса/дальности/видимости, или уничтожена)
+## → возврат к "домашнему" поведению роли (см. приоритет выше) — блуждание взгляда продолжается
+## с текущего угла, вейпоинт-прогресс (индекс/выбранная точка внутри круга) не сбрасывается.
 ##
-## Реакция на обстрел: HealthComponent.damaged() (см. health_component.gd) несёт killer — при
-## попадании бот разворачивает "камеру" (значит и башню) в сторону выстрела; видна оттуда —
-## сразу TRACK.
+## Патруль по вейпоинтам — маркеры "WaypointN" (Node3D, ищутся по имени в корне текущей сцены,
+## сортируются по имени — тот же принцип, что PatrolWaypointN у tank_ai_controller.gd). Каждый
+## вейпоинт — не точка, а круглая область радиуса waypoint_radius: доехав до случайной точки
+## внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает новую случайную точку в круге СЛЕДУЮЩЕГО и едет
+## дальше, по кругу бесконечно (индекс всегда % количество).
+##
+## Реакция на обстрел: HealthComponent.damaged() несёт killer — при попадании (в любом стейте,
+## кроме уже-DEFEND) бот разворачивает "камеру" в сторону выстрела; видна оттуда — сразу DEFEND.
+##
+## Дев-план (не реализовано в этом заходе, только заложены точки расширения):
+## - Стейт HUNT (свободный поиск) и роль KILLER — сейчас KILLER это IDLE-заглушка.
+## - Стейт PURSUE (преследование к последней видимой точке) — по ТЗ должен включаться у HARD
+##   при потере цели ВМЕСТО возврата в PATROL/IDLE; сейчас HARD ведёт себя как EASY/MEDIUM
+##   (_on_target_lost() ниже — единая точка, куда позже добавится ветка по difficulty).
 ##
 ## Уровни сложности (difficulty) — все числовые @export ниже это тюнинг MEDIUM (тот самый
 ## "текущий бот"), EASY/HARD — пресеты в _apply_difficulty_preset(), применяются поверх этих
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { SEARCH, TRACK }
+enum State { IDLE, PATROL, DEFEND }
 enum Difficulty { EASY, MEDIUM, HARD }
+enum Role { KILLER, ACHIEVER }
 
 const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "камера" дошла до выбранного угла
 
+@export var role: Role = Role.ACHIEVER
 @export var difficulty: Difficulty = Difficulty.MEDIUM
 
 ## Радиус и полуширина ТЕКУЩЕГО (движущегося) конуса обзора — реальный триггер обнаружения.
-## Раньше это была большая статичная зона вокруг корпуса — теперь узкий "прожектор", который
-## реально нужно навести на цель взглядом, как у игрока с камерой.
 @export var vision_range: float = 10.0
 @export var look_cone_deg: float = 55.0  # полный угол конуса вокруг _look_yaw
 @export var fire_range: float = 8.0
 @export var fire_aim_tolerance_deg: float = 5.0
 
-## Практические границы, куда вообще может увести взгляд блуждание (относительно направления
-## корпуса при спавне) — НЕ сам конус обзора, а диапазон возможных направлений _look_yaw.
-@export var wander_min_deg: float = -75.0
-@export var wander_max_deg: float = 75.0
+## Обзор при блуждании (IDLE и, с уклоном, PATROL) — полный круг: следующий угол может быть
+## любым (в т.ч. назад), но не ближе wander_min_turn_deg к текущему (см. _pick_new_wander_target()).
+@export var wander_min_turn_deg: float = 30.0
 @export var wander_hold_min_sec: float = 1.0  # задержка на выбранном угле после доворота
 @export var wander_hold_max_sec: float = 2.0
+
+## В PATROL взгляд чаще смотрит по ходу движения (вперёд по корпусу), а не куда попало —
+## forward_look_bias — вероятность такого выбора при каждой смене угла, forward_look_cone_deg —
+## ширина сектора "вперёд", внутри которого в этом случае ищется угол.
+@export var forward_look_bias: float = 0.7
+@export var forward_look_cone_deg: float = 70.0
+
+## Патруль по вейпоинтам (см. заголовок файла).
+@export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — область вокруг маркера
+@export var waypoint_reach_dist: float = 1.5
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
 
-## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: зелёный/красный веер — ТЕКУЩИЙ
-## конус обзора (look_cone_deg вокруг _look_yaw, радиус vision_range) — зелёный в SEARCH,
-## красный в TRACK, движется вместе с _look_yaw. Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
-## башня (может немного отставать от конуса — та же инерция, что и у башни игрока за камерой).
+## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ТЕКУЩИЙ конус обзора
+## (look_cone_deg вокруг _look_yaw, радиус vision_range); цвет = текущий стейт (зелёный IDLE,
+## голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута башня.
 @export var show_fov_debug: bool = true
 
 ## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
-## Разница по четырём осям: осведомлённость (радиус/угол конуса, границы блуждания), реакция
-## (think_interval), меткость (допуск наводки + скорость доворота — та же скорость и для
-## блуждания), "непоседливость" взгляда (wander_hold — у HARD короче, дольше не засиживается).
+## Разница по трём осям: осведомлённость (радиус/угол конуса), реакция (think_interval +
+## скорость доворота башни — та же скорость и для блуждания), "непоседливость" взгляда
+## (wander_hold — у HARD короче, крутит обзором активнее, у EASY дольше держит один угол).
+## wander_min_turn_deg — общий для всех уровней, сложность его не меняет.
 const _DIFFICULTY_PRESETS := {
 	Difficulty.EASY: {
 		"vision_range": 6.0,
 		"look_cone_deg": 40.0,
 		"fire_range": 5.0,
 		"fire_aim_tolerance_deg": 9.0,
-		"wander_min_deg": -50.0,
-		"wander_max_deg": 50.0,
 		"wander_hold_min_sec": 2.0,
 		"wander_hold_max_sec": 3.5,
 		"think_interval_sec": 0.25,
@@ -90,8 +112,6 @@ const _DIFFICULTY_PRESETS := {
 		"look_cone_deg": 70.0,
 		"fire_range": 11.0,
 		"fire_aim_tolerance_deg": 3.0,
-		"wander_min_deg": -100.0,
-		"wander_max_deg": 100.0,
 		"wander_hold_min_sec": 0.5,
 		"wander_hold_max_sec": 1.2,
 		"think_interval_sec": 0.05,
@@ -107,17 +127,21 @@ const _DIFFICULTY_PRESETS := {
 @onready var _disguise: Node = get_parent().get_node("DisguiseController")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 
-var state: State = State.SEARCH
+var state: State = State.IDLE
 var _look_yaw: float = 0.0  # мировой угол "камеры" бота — центр конуса обзора, ведёт башню
 var _current_target: Node = null
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
 
-## Состояние блуждания взгляда в SEARCH (см. _wander()): пока не "дошли" до выбранного угла —
-## просто ждём (сам доворот делает TurretController, target_yaw уже выставлен); дошли — считаем
-## задержку _wander_hold_timer, по истечении выбираем новый случайный угол.
+## Состояние блуждания взгляда в IDLE/PATROL (см. _wander()).
 var _wander_holding: bool = false
 var _wander_hold_timer: float = 0.0
+
+## Вейпоинты — собираются в _ready() поиском по имени на текущей сцене (см. _collect_waypoints()).
+var _waypoints: Array = []
+var _waypoint_index: int = 0
+var _waypoint_target_pos: Vector3 = Vector3.ZERO
+var _has_waypoint_target: bool = false
 
 func _ready() -> void:
 	_apply_difficulty_preset()
@@ -132,6 +156,7 @@ func _ready() -> void:
 	_turret.turn_speed = turret_turn_speed
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
+	_collect_waypoints()
 
 	# CameraRig этого танка на статичной сцене нельзя выключить оверрайдом в .tscn (нет
 	# редактируемых детей у инстанса) — гасим камеру здесь. BotSentryController стоит
@@ -158,60 +183,78 @@ func _apply_difficulty_preset() -> void:
 	look_cone_deg = preset["look_cone_deg"]
 	fire_range = preset["fire_range"]
 	fire_aim_tolerance_deg = preset["fire_aim_tolerance_deg"]
-	wander_min_deg = preset["wander_min_deg"]
-	wander_max_deg = preset["wander_max_deg"]
 	wander_hold_min_sec = preset["wander_hold_min_sec"]
 	wander_hold_max_sec = preset["wander_hold_max_sec"]
 	think_interval_sec = preset["think_interval_sec"]
 	turret_turn_speed = preset["turret_turn_speed"]
 
-func _physics_process(delta: float) -> void:
-	_movement.ai_move_input = 0.0
-	_movement.ai_turn_input = 0.0
+## Вейпоинты ищутся на КОРНЕ текущей сцены (не в "Map" — у этой тестовой арены нет отдельного
+## Map-узла, всё лежит прямо в BotArena.tscn), по префиксу имени "Waypoint", сортировка по
+## имени даёт стабильный порядок обхода (Waypoint1 → Waypoint2 → Waypoint3 → снова Waypoint1).
+func _collect_waypoints() -> void:
+	_waypoints.clear()
+	for child in get_tree().current_scene.get_children():
+		if String(child.name).begins_with("Waypoint"):
+			_waypoints.append(child)
+	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
 
+func _physics_process(delta: float) -> void:
 	_think_timer -= delta
 	if _think_timer <= 0.0:
 		_think_timer = think_interval_sec
 		_think()
 
-	if state == State.TRACK and _current_target != null and is_instance_valid(_current_target):
-		_aim_and_fire(_current_target)
-	else:
-		_wander(delta)
-		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+	match state:
+		State.DEFEND:
+			_movement.ai_move_input = 0.0
+			_movement.ai_turn_input = 0.0
+			if _current_target != null and is_instance_valid(_current_target):
+				_aim_and_fire(_current_target)
+		State.PATROL:
+			_drive_to_waypoint()
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.IDLE:
+			_movement.ai_move_input = 0.0
+			_movement.ai_turn_input = 0.0
+			_wander(delta, false)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 
 	if show_fov_debug:
 		_update_fov_debug_draw()
 
+## Движок выбора стейта — приоритет "вижу цель" НАД любым домашним поведением роли (см.
+## заголовок файла). Вызывается раз в think_interval_sec, не каждый физ.кадр.
 func _think() -> void:
-	if state == State.TRACK:
-		if _current_target == null or not is_instance_valid(_current_target) or not _can_see(_current_target):
-			_enter_search()
-		return
-	var target := _scan_for_target()
-	if target != null:
-		_enter_track(target)
+	var visible_target: Node = null
+	if state == State.DEFEND and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target):
+		visible_target = _current_target
+	else:
+		visible_target = _scan_for_target()
 
-## Блуждание "камеры" в SEARCH — имитация того, как игрок крутит камеру осматриваясь: то
-## вперёд, то в сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw —
-## просто ждём (доворот делает TurretController); дошли — держим wander_hold_min_sec..
-## wander_hold_max_sec, затем выбираем новый случайный угол в пределах wander_min_deg..
-## wander_max_deg (границы допустимого разворота взгляда, не сам конус обзора — см. _can_see()).
-func _wander(delta: float) -> void:
-	if _wander_holding:
-		_wander_hold_timer -= delta
-		if _wander_hold_timer <= 0.0:
-			_pick_new_wander_target()
+	if visible_target != null:
+		_enter_defend(visible_target)
 		return
-	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
-	if aim_diff_deg <= _WANDER_ARRIVE_TOLERANCE_DEG:
-		_wander_holding = true
-		_wander_hold_timer = randf_range(wander_hold_min_sec, wander_hold_max_sec)
 
-func _pick_new_wander_target() -> void:
-	var target_local_deg: float = randf_range(wander_min_deg, wander_max_deg)
-	_look_yaw = _body.rotation.y + deg_to_rad(target_local_deg)
-	_wander_holding = false
+	if state == State.DEFEND:
+		_on_target_lost()
+	_ensure_home_state()
+
+## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). ACHIEVER
+## с расставленными вейпоинтами патрулирует; иначе (в т.ч. KILLER — заглушка, см. дев-план)
+## просто стоит и смотрит по кругу.
+func _ensure_home_state() -> void:
+	var desired: State = State.PATROL if (role == Role.ACHIEVER and not _waypoints.is_empty()) else State.IDLE
+	if state != desired:
+		state = desired
+		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
+		# текущего угла что при переходе в PATROL, что в IDLE.
+
+## Цель потеряна/уничтожена во время DEFEND. Сейчас единообразно для всех уровней сложности —
+## возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в _think()).
+## Точка расширения под HARD → PURSUE, см. дев-план в заголовке файла.
+func _on_target_lost() -> void:
+	_current_target = null
 
 func _scan_for_target() -> Node:
 	for other in get_tree().get_nodes_in_group("tanks"):
@@ -224,10 +267,8 @@ func _scan_for_target() -> Node:
 	return null
 
 ## Триггер обнаружения — попадание в ТЕКУЩИЙ конус обзора: полуширина look_cone_deg/2 ВОКРУГ
-## _look_yaw (куда сейчас направлена "камера" бота), а не вокруг направления корпуса — конус
-## движется вместе с блужданием взгляда/слежением за целью, ровно как обзор игрока следует за
-## его камерой. Цель вне текущего кадра "камеры" не видна, даже если формально близко и без
-## препятствий — в этом и суть модели (см. заголовок файла).
+## _look_yaw (куда сейчас направлена "камера" бота). Конус движется вместе с блужданием
+## взгляда/слежением за целью, ровно как обзор игрока следует за его камерой.
 func _can_see(target: Node3D) -> bool:
 	var to_target: Vector3 = target.global_position - _turret.global_position
 	var dist: float = to_target.length()
@@ -247,19 +288,12 @@ func _can_see(target: Node3D) -> bool:
 	var result: Dictionary = space_state.intersect_ray(query)
 	return result.is_empty() or result.get("collider") == target
 
-func _enter_track(target: Node) -> void:
-	state = State.TRACK
+func _enter_defend(target: Node) -> void:
+	state = State.DEFEND
 	_current_target = target
 
-func _enter_search() -> void:
-	state = State.SEARCH
-	_current_target = null
-	# Ни _look_yaw, ни _wander_holding не сбрасываются — блуждание взгляда продолжится с
-	# текущего направления (не с исходного).
-
 ## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня физически
-## движутся вслед за её перемещением (не за фиксированной точкой), пока цель остаётся видна
-## (проверяет _think(), см. выше).
+## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()).
 func _aim_and_fire(target: Node3D) -> void:
 	_look_yaw = _yaw_to_world_point(_turret.global_position, target.global_position)
 	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
@@ -273,15 +307,106 @@ func _yaw_to_world_point(from: Vector3, to_point: Vector3) -> float:
 	var d: Vector3 = to_point - from
 	return atan2(-d.x, -d.z)
 
-## Реакция на попадание (ТЗ этой сессии) — разворот "камеры" (значит и башни) туда, откуда
-## стреляли, даже если цель сейчас не видна. Если после разворота она уже в конусе — сразу TRACK.
+## Реакция на попадание — разворот "камеры" (значит и башни) туда, откуда стреляли, в любом
+## стейте, кроме уже-DEFEND. Если после разворота цель уже в конусе — сразу DEFEND.
 func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	if killer == null or not is_instance_valid(killer) or killer == _body:
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
 	_wander_holding = false
-	if state == State.SEARCH and _can_see(killer):
-		_enter_track(killer)
+	if state != State.DEFEND and _can_see(killer):
+		_enter_defend(killer)
+
+## Блуждание "камеры" в IDLE/PATROL — имитация того, как игрок крутит камеру осматриваясь: то
+## вперёд, то в сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw —
+## просто ждём (доворот делает TurretController); дошли — держим wander_hold_min_sec..
+## wander_hold_max_sec, затем выбираем новый угол. biased_forward=true (PATROL) — чаще смотрим
+## по ходу движения, а не куда попало.
+func _wander(delta: float, biased_forward: bool) -> void:
+	if _wander_holding:
+		_wander_hold_timer -= delta
+		if _wander_hold_timer <= 0.0:
+			_pick_new_wander_target(biased_forward)
+		return
+	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
+	if aim_diff_deg <= _WANDER_ARRIVE_TOLERANCE_DEG:
+		_wander_holding = true
+		_wander_hold_timer = randf_range(wander_hold_min_sec, wander_hold_max_sec)
+
+## Следующий угол обзора — полный круг (360°, любое направление, включая назад), но не ближе
+## wander_min_turn_deg к текущему: например, при текущем угле 45° и min_turn=30° новый угол
+## обязан оказаться <=15° или >=75° (запретная зона — открытый интервал (15,75), 30°-разница
+## ровно на границе разрешена). Реализация — сдвиг на случайный офсет из [min_turn, 360-min_turn]
+## от ТЕКУЩЕГО угла: покрывает все углы, отстоящие от текущего не менее чем на min_turn, без
+## разрывов и без нужды в отдельной проверке/повторной выборке.
+## biased_forward=true — с вероятностью forward_look_bias вместо этого ищем угол в узком
+## секторе "вперёд по корпусу" (см. _pick_forward_biased_deg()), не нарушая то же ограничение.
+func _pick_new_wander_target(biased_forward: bool) -> void:
+	var current_local_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	var target_local_deg: float
+	if biased_forward and randf() < forward_look_bias:
+		target_local_deg = _pick_forward_biased_deg(current_local_deg)
+	else:
+		var offset_deg: float = randf_range(wander_min_turn_deg, 360.0 - wander_min_turn_deg)
+		target_local_deg = wrapf(current_local_deg + offset_deg, -180.0, 180.0)
+	_look_yaw = _body.rotation.y + deg_to_rad(target_local_deg)
+	_wander_holding = false
+
+## Угол в узком секторе вокруг направления корпуса (±forward_look_cone_deg/2), отстоящий от
+## текущего не менее чем на wander_min_turn_deg — отбор с повторными попытками (сектор+
+## ограничение почти никогда не конфликтуют при разумных значениях по умолчанию); на случай
+## редкого невезения за MAX_TRIES — берём дальний от текущего угла край сектора как гарантированно
+## валидный запасной вариант.
+func _pick_forward_biased_deg(current_local_deg: float) -> float:
+	const MAX_TRIES := 6
+	for i in range(MAX_TRIES):
+		var candidate: float = randf_range(-forward_look_cone_deg * 0.5, forward_look_cone_deg * 0.5)
+		var diff_deg: float = rad_to_deg(absf(wrapf(deg_to_rad(candidate - current_local_deg), -PI, PI)))
+		if diff_deg >= wander_min_turn_deg:
+			return candidate
+	return forward_look_cone_deg * 0.5 if current_local_deg <= 0.0 else -forward_look_cone_deg * 0.5
+
+## Движение в PATROL — доехать до случайной точки в круге текущего вейпоинта, затем перейти к
+## следующему (индекс всегда по модулю — патруль бесконечный). Тот же принцип наведения
+## корпуса, что и в tank_ai_controller.gd._drive_toward().
+func _drive_to_waypoint() -> void:
+	if _waypoints.is_empty():
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
+		return
+	if not _has_waypoint_target:
+		_pick_new_waypoint_target()
+
+	var to_target: Vector3 = _waypoint_target_pos - _body.global_position
+	to_target.y = 0.0
+	if to_target.length() < waypoint_reach_dist:
+		_advance_waypoint()
+		return
+
+	var world_yaw: float = _yaw_to_world_point(_body.global_position, _waypoint_target_pos)
+	var yaw_diff: float = wrapf(world_yaw - _body.rotation.y, -PI, PI)
+	# Знак: TankMovement._physics_process() делает _body.rotate_y(-turn_input*turn_speed*delta),
+	# т.е. turn_input>0 УМЕНЬШАЕТ rotation.y, а не увеличивает (проверено живьём покадровым
+	# прогоном — с прямым знаком (turn_input=yaw_diff/0.5, как в этой же формуле у
+	# tank_ai_controller.gd._drive_toward(), см. дев-план в заголовке файла) бот ехал К ЦЕЛИ
+	# ДЛИННЫМ путём и на развороте, близком к 180°, залипал на антиподе цели, до конца не сходясь
+	# — ai_turn_input каждый кадр дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
+	_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
+	_movement.ai_move_input = 1.0 if absf(yaw_diff) < deg_to_rad(60.0) else 0.0
+
+## Случайная точка внутри круга (равномерно по площади — sqrt(randf()), не randf() напрямую,
+## иначе точки скучивались бы у центра).
+func _pick_new_waypoint_target() -> void:
+	var wp: Node3D = _waypoints[_waypoint_index]
+	var angle: float = randf() * TAU
+	var dist: float = sqrt(randf()) * waypoint_radius
+	var offset := Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	_waypoint_target_pos = wp.global_position + offset
+	_has_waypoint_target = true
+
+func _advance_waypoint() -> void:
+	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
+	_has_waypoint_target = false
 
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
@@ -316,7 +441,14 @@ func _update_fov_debug_draw() -> void:
 	const SEGMENTS := 16
 	const HEIGHT := 0.55  # чуть выше корпуса — видно поверх HullMesh, не тонет в земле
 	var radius: float = vision_range
-	var fill_color: Color = Color(1.0, 0.15, 0.1, 0.28) if state == State.TRACK else Color(0.15, 0.9, 0.2, 0.22)
+	var fill_color: Color
+	match state:
+		State.DEFEND:
+			fill_color = Color(1.0, 0.15, 0.1, 0.28)
+		State.PATROL:
+			fill_color = Color(0.2, 0.6, 0.95, 0.22)
+		_:
+			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
 
 	# ТЕКУЩИЙ конус обзора — центр на _look_yaw (в локальных координатах бота), не на
