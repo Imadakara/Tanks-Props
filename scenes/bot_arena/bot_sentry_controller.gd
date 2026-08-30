@@ -52,9 +52,11 @@ extends Node
 ## Объезд препятствий ("лидар", см. _scan_obstacle_rays()/_compute_travel_yaw()) — ТРИ луча, все ИЗ
 ## ОДНОЙ ТОЧКИ (центр корпуса) — различаются только УГЛОМ, ни один не смещается физически в сторону:
 ## "center" качается вокруг направления на цель УГЛОМ, как и "left"/"right" (см.
-## _advance_obstacle_sweep()), но амплитудой всего ±_center_sweep_max_deg — этот угол подобран так,
-## чтобы на характерной дистанции center_sweep_ref_distance боковой охват качания равнялся
-## hull_half_width (tan(угол) = hull_half_width / center_sweep_ref_distance). Луч ровно по центру
+## _advance_obstacle_sweep()), но амплитудой всего ±_center_sweep_max_deg — БАЗОВЫЙ угол подобран
+## так, чтобы на характерной дистанции center_sweep_ref_distance боковой охват качания равнялся
+## hull_half_width (tan(угол) = hull_half_width / center_sweep_ref_distance), дальше умножается на
+## center_sweep_width_multiplier (по прямому запросу — вдвое шире и вдвое быстрее чистого расчёта
+## по ширине корпуса, см. _ready()). Луч ровно по центру
 ## иногда скользит впритык мимо узкого препятствия/угла, не хитуя, хотя корпус своей шириной его
 ## реально заденет — качающийся угол рано или поздно проходит и через то отклонение, которое
 ## соответствует задеванию препятствия корпусом. "left"/"right" качаются зеркально УГЛОМ между 0° и
@@ -147,14 +149,18 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var avoid_sweep_max_deg: float = 70.0  # качание от 0° до ±70° от направления корпуса
 @export var avoid_sweep_speed_deg_per_sec: float = 240.0  # скорость качания — полный ход 0→70→0 за ~0.6с
 ## Полуширина корпуса (Tank.tscn: BoxShape3D 1.2×0.6×1.8 → ширина 1.2 → половина 0.6) — не смещение,
-## а исходные данные для расчёта амплитуды качания "center"-луча УГЛОМ (см. _ready() и заголовок
-## файла): amplitude_deg = atan(hull_half_width / center_sweep_ref_distance).
+## а исходные данные для расчёта БАЗОВОЙ амплитуды качания "center"-луча УГЛОМ (см. _ready() и
+## заголовок файла): base_amplitude_deg = atan(hull_half_width / center_sweep_ref_distance),
+## дальше умножается на center_sweep_width_multiplier.
 @export var hull_half_width: float = 0.6
-## Дистанция, на которой боковой охват качания "center"-луча должен равняться hull_half_width —
-## это примерно "перед носом корпуса", где грань препятствия, задевающая корпус впритык, чаще
-## всего и оказывается в момент, когда её вообще стоит заметить.
+## Дистанция, на которой боковой охват качания "center"-луча (до множителя ниже) должен равняться
+## hull_half_width — это примерно "перед носом корпуса", где грань препятствия, задевающая корпус
+## впритык, чаще всего и оказывается в момент, когда её вообще стоит заметить.
 @export var center_sweep_ref_distance: float = 2.0
-@export var center_sweep_speed_deg_per_sec: float = 60.0  # полный ход -max..+max..-max за ~1.1-1.2с
+## Множитель поверх чисто геометрического расчёта амплитуды — по прямому запросу "шире в 2 раза"
+## (сознательное расширение сверх строгого покрытия ширины корпуса, не переисчисление физики).
+@export var center_sweep_width_multiplier: float = 2.0
+@export var center_sweep_speed_deg_per_sec: float = 120.0  # ×2 по прямому запросу (было 60.0)
 
 ## Резервный "антизастрял" — лучи есть только 3, а не 9, поэтому иногда (эмпирически ~1 раз из
 ## 3 на угле реального препятствия — Jolt в контакте с углом коробки не всегда стабильно даёт
@@ -315,7 +321,7 @@ var _max_leg_time_sec: float = 0.0
 
 func _ready() -> void:
 	_apply_difficulty_preset()
-	_center_sweep_max_deg = rad_to_deg(atan(hull_half_width / center_sweep_ref_distance))
+	_center_sweep_max_deg = rad_to_deg(atan(hull_half_width / center_sweep_ref_distance)) * center_sweep_width_multiplier
 
 	# Тот же трюк, что у TankAIController._initialize() — без этого бот читал бы Input
 	# игрока напрямую (is_player_controlled по умолчанию true у всех этих компонентов).
