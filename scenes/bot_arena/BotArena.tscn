@@ -35,6 +35,15 @@ albedo_color = Color(0.25, 0.28, 0.35, 1)
 [sub_resource type="BoxMesh" id="BoxMesh_vgxt8"]
 size = Vector3(2, 2, 2)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_2uusy"]
+size = Vector3(4, 2.5, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_execi"]
+albedo_color = Color(0.6, 0.35, 0.15, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_j8k2e"]
+size = Vector3(4, 2.5, 4)
+
 [node name="BotArena" type="Node3D" unique_id=281684750]
 script = ExtResource("1_idf45")
 
@@ -107,3 +116,14 @@ script = ExtResource("3_idf45")
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
 script = ExtResource("7_execi")
+
+[node name="Obstacle1" type="StaticBody3D" parent="." unique_id=380999417]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.33, 1.25, -17.5)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Obstacle1" unique_id=76324787]
+shape = SubResource("BoxShape3D_2uusy")
+
+[node name="Mesh" type="MeshInstance3D" parent="Obstacle1" unique_id=455874593]
+material_override = SubResource("StandardMaterial3D_execi")
+mesh = SubResource("BoxMesh_j8k2e")
