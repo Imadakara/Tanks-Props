@@ -49,39 +49,28 @@ extends Node
 ## внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает новую случайную точку в круге СЛЕДУЮЩЕГО и едет
 ## дальше, по кругу бесконечно (индекс всегда % количество).
 ##
-## Объезд препятствий ("лидар", см. _scan_obstacle_rays()/_compute_travel_yaw()) — ТРИ луча, все ИЗ
-## ОДНОЙ ТОЧКИ (центр корпуса) — различаются только УГЛОМ, ни один не смещается физически в сторону:
-## "center" качается вокруг направления на цель УГЛОМ, как и "left"/"right" (см.
-## _advance_obstacle_sweep()), но амплитудой всего ±_center_sweep_max_deg — БАЗОВЫЙ угол подобран
-## так, чтобы на характерной дистанции center_sweep_ref_distance боковой охват качания равнялся
-## hull_half_width (tan(угол) = hull_half_width / center_sweep_ref_distance), дальше умножается на
-## center_sweep_width_multiplier (по прямому запросу — вдвое шире и вдвое быстрее чистого расчёта
-## по ширине корпуса, см. _ready()). Луч ровно по центру
-## иногда скользит впритык мимо узкого препятствия/угла, не хитуя, хотя корпус своей шириной его
-## реально заденет — качающийся угол рано или поздно проходит и через то отклонение, которое
-## соответствует задеванию препятствия корпусом. "left"/"right" качаются зеркально УГЛОМ между 0° и
-## ±avoid_sweep_max_deg (как дворники), решают только "куда объезжать", не
-## "перекрыто ли". Не статичный веер из многих одновременных лучей — сознательный выбор ради
-## дешевизны на масштабе 10×10+ ботов (потенциально по сети — считать нужно на каждого бота
-## каждый тик, а сами лучи по сети гонять не надо, реплицируется только результат): 3 raycast/кадр
-## вместо 9 — заметно меньше аллокаций (Array/Dictionary на луч) при сопоставимом качестве решения.
-## Если "center"-луч упирается в препятствие ближе avoid_trigger_range — бот переключается на объезд: выбирает
-## сторону (лево/право — куда сейчас свободнее) один раз при входе в объезд (держит её, пока
-## препятствие не пропадёт из виду — без этого «держания стороны» бот на симметричном препятствии
-## дёргался бы то влево, то вправо каждый кадр), дальше едет на тот из двух лучей, что сейчас
-## свободнее на выбранной стороне, вместо направления на цель. КРИТИЧНО: танк физически не может
-## двигаться боком (только гусеницы — вперёд/назад + поворот корпуса), поэтому "объезд" — это
-## ВСЕГДА смена желаемого угла поворота корпуса, а не какое-либо боковое смещение; сам разворот
-## идёт тем же путём, что и обычная наводка на цель (ai_turn_input/ai_move_input, TankMovement).
-##
-## Hazard-зоны (ямы/пропасти/границы карты — по прямому запросу) — те же три луча, тот же
-## _compute_travel_yaw(), никакой отдельной логики: query.collide_with_areas=true +
-## collision_mask |= 4 в _scan_obstacle_rays(), маркеры — Area3D на слое 4 (см. HazardZoneN в
-## BotArena.tscn). Area3D физически инертна по определению Godot — раз она не входит в
-## collision_mask самих танков, ни игрок, ни бот об неё не спотыкаются, но луч её видит и
-## объезжает как обычное препятствие. Один и тот же механизм что для сплошной коробки, что для
-## дыры в полу — разница только в том, что кладёт level-дизайнер: StaticBody3D (толкает всех) или
-## Area3D на слое 4 (видна только этому лучу).
+## Объезд препятствий — v3, NavMesh + NavigationAgent3D (по прямому запросу: месяц правок
+## реактивного raycast-лидара — v1..v2, вся история ниже сохранена в Bot AI Sandbox §11 как
+## архив — упирался в architecture-level потолок: локальные минимумы на углах, дрожание на
+## симметричных препятствиях, "не может решить куда ехать" на плотной карте. Каждый патч чинил
+## конкретный симптом и открывал новый — потому что чисто РЕАКТИВНАЯ (без памяти о карте) система
+## в принципе не может увидеть, что кластер препятствий стоит обогнуть целиком по большой дуге, а
+## не тыкаться в него луч за лучом. Стандартный в индустрии (Unity/Unreal/сам Godot — не сторонний
+## плагин) подход — ПРЕДИКТ маршрута заранее, потом только следование:
+## - Статическая геометрия карты (Ground/Wall/Objective/ObstacleN/HazardZoneN) запечена ОДИН РАЗ
+##   в `NavigationRegion3D.navigation_mesh` (см. BotArena.tscn) — A* по этому навмешу гарантированно
+##   огибает всё известное, никаких проб лучами.
+## - У бота — `NavigationAgent3D` (заводится в _ready(), ребёнок _body): `target_position` = точка
+##   в круге текущего вейпоинта, `get_next_path_position()` каждый физ.кадр отдаёт СЛЕДУЮЩУЮ точку
+##   УЖЕ посчитанного пути — corpus просто целится в неё тем же способом, что раньше целился в
+##   сырую цель (ai_turn_input/ai_move_input, TankMovement, знак и там же обоснование).
+## - Hazard-зоны (Area3D на слое 4, см. HazardZoneN) и препятствия (StaticBody3D) оба входят в
+##   `NavigationMesh.geometry_collision_mask` при запекании — один и тот же навмеш одинаково
+##   обходит и сплошную коробку, и "дыру в полу", разница только в физическом слое, не в логике.
+## - Осталась ОДНА страховка на уровне TankMovement — короткий реверс, если едем, но реально не
+##   сдвигаемся (см. _drive_to_waypoint()): навмеш не знает про ДИНАМИЧЕСКИЕ помехи (столкновение
+##   с игроком/другим танком) — вся эскалация 4 тиров/дебаунсов/заднего луча из v1-v2 больше не
+##   нужна, путь по статике уже гарантированно существует и не требует "перебора руками".
 ##
 ## Реакция на обстрел: HealthComponent.damaged() несёт killer — при попадании (в любом стейте,
 ## кроме уже-DEFEND) бот разворачивает "камеру" в сторону выстрела; видна оттуда — сразу DEFEND.
@@ -143,35 +132,54 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — область вокруг маркера
 @export var waypoint_reach_dist: float = 1.5
 
-## Объезд препятствий ("лидар" — 2 качающихся луча из центра корпуса, см. заголовок файла).
-@export var avoid_sensor_range: float = 7.0  # макс. дальность луча
-@export var avoid_trigger_range: float = 4.5  # ближе этого по лучу-к-цели — считаем путь перекрытым
-@export var avoid_sweep_max_deg: float = 70.0  # качание от 0° до ±70° от направления корпуса
-@export var avoid_sweep_speed_deg_per_sec: float = 240.0  # скорость качания — полный ход 0→70→0 за ~0.6с
-## Полуширина корпуса (Tank.tscn: BoxShape3D 1.2×0.6×1.8 → ширина 1.2 → половина 0.6) — не смещение,
-## а исходные данные для расчёта БАЗОВОЙ амплитуды качания "center"-луча УГЛОМ (см. _ready() и
-## заголовок файла): base_amplitude_deg = atan(hull_half_width / center_sweep_ref_distance),
-## дальше умножается на center_sweep_width_multiplier.
-@export var hull_half_width: float = 0.6
-## Дистанция, на которой боковой охват качания "center"-луча (до множителя ниже) должен равняться
-## hull_half_width — это примерно "перед носом корпуса", где грань препятствия, задевающая корпус
-## впритык, чаще всего и оказывается в момент, когда её вообще стоит заметить.
-@export var center_sweep_ref_distance: float = 2.0
-## Множитель поверх чисто геометрического расчёта амплитуды — по прямому запросу "шире в 2 раза"
-## (сознательное расширение сверх строгого покрытия ширины корпуса, не переисчисление физики).
-@export var center_sweep_width_multiplier: float = 2.0
-@export var center_sweep_speed_deg_per_sec: float = 120.0  # ×2 по прямому запросу (было 60.0)
+## Объезд препятствий — см. заголовок файла (v3, NavMesh). NavigationAgent3D заводится в _ready(),
+## тюнинг — прямо на нём (radius/path_desired_distance), не через @export здесь: это не параметры
+## поведения бота, а геометрическая настройка агента под конкретный навмеш.
+## Совпадает с NavigationMesh.agent_radius в BotArena.tscn. ДОЛЖЕН быть не меньше полудиагонали
+## корпуса (Tank.tscn BoxShape3D 1.2×0.6×1.8 → half-width 0.6, half-length 0.9 →
+## sqrt(0.6²+0.9²)≈1.08) — меньший радиус даёт навмеш, который проводит путь ближе к углам
+## препятствий, чем реально требует корпус, и корпус их физически задевает на поворотах (нашли
+## живым тестом: 0.9 давало стабильный залип на угле Obstacle5, макс. разрыв без прогресса 14.4с).
+@export var nav_agent_radius: float = 1.2
 
-## Резервный "антизастрял" — лучи есть только 3, а не 9, поэтому иногда (эмпирически ~1 раз из
-## 3 на угле реального препятствия — Jolt в контакте с углом коробки не всегда стабильно даёт
-## соскользнуть) корпус может физически залипнуть НЕ ЗАМЕТИВ этого через лучи (например, если оба
-## качающихся луча в момент контакта смотрят мимо угла). Если едем (ai_move_input>0), но реальная
-## скорость корпуса меньше stuck_min_speed дольше stuck_detect_sec — считаем застрявшим, коротко
-## сдаём назад (stuck_reverse_sec), чтобы физически разорвать контакт, дальше обычная логика сама
-## пересчитает объезд с чистого листа.
+## [ИСПРАВЛЕНО, см. Bot AI Sandbox §12] Целиться ТОЧНО в get_next_path_position() (следующий узел
+## пути) заставляло негомономный (не может боком) танк срезать угол вплотную к препятствию — A*
+## по навмешу проводит кратчайший путь РОВНО по границе agent_radius вокруг угла, а прицеливание
+## точно в эту точку не оставляет запаса на реальный радиус разворота корпуса. Вместо этого —
+## pure pursuit (стандартная техника следования по пути для транспортных средств, не point-агента):
+## целимся в точку, отстоящую на nav_lookahead_distance ВПЕРЁД по полилинии пути от текущей
+## позиции (см. _get_lookahead_point()), а не в саму точку поворота — так на повороте получается
+## мягкая дуга, а не срез угла.
+@export var nav_lookahead_distance: float = 3.0
+
+## [ГИБРИД, по прямому запросу] Веер из 3 коротких лучей (0°, ±emergency_brake_spread_deg от
+## корпуса) — ТОЛЬКО аварийный тормоз, не выбор направления (направление всегда решает навмеш/
+## pure pursuit выше). [ИСПРАВЛЕНО] Один луч строго по центру не ловил контакт корпусом ПОД
+## УГЛОМ (см. Bot AI Sandbox §12 — живой тест: get_slide_collision() показал реальный физический
+## контакт с препятствием, а brake_hit с одним центральным лучом был false, тот же слепой угол,
+## что и у одиночного луча в самой первой версии объезда, §11.1) — три луча веером, ЛЮБОЙ хит
+## близко считается тормозом. Если что-то оказалось ближе emergency_brake_range — ai_move_input
+## жёстко на 0 в этом кадре (доворот продолжается) — последний рубеж защиты от несовершенства
+## pure-pursuit-следования, не замена NavMesh-планирования тем самым реактивным лидаром, от
+## которого ушли (три коротких луча на кадр несравнимо дешевле прежних 3 непрерывно качающихся
+## на полную дальность, и не участвуют в выборе курса вообще).
+@export var emergency_brake_range: float = 1.3
+@export var emergency_brake_spread_deg: float = 20.0
+
+## Антизастрял — страховка на физические заедания (контакт с препятствием под углом, столкновение
+## с другим танком) — по чистому СМЕЩЕНИЮ ПОЗИЦИИ за окно stuck_detect_sec, НЕ по мгновенной
+## скорости. [ИСПРАВЛЕНО] Мгновенная Vector2(velocity.x,velocity.z).length() ловится контактной
+## вибрацией — та же ловушка, что уже была задокументирована для реактивного лидара (§11.4):
+## контакт корпуса с углом препятствия ПОД УГЛОМ даёт болтающуюся скорость чуть ВЫШЕ
+## stuck_min_speed каждый кадр (Jolt пересчитывает контакт заново), хотя чистого продвижения нет
+## вообще (живой тест: реальный физический контакт по get_slide_collision(), скорость 0.237 —
+## выше порога 0.15, обычный таймер так и не накопился бы за много секунд). Решение — сравнивать
+## позицию РАЗ в stuck_detect_sec с позицией на начало этого окна: если сдвинулись меньше
+## stuck_min_progress ЗА ВСЁ ОКНО — считаем застрявшим, независимо от того, что показывает
+## скорость в отдельных кадрах.
 @export var stuck_detect_sec: float = 0.6
 @export var stuck_reverse_sec: float = 0.4
-@export var stuck_min_speed: float = 0.15
+@export var stuck_min_progress: float = 0.3
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
@@ -182,22 +190,13 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## и реакцию, не про то, что HARD-бот физически едет быстрее MEDIUM/EASY.
 @export var move_speed_multiplier: float = 0.75
 
-## Дистанция, ближе которой препятствие считается "практически вплотную" — резко доворачивать
-## ВО ВРЕМЯ движения на такой дистанции реально задевает препятствие корпусом (шире, чем тонкий
-## луч-датчик, который его засёк). См. _drive_to_waypoint() — на этой дистанции бот полностью
-## останавливается и доворачивается НА МЕСТЕ (гусеницы это позволяют без всякого "обмана" — тот
-## же принцип, что и обычный поворот корпуса), едет дальше только когда почти довернул.
-@export var avoid_close_range: float = 1.5
-@export var avoid_close_turn_tolerance_deg: float = 8.0
-
 ## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ГЛАВНЫЙ конус обзора
 ## (look_cone_deg, жёстко по направлению корпуса, радиус vision_range); цвет = текущий стейт
 ## (зелёный IDLE, голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
 ## башня; узкий белый контур вокруг неё — прицельный конус (secondary_cone_deg).
 @export var show_fov_debug: bool = true
-## Веер лучей объезда препятствий (зелёный — чисто, оранжевый — замечено, красный — перекрыто в
-## пределах avoid_trigger_range, голубой — выбранное направление объезда). Виден только в PATROL.
-@export var show_lidar_debug: bool = true
+## Линия текущего NavMesh-пути (голубая) — видна только в PATROL, см. _update_path_debug_draw().
+@export var show_path_debug: bool = true
 ## Текстовая панель "что сейчас в голове у бота" — роль/сложность/стейт/цель/объезд — в правом
 ## верхнем углу экрана (отдельный CanvasLayer поверх HUD, не часть его разметки).
 @export var show_brain_debug: bool = true
@@ -257,53 +256,16 @@ var _waypoint_index: int = 0
 var _waypoint_target_pos: Vector3 = Vector3.ZERO
 var _has_waypoint_target: bool = false
 
-## Объезд препятствий (см. _compute_travel_yaw()). _avoid_side: 0 — не объезжаем, -1/+1 — держим
-## сторону объезда (лево/право), пока путь не расчистится. _chosen_avoid_local_deg — угол
-## (локальный, относительно корпуса) выбранного луча-направления объезда — только для дебаг-отрисовки.
-var _avoid_side: int = 0
-var _avoid_active: bool = false
-## true, если выбранный сейчас борт объезда РЕАЛЬНО свободен (dist >= avoid_trigger_range), а не
-## просто "менее плохой" из двух. Пока false — ai_move_input держим на 0 (см. _drive_to_waypoint()):
-## танк доворачивается на месте, но НЕ едет туда, где ещё не убедился, что реально проедет —
-## иначе на пограничной дистанции он всё равно чиркает препятствие бортом на подъезде.
-var _avoid_chosen_clear: bool = true
-var _chosen_avoid_local_deg: float = 0.0
-var _last_lidar_fan: Array = []
-var _lidar_debug_mesh: MeshInstance3D
+## NavigationAgent3D — заводится в _ready() как ребёнок _body (см. заголовок файла). Плюс сам
+## meш для отрисовки текущего пути (see _update_path_debug_draw()).
+var _nav_agent: NavigationAgent3D
+var _path_debug_mesh: MeshInstance3D
 
-## Качание бортовых лучей-датчиков (см. _advance_obstacle_sweep()) — 0..avoid_sweep_max_deg,
-## _avoid_sweep_dir хранит направление (+1 расходятся от центра, -1 сходятся обратно к центру).
-var _avoid_sweep_deg: float = 0.0
-var _avoid_sweep_dir: float = 1.0
-
-## Качание УГЛА центрального луча вокруг направления на цель — от -_center_sweep_max_deg до
-## +_center_sweep_max_deg и обратно (см. тот же _advance_obstacle_sweep()); максимум считается
-## один раз в _ready() из hull_half_width/center_sweep_ref_distance.
-var _center_sweep_deg: float = 0.0
-var _center_sweep_dir: float = 1.0
-var _center_sweep_max_deg: float = 0.0
-
-## Антизастрял, 4 эскалирующих тира (см. _drive_to_waypoint()) — каждый следующий включается,
-## когда предыдущий уже пробовался и не помог: (1) короткий аварийный реверс — _stuck_timer
-## копится, пока едем без реального продвижения, _stuck_reverse_timer>0 — реверс идёт прямо
-## сейчас; (2) 2 реверса подряд на ОДНОЙ стороне объезда — сторона явно не работает на этом
-## препятствии, флип на другую (_stuck_trigger_count); (3) флип стороны УЖЕ пробовали на этой же
-## цели и он тоже не спас (_stuck_side_flip_count) — проблема не в стороне, а в самом угле подхода
-## к точке (узкий проход под углом, а не влево/вправо-развилка) — бросаем текущую точку внутри
-## вейпоинта, берём новую случайную (другая точка почти всегда даёт другой угол подхода); (4) и
-## смена точки внутри вейпоинта не спасла ВТОРОЙ раз подряд (_stuck_reroute_count) — не долбим
-## третий раз в то же геометрическое узкое место, идём к следующему вейпоинту, вернёмся сюда
-## обычным ходом патруля позже.
-var _stuck_timer: float = 0.0
+## Антизастрял — по чистому смещению за окно, см. @export-блок выше. _stuck_check_pos — позиция
+## на начало текущего окна замера, _stuck_check_timer — сколько уже накопилось в этом окне.
+var _stuck_check_pos: Vector3 = Vector3.ZERO
+var _stuck_check_timer: float = 0.0
 var _stuck_reverse_timer: float = 0.0
-var _stuck_trigger_count: int = 0
-var _stuck_side_flip_count: int = 0
-var _stuck_reroute_count: int = 0
-
-## Кэш последней проверки заднего луча (_check_rear_clear()) — только для дебаг-отрисовки/панели,
-## не для логики (сама логика читает возврат функции напрямую в момент вызова).
-var _last_rear_dist: float = 0.0
-var _last_rear_clear: bool = true
 
 var _brain_debug_label: Label
 
@@ -321,7 +283,21 @@ var _max_leg_time_sec: float = 0.0
 
 func _ready() -> void:
 	_apply_difficulty_preset()
-	_center_sweep_max_deg = rad_to_deg(atan(hull_half_width / center_sweep_ref_distance)) * center_sweep_width_multiplier
+
+	# NavigationAgent3D — ребёнок _body (не self, см. заголовок файла: агент берёт текущую позицию
+	# от РОДИТЕЛЯ-Node3D). call_deferred по той же причине, что и у остальных дебаг-узлов ниже —
+	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
+	_nav_agent = NavigationAgent3D.new()
+	_nav_agent.name = "NavigationAgent3D"
+	_nav_agent.radius = nav_agent_radius
+	# Танк не голономный (не может боком) — на широкой дуге поворота легко проскочить МИМО
+	# точки пути на расстоянии больше стандартных 0.5м, ни разу не попав точно в допуск, из-за
+	# чего курсор пути не продвигается вообще (см. Bot AI Sandbox §11 про диагностику). Больше,
+	# чем у типового point-агента.
+	_nav_agent.path_desired_distance = 2.0
+	_nav_agent.target_desired_distance = 1.0
+	_nav_agent.avoidance_enabled = false  # v1 — только статический навмеш, RVO на потом
+	_body.add_child.call_deferred(_nav_agent)
 
 	# Тот же трюк, что у TankAIController._initialize() — без этого бот читал бы Input
 	# игрока напрямую (is_player_controlled по умолчанию true у всех этих компонентов).
@@ -349,8 +325,8 @@ func _ready() -> void:
 
 	if show_fov_debug:
 		_setup_fov_debug_draw()
-	if show_lidar_debug:
-		_setup_lidar_debug_draw()
+	if show_path_debug:
+		_setup_path_debug_draw()
 	if show_brain_debug:
 		_setup_brain_debug_label()
 
@@ -407,8 +383,8 @@ func _physics_process(delta: float) -> void:
 
 	if show_fov_debug:
 		_update_fov_debug_draw()
-	if show_lidar_debug:
-		_update_lidar_debug_draw()
+	if show_path_debug:
+		_update_path_debug_draw()
 	if show_brain_debug:
 		_update_brain_debug_label()
 
@@ -566,8 +542,9 @@ func _pick_forward_biased_deg(current_local_deg: float) -> float:
 	return forward_look_cone_deg * 0.5 if current_local_deg <= 0.0 else -forward_look_cone_deg * 0.5
 
 ## Движение в PATROL — доехать до случайной точки в круге текущего вейпоинта, затем перейти к
-## следующему (индекс всегда по модулю — патруль бесконечный). Тот же принцип наведения
-## корпуса, что и в tank_ai_controller.gd._drive_toward().
+## следующему (индекс всегда по модулю — патруль бесконечный). Объезд статических препятствий —
+## NavigationAgent3D/NavMesh, следование — pure pursuit (см. _get_lookahead_point()), плюс один
+## короткий луч-тормоз (emergency_brake_range) как последний рубеж, см. заголовок файла.
 func _drive_to_waypoint(delta: float) -> void:
 	_leg_timer += delta  # копится, пока пытаемся дойти до текущего вейпоинта — см. _advance_waypoint()
 	if _waypoints.is_empty():
@@ -575,8 +552,17 @@ func _drive_to_waypoint(delta: float) -> void:
 		_movement.ai_turn_input = 0.0
 		return
 
-	# Аварийный реверс уже идёт — досиживаем его, не трогая остальную логику (объезд пересчитает
-	# всё заново, как только реверс закончится и контакт с препятствием физически разорван).
+	# NavigationAgent3D добавляется через add_child.call_deferred() в _ready() (сцена ещё строится
+	# в момент, когда доходит очередь до этого сиблинга) — на первый физ.кадр(ы) он ещё может быть
+	# не в дереве. get_next_path_position() на таком агенте кидает ошибку ("agent has no parent"),
+	# а не просто возвращает нейтральный результат — ждём, пока агент реально окажется в дереве.
+	if not _nav_agent.is_inside_tree():
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
+		return
+
+	# Аварийный реверс уже идёт — досиживаем его, дальше NavigationAgent3D пересчитает путь сам
+	# со следующей (уже сдвинутой реверсом) позиции.
 	if _stuck_reverse_timer > 0.0:
 		_stuck_reverse_timer -= delta
 		_movement.ai_move_input = -1.0
@@ -585,6 +571,7 @@ func _drive_to_waypoint(delta: float) -> void:
 
 	if not _has_waypoint_target:
 		_pick_new_waypoint_target()
+		_nav_agent.target_position = _waypoint_target_pos
 
 	var to_target: Vector3 = _waypoint_target_pos - _body.global_position
 	to_target.y = 0.0
@@ -592,18 +579,19 @@ func _drive_to_waypoint(delta: float) -> void:
 		_advance_waypoint()
 		return
 
-	var desired_world_yaw: float = _yaw_to_world_point(_body.global_position, _waypoint_target_pos)
+	# [ИСПРАВЛЕНО] get_current_navigation_path() САМ ПО СЕБЕ не обновляется — Godot пересчитывает
+	# путь под капотом именно по вызову get_next_path_position() (проверено живьём: path[0] был
+	# позицией бота МНОГИХ кадров/вейпоинтов давности, пока не звали эту функцию — один вызов
+	# мгновенно освежал путь). Раньше эта функция вызывалась для СВОЕГО возврата, теперь — для
+	# ПОБОЧНОГО ЭФФЕКТА обновления, сам возврат не используется: целимся не в сырую точку, а в
+	# pure-pursuit lookahead (см. @export-блок выше про срез угла), но БЕЗ этого вызова
+	# _get_lookahead_point() работала бы по протухшему пути и бот кружил бы у собственной позиции
+	# нескольких вейпоинтов назад (живой тест: 0-2 перехода/30с вместо 30+, пока не нашли).
+	_nav_agent.get_next_path_position()
+	var next_point: Vector3 = _get_lookahead_point()
+	var desired_world_yaw: float = _yaw_to_world_point(_body.global_position, next_point)
 
-	# "Лидар" — 2 качающихся луча из центра корпуса; если направление на цель перекрыто
-	# препятствием, едем не на цель, а на тот из лучей, что сейчас свободнее на выбранной
-	# стороне обхода (см. _compute_travel_yaw() и заголовок файла — танк не умеет двигаться
-	# боком, только рулить корпусом, поэтому объезд — это ВСЕГДА замена желаемого угла
-	# поворота, не смещение).
-	_advance_obstacle_sweep(delta)
-	_last_lidar_fan = _scan_obstacle_rays(desired_world_yaw)
-	var travel_world_yaw: float = _compute_travel_yaw(desired_world_yaw, _last_lidar_fan)
-
-	var yaw_diff: float = wrapf(travel_world_yaw - _body.rotation.y, -PI, PI)
+	var yaw_diff: float = wrapf(desired_world_yaw - _body.rotation.y, -PI, PI)
 	# Знак: TankMovement._physics_process() делает _body.rotate_y(-turn_input*turn_speed*delta),
 	# т.е. turn_input>0 УМЕНЬШАЕТ rotation.y, а не увеличивает (проверено живьём покадровым
 	# прогоном — с прямым знаком (turn_input=yaw_diff/0.5, как в этой же формуле у
@@ -612,180 +600,109 @@ func _drive_to_waypoint(delta: float) -> void:
 	# — ai_turn_input каждый кадр дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
 	_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
 
-	# Препятствие "практически вплотную" (center-луч короче avoid_close_range) — резкий доворот
-	# ВО ВРЕМЯ движения на такой дистанции реально задевает его корпусом (луч тонкий, корпус
-	# широкий). По прямому запросу: на этой дистанции ХОДОВАЯ полностью останавливается и корпус
-	# доворачивается НА МЕСТЕ (гусеницы это позволяют без обмана — тот же поворот, что и всегда,
-	# просто без одновременного хода), едем дальше только когда угол почти сошёлся
-	# (avoid_close_turn_tolerance_deg — узкий допуск, а не обычные 60°, которые нормально дают
-	# смягчённую дугу на безопасной дистанции, но здесь означали бы въезд боком в препятствие).
-	var center_dist: float = _last_lidar_fan[0]["dist"]
-	var too_close: bool = _avoid_active and center_dist < avoid_close_range
-	var turn_tolerance_deg: float = avoid_close_turn_tolerance_deg if too_close else 60.0
+	# Аварийный тормоз — веер из 3 коротких лучей по КОРПУСУ (не по направлению на next_point —
+	# тормозим от того, что реально перед носом прямо сейчас, см. @export-блок выше). Только
+	# гасит ход, направление не выбирает — это по-прежнему навмеш.
+	var brake_hit: bool = _check_emergency_brake()
+	_movement.ai_move_input = 1.0 if (not brake_hit and absf(yaw_diff) < deg_to_rad(60.0)) else 0.0
 
-	# Едем, только если направление либо не требует объезда вообще, либо выбранный борт объезда
-	# УЖЕ подтверждён реально свободным (_avoid_chosen_clear) — пока не подтверждён, доворачиваемся
-	# на месте (move_input=0), но НЕ едем туда, где ещё не убедились, что реально проедем. Раньше
-	# ехали к "менее плохому" борту сразу — на пограничной дистанции корпус чиркал препятствие,
-	# что физически выглядело как боковое скольжение (см. также фикс в tank_movement.gd).
-	var can_advance: bool = (not _avoid_active) or _avoid_chosen_clear
-	_movement.ai_move_input = 1.0 if (can_advance and absf(yaw_diff) < deg_to_rad(turn_tolerance_deg)) else 0.0
-
-	# Антизастрял: едем, но физически почти не скользим (застряли на углу препятствия — лучей
-	# всего 3, геометрию корнера они иногда не ловят, см. @export-блок выше), ЛИБО стоим и ждём
-	# (подтверждения свободного борта, ИЛИ доворота на месте у самого препятствия) — все три случая
-	# копим тем же таймером, по истечении — короткий аварийный реверс (без этого "стоим и ждём" сам
-	# по себе не запускал бы ниже эскалацию — ai_move_input тут же 0, а ожидание может не наступить
-	# никогда на симметрично узком препятствии).
-	var actual_speed: float = Vector2(_body.velocity.x, _body.velocity.z).length()
-	var waiting_for_clear_side: bool = _avoid_active and (not _avoid_chosen_clear or too_close)
-	if (_movement.ai_move_input > 0.5 or waiting_for_clear_side) and actual_speed < stuck_min_speed:
-		_stuck_timer += delta
-		if _stuck_timer >= stuck_detect_sec:
-			_stuck_timer = 0.0
-			# Слепой реверс мог сдать назад в стену за кормой или (после hazard-зон) прямо в яму —
-			# перед реверсом ОДИН раз (не каждый кадр, см. _check_rear_clear()) смотрим задним
-			# лучом, свободно ли сзади; если нет — физически не сдаём назад, но счётчик всё равно
-			# растёт, эскалация тиров ниже продолжается как обычно (иначе бот, зажатый спереди и
-			# сзади, стоял бы вечно, так и не дойдя до смены точки/маршрута).
-			if _check_rear_clear():
+	# Антизастрял по чистому смещению за окно (см. @export-блок выше про контактную вибрацию,
+	# которую ловит мгновенная скорость). Копим окно, только пока УЖЕ довернули достаточно, чтобы
+	# по-хорошему ехать (yaw_diff < 60° — иначе обычный доворот в начале отрезка, не застревание,
+	# ложно посчитался бы "нет прогресса"); тормоз (brake_hit) при этом НЕ исключение — если корпус
+	# развёрнут верно, но тормоз/контакт не пускает вперёд кадр за кадром, это и есть застревание.
+	# Раз в stuck_detect_sec сравниваем текущую позицию с той, что была на начало окна — если
+	# сдвинулись меньше stuck_min_progress ЗА ВСЁ ОКНО, застряли.
+	if absf(yaw_diff) < deg_to_rad(60.0):
+		_stuck_check_timer += delta
+		if _stuck_check_timer >= stuck_detect_sec:
+			var progress: float = _body.global_position.distance_to(_stuck_check_pos)
+			_stuck_check_pos = _body.global_position
+			_stuck_check_timer = 0.0
+			if progress < stuck_min_progress:
 				_stuck_reverse_timer = stuck_reverse_sec
-			_stuck_trigger_count += 1
-			# Тир 2: застряли подряд ДВАЖДЫ на одной и той же выбранной стороне объезда — сама
-			# сторона явно не работает на этом препятствии, пробуем другую.
-			if _stuck_trigger_count >= 2 and _avoid_side != 0:
-				_avoid_side = -_avoid_side
-				_stuck_trigger_count = 0
-				_stuck_side_flip_count += 1
-				# Тир 3: флип стороны на ЭТОЙ ЖЕ цели уже пробовали, и снова застряли — не
-				# помогает ни одна из двух локальных сторон объезда, значит дело не в стороне,
-				# а в самом угле подхода (узкий проход под углом между двумя препятствиями —
-				# см. Bot AI Sandbox §11.4). Бросаем текущую точку, берём новую случайную внутри
-				# того же вейпоинта — другая точка почти всегда даёт другой угол подхода.
-				if _stuck_side_flip_count >= 2:
-					_stuck_side_flip_count = 0
-					_avoid_side = 0
-					_avoid_active = false
-					_stuck_reroute_count += 1
-					# Тир 4: смена точки внутри вейпоинта ТОЖЕ не спасла второй раз подряд — не
-					# долбим третий раз в то же геометрическое узкое место, идём к следующему
-					# вейпоинту (_advance_waypoint() сам резетит _stuck_reroute_count).
-					if _stuck_reroute_count >= 2:
-						_advance_waypoint()
-					else:
-						_has_waypoint_target = false
 	else:
-		_stuck_timer = 0.0
-		_stuck_trigger_count = 0
-		_stuck_side_flip_count = 0
+		_stuck_check_timer = 0.0
+		_stuck_check_pos = _body.global_position
 
-## Продвигает оба качания на один физ.кадр — оба УГЛОМ, оба из одной и той же точки (центр
-## корпуса): бортовые лучи — 0..avoid_sweep_max_deg (как дворники), центральный — вокруг
-## direction-to-target, -_center_sweep_max_deg..+_center_sweep_max_deg (та же механика, амплитуда
-## на порядок меньше — см. заголовок файла и hull_half_width/center_sweep_ref_distance).
-func _advance_obstacle_sweep(delta: float) -> void:
-	_avoid_sweep_deg += _avoid_sweep_dir * avoid_sweep_speed_deg_per_sec * delta
-	if _avoid_sweep_deg >= avoid_sweep_max_deg:
-		_avoid_sweep_deg = avoid_sweep_max_deg
-		_avoid_sweep_dir = -1.0
-	elif _avoid_sweep_deg <= 0.0:
-		_avoid_sweep_deg = 0.0
-		_avoid_sweep_dir = 1.0
+## Pure pursuit — точка на (эффективном) lookahead ВПЕРЁД по полилинии текущего NavMesh-пути от
+## позиции, ближайшей к боту прямо сейчас (не просто "следующий узел пути", см. @export-блок в
+## заголовке файла про срез угла). Идём по сегментам от ближайшей к боту точки пути, вычитая их
+## длины из остатка lookahead, пока не наберётся нужное расстояние — тогда интерполируем внутри
+## этого сегмента.
+##
+## [ИСПРАВЛЕНО] Фиксированный nav_lookahead_distance (3м) давал устойчивое КРУЖЕНИЕ рядом с целью
+## вместо схождения — учебный случай деградации pure pursuit: если lookahead больше оставшегося
+## расстояния до ФИНАЛЬНОЙ цели, геометрия "целься на N метров вперёд" на подъезде уводит корпус
+## по кругу вокруг цели, а не к ней (найдено живым тестом: 0 переходов за 30с, позиция металась в
+## радиусе ~0.15м у вейпоинта бесконечно). Решение — эффективный lookahead ограничен расстоянием
+## до _waypoint_target_pos: далеко от цели используется полный nav_lookahead_distance (широкие
+## дуги вокруг препятствий), а на подъезде lookahead плавно сжимается до нуля, вырождаясь в "целься
+## точно в цель" — без этого схождение вообще невозможно геометрически, не только медленное.
+func _get_lookahead_point() -> Vector3:
+	var path: PackedVector3Array = _nav_agent.get_current_navigation_path()
+	if path.size() < 2:
+		return _nav_agent.get_next_path_position()
 
-	_center_sweep_deg += _center_sweep_dir * center_sweep_speed_deg_per_sec * delta
-	if _center_sweep_deg >= _center_sweep_max_deg:
-		_center_sweep_deg = _center_sweep_max_deg
-		_center_sweep_dir = -1.0
-	elif _center_sweep_deg <= -_center_sweep_max_deg:
-		_center_sweep_deg = -_center_sweep_max_deg
-		_center_sweep_dir = 1.0
+	var pos: Vector3 = _body.global_position
+	var effective_lookahead: float = minf(nav_lookahead_distance, pos.distance_to(_waypoint_target_pos))
 
-## ТРИ луча-датчика, ВСЕ из одной точки (центр корпуса, чуть приподнят) — различаются только
-## углом. "center" качается вокруг desired_world_yaw в пределах ±_center_sweep_max_deg (см.
-## _advance_obstacle_sweep()) — этот угол подобран так, что на дистанции center_sweep_ref_distance
-## боковой охват качания равен hull_half_width: узкий столб, который луч строго по курсу
-## проскочил бы мимо (хотя корпус своей шириной его заденет), рано или поздно попадает под
-## качающийся угол. "left"/"right" качаются зеркально между 0° и ±avoid_sweep_max_deg от
-## направления корпуса — они не решают "перекрыто ли", только "куда объезжать" (см.
-## _compute_travel_yaw()).
-func _scan_obstacle_rays(desired_world_yaw: float) -> Array:
-	var rays: Array = []
+	# Проекция бота на саму ломаную (на ОТРЕЗОК, не на ближайшую вершину) — иначе получается
+	# самоподдерживающееся равновесие "цель = я сам": если считать lookahead-дистанцию от
+	# ближайшей ВЕРШИНЫ, а не от текущего положения бота, то как только бот доезжает ровно до
+	# точки на расстоянии nav_lookahead_distance от этой вершины (а он к этому и стремится по
+	# конструкции pure pursuit), цель перестаёт зависеть от его реального положения и застывает
+	# точно в месте, где он стоит — направление на цель вырождается в нулевой вектор, руль
+	# получает шумовой (не осмысленный) угол и бот крутится на месте бесконечно, не продвигаясь
+	# (воспроизведено живьём: 60с прогон, позиция заморожена, rotation.y растёт линейно — чистый
+	# спин без прогресса). Fix: мерить lookahead-дистанцию от ПРОЕКЦИИ бота на путь, не от вершины.
+	var best_seg := 0
+	var best_t := 0.0
+	var best_dist := INF
+	for i in range(path.size() - 1):
+		var a: Vector3 = path[i]
+		var b: Vector3 = path[i + 1]
+		var seg: Vector3 = b - a
+		var seg_len_sq: float = seg.length_squared()
+		var t: float = clampf((pos - a).dot(seg) / seg_len_sq, 0.0, 1.0) if seg_len_sq > 0.0001 else 0.0
+		var d: float = pos.distance_to(a + seg * t)
+		if d < best_dist:
+			best_dist = d
+			best_seg = i
+			best_t = t
+
+	var from_point: Vector3 = path[best_seg].lerp(path[best_seg + 1], best_t)
+	var seg_left: float = from_point.distance_to(path[best_seg + 1])
+	var remaining: float = effective_lookahead
+	if seg_left >= remaining:
+		return from_point.lerp(path[best_seg + 1], remaining / seg_left) if seg_left > 0.0001 else path[best_seg + 1]
+	remaining -= seg_left
+	var i: int = best_seg + 1
+	while i < path.size() - 1:
+		var seg_len: float = path[i].distance_to(path[i + 1])
+		if seg_len >= remaining:
+			return path[i].lerp(path[i + 1], remaining / seg_len)
+		remaining -= seg_len
+		i += 1
+	return path[path.size() - 1]
+
+## Веер из 3 коротких лучей (0°, ±emergency_brake_spread_deg от корпуса) — см. @export-блок в
+## заголовке файла про слепой угол одного центрального луча. ЛЮБОЙ хит ближе emergency_brake_range
+## считается тормозом; никакая сторона/направление здесь не выбирается, только да/нет.
+func _check_emergency_brake() -> bool:
 	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
-	var space_state := _body.get_world_3d().direct_space_state
 	var body_yaw: float = _body.rotation.y
-	var ray_defs: Array = [
-		{"id": "center", "world_yaw": desired_world_yaw + deg_to_rad(_center_sweep_deg)},
-		{"id": "left", "world_yaw": body_yaw + deg_to_rad(-_avoid_sweep_deg)},
-		{"id": "right", "world_yaw": body_yaw + deg_to_rad(_avoid_sweep_deg)},
-	]
-	for def in ray_defs:
-		var ray_yaw: float = def["world_yaw"]
-		var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
-		var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * avoid_sensor_range)
-		query.exclude = [_body]
-		query.collision_mask = 1 | 2 | 4  # environment + tanks + hazard zones (см. HazardZoneN)
-		# Hazard-зоны (ямы/пропасти/границы карты) — Area3D на слое 4, физически инертны для
-		# самих танков (не в их collision_mask), опознаются ТОЛЬКО этим лучом. Без этого флага
-		# raycast Area3D вообще не видит — только PhysicsBody3D (StaticBody/CharacterBody).
-		query.collide_with_areas = true
-		var result: Dictionary = space_state.intersect_ray(query)
-		var dist: float = avoid_sensor_range
-		var hit: bool = not result.is_empty()
-		if hit:
-			dist = origin.distance_to(result["position"])
-		rays.append({"id": def["id"], "local_deg": rad_to_deg(wrapf(ray_yaw - body_yaw, -PI, PI)), "world_yaw": ray_yaw, "dist": dist, "hit": hit, "origin": origin, "dir": dir})
-	return rays
-
-## Луч СТРОГО назад от корпуса — считается ТОЛЬКО в момент срабатывания аварийного реверса (см.
-## _drive_to_waypoint()), не каждый физ.кадр, как основной 3-лучевой "лидар" выше: нужен редко,
-## не стоит тратить на него бюджет каждого тика (тот же принцип экономии, что и у самого лидара —
-## см. заголовок файла про масштаб 10×10+ ботов). Та же маска, что у лидара (окружение + танки +
-## hazard-зоны, слой 4) — без этого слепой реверс мог сдать назад в стену за кормой или (после
-## появления hazard-зон, §11.2) прямо в яму/пропасть. Результат кэшируется в _last_rear_dist/
-## _last_rear_clear только ради дебаг-отрисовки (_update_lidar_debug_draw()), не для логики.
-func _check_rear_clear() -> bool:
-	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
-	var rear_yaw: float = _body.rotation.y + PI
-	var dir := Vector3(-sin(rear_yaw), 0.0, -cos(rear_yaw))
 	var space_state := _body.get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * avoid_sensor_range)
-	query.exclude = [_body]
-	query.collision_mask = 1 | 2 | 4
-	query.collide_with_areas = true
-	var result: Dictionary = space_state.intersect_ray(query)
-	_last_rear_dist = avoid_sensor_range if result.is_empty() else origin.distance_to(result["position"])
-	_last_rear_clear = _last_rear_dist >= avoid_trigger_range
-	return _last_rear_clear
-
-## Решает, куда РЕАЛЬНО рулить: на цель напрямую, либо в объезд препятствия. "center"-луч
-## (см. _scan_obstacle_rays()) перекрыт ближе avoid_trigger_range → включаем объезд: один раз
-## выбираем сторону, глядя, какой из бортовых лучей СЕЙЧАС свободнее (left/right), и держим её
-## (_avoid_side), пока center не расчистится — без удержания стороны бот на препятствии ровно
-## по курсу дёргался бы то влево, то вправо каждый кадр. Дальше едем на бортовой луч выбранной
-## стороны — с всего двумя кандидатами (не веером из многих) выбор тривиален, не нужен
-## тайбрейк-перебор.
-func _compute_travel_yaw(desired_world_yaw: float, rays: Array) -> float:
-	var center: Dictionary = rays[0]
-	var sweep_left: Dictionary = rays[1]
-	var sweep_right: Dictionary = rays[2]
-
-	if center["dist"] >= avoid_trigger_range:
-		_avoid_side = 0
-		_avoid_active = false
-		_avoid_chosen_clear = true
-		return desired_world_yaw
-
-	_avoid_active = true
-	if _avoid_side == 0:
-		_avoid_side = -1 if sweep_left["dist"] >= sweep_right["dist"] else 1
-
-	var chosen: Dictionary = sweep_left if _avoid_side < 0 else sweep_right
-	# Выбранный борт может сам быть "просто менее плохим", а не реально свободным (оба сейчас
-	# ближе avoid_trigger_range) — в этом случае ai_move_input держим на нуле, см. _drive_to_waypoint().
-	_avoid_chosen_clear = chosen["dist"] >= avoid_trigger_range
-	_chosen_avoid_local_deg = chosen["local_deg"]
-	return chosen["world_yaw"]
-
+	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
+		var ray_yaw: float = body_yaw + deg_to_rad(offset_deg)
+		var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
+		var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * emergency_brake_range)
+		query.exclude = [_body]
+		query.collision_mask = 1 | 2 | 4
+		query.collide_with_areas = true
+		if not space_state.intersect_ray(query).is_empty():
+			return true
+	return false
 
 ## Случайная точка внутри круга (равномерно по площади — sqrt(randf()), не randf() напрямую,
 ## иначе точки скучивались бы у центра).
@@ -802,7 +719,6 @@ func _advance_waypoint() -> void:
 	_leg_timer = 0.0
 	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 	_has_waypoint_target = false
-	_stuck_reroute_count = 0  # новый вейпоинт — прежнее узкое место больше не актуально
 
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
@@ -915,75 +831,68 @@ func _update_fov_debug_draw() -> void:
 
 ## Тот же приём, что и с конусом обзора (_setup_fov_debug_draw) — отдельный MeshInstance3D,
 ## ребёнок _body, ребилдится каждый физ.кадр.
-func _setup_lidar_debug_draw() -> void:
-	_lidar_debug_mesh = MeshInstance3D.new()
-	_lidar_debug_mesh.name = "LidarDebugMesh"
-	_lidar_debug_mesh.mesh = ImmediateMesh.new()
-	_lidar_debug_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+func _setup_path_debug_draw() -> void:
+	_path_debug_mesh = MeshInstance3D.new()
+	_path_debug_mesh.name = "PathDebugMesh"
+	_path_debug_mesh.mesh = ImmediateMesh.new()
+	_path_debug_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.vertex_color_use_as_albedo = true
-	_lidar_debug_mesh.material_override = mat
-	_body.add_child.call_deferred(_lidar_debug_mesh)
+	_path_debug_mesh.material_override = mat
+	_body.add_child.call_deferred(_path_debug_mesh)
 
-## Два качающихся луча объезда: зелёный — луч чист, оранжевый — что-то видно, но ещё не в
-## пределах avoid_trigger_range, красный — препятствие перекрывает в пределах срабатывания,
-## голубой — луч, выбранный как направление объезда (_chosen_avoid_local_deg, только пока
-## _avoid_active). Видно только в PATROL — вне патруля бот не едет, лучам качаться незачем.
-##
-## РЕАЛЬНЫЙ БАГ (не в физике объезда — там центр корпуса всегда был верный, см.
-## _scan_obstacle_rays() — а именно в этой отрисовке): _lidar_debug_mesh — ДОЧЕРНИЙ узел _body,
-## значит ImmediateMesh ждёт вершины в ЛОКАЛЬНЫХ координатах относительно корпуса — а сюда
-## подавались ray["origin"]/ray["dir"]*dist, которые МИРОВЫЕ (нужны для самого raycast-запроса
-## в _scan_obstacle_rays(), но не годятся напрямую для отрисовки). Трансформация корпуса
-## применялась к ним ВТОРОЙ раз поверх уже мировых координат — рядом с центром карты (мировые
-## координаты малы) сдвиг был почти незаметен на глаз, поэтому баг не бросался в глаза на
-## прежних скриншотах; вдали от центра (проверено живьём на x=-20) лучи улетали за пределы
-## кадра целиком. Фикс — как и у конуса обзора (_local_point()): координаты только локальные,
-## относительно _body, вообще без обращения к ray["origin"]/["dir"].
-func _update_lidar_debug_draw() -> void:
-	var mesh: ImmediateMesh = _lidar_debug_mesh.mesh
+## Голубая ломаная — весь ОСТАВШИЙСЯ путь по навмешу прямо сейчас (NavigationAgent3D.
+## get_current_navigation_path()), не только следующая точка — видно всю дугу, которой бот
+## огибает препятствия, не только текущий локальный шаг. _path_debug_mesh — ДОЧЕРНИЙ узел
+## _body, поэтому мировые точки пути переводятся в ЛОКАЛЬНЫЕ координаты через
+## _body.global_transform.affine_inverse() (тот же класс требования, что и у конуса обзора —
+## ImmediateMesh ждёт координаты относительно СВОЕГО родителя, не мировые).
+func _update_path_debug_draw() -> void:
+	var mesh: ImmediateMesh = _path_debug_mesh.mesh
 	mesh.clear_surfaces()
-	if state != State.PATROL or _last_lidar_fan.is_empty():
+	if state != State.PATROL or _nav_agent == null or not _nav_agent.is_inside_tree():
+		return
+	var path: PackedVector3Array = _nav_agent.get_current_navigation_path()
+	if path.size() < 2:
 		return
 
-	const HEIGHT := 0.4  # совпадает с высотой origin в _scan_obstacle_rays()
-
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-	for ray in _last_lidar_fan:
-		var color: Color
-		if _avoid_active and absf(ray["local_deg"] - _chosen_avoid_local_deg) < 0.01:
-			color = Color(0.2, 0.95, 0.95, 0.95)
-		elif ray["hit"] and ray["dist"] < avoid_trigger_range:
-			color = Color(0.95, 0.15, 0.1, 0.85)
-		elif ray["hit"]:
-			color = Color(0.9, 0.6, 0.1, 0.7)
-		else:
-			color = Color(0.2, 0.9, 0.3, 0.6)
-		mesh.surface_set_color(color)
-		# Все три луча стартуют строго из центра корпуса (см. _scan_obstacle_rays()) — отличаются
-		# только УГЛОМ, поэтому local_origin один и тот же для всех, никакого бокового сдвига.
-		var rad: float = deg_to_rad(ray["local_deg"])
-		var local_origin := Vector3(0.0, HEIGHT, 0.0)
-		var to_local: Vector3 = local_origin + Vector3(-sin(rad), 0.0, -cos(rad)) * ray["dist"]
-		mesh.surface_add_vertex(local_origin)
-		mesh.surface_add_vertex(to_local)
+	const HEIGHT := 0.4
+	var inv_xform: Transform3D = _body.global_transform.affine_inverse()
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	mesh.surface_set_color(Color(0.2, 0.85, 0.95, 0.9))
+	for p in path:
+		mesh.surface_add_vertex(inv_xform * (p + Vector3.UP * HEIGHT))
 	mesh.surface_end()
 
-	# Задний луч (см. _check_rear_clear()) — виден только пока реверс реально идёт (нет смысла
-	# показывать устаревшую проверку долгую секунду простоя между срабатываниями). Голубой —
-	# сзади свободно (реверс идёт по-настоящему), оранжевый — не свободно (реверс пропущен на
-	# этом срабатывании, см. _drive_to_waypoint()).
-	if _stuck_reverse_timer > 0.0:
-		var rear_color: Color = Color(0.2, 0.7, 0.95, 0.9) if _last_rear_clear else Color(0.95, 0.55, 0.1, 0.9)
-		mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-		mesh.surface_set_color(rear_color)
-		var rear_local_origin := Vector3(0.0, HEIGHT, 0.0)
-		var rear_to_local: Vector3 = rear_local_origin + Vector3(0.0, 0.0, 1.0) * _last_rear_dist
-		mesh.surface_add_vertex(rear_local_origin)
-		mesh.surface_add_vertex(rear_to_local)
-		mesh.surface_end()
+	# Оранжевая точка — куда РЕАЛЬНО целится pure pursuit прямо сейчас (_get_lookahead_point(),
+	# см. заголовок файла) — НЕ то же самое, что ближайший узел голубой линии; лежит дальше по
+	# полилинии на nav_lookahead_distance. Маленький крестик, не просто линия, чтобы не путать
+	# с самой ломаной пути.
+	var lookahead: Vector3 = inv_xform * (_get_lookahead_point() + Vector3.UP * HEIGHT)
+	const MARK := 0.4
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_set_color(Color(1.0, 0.6, 0.1, 0.95))
+	mesh.surface_add_vertex(lookahead + Vector3(-MARK, 0, 0))
+	mesh.surface_add_vertex(lookahead + Vector3(MARK, 0, 0))
+	mesh.surface_add_vertex(lookahead + Vector3(0, 0, -MARK))
+	mesh.surface_add_vertex(lookahead + Vector3(0, 0, MARK))
+	mesh.surface_end()
+
+	# Веер из 3 лучей-тормоза (0°, ±emergency_brake_spread_deg, см. @export-блок в заголовке файла)
+	# — красные, если ЛЮБОЙ хит ближе emergency_brake_range (тормоз реально держит ai_move_input
+	# на нуле для всех троих разом, см. _check_emergency_brake()), иначе все зелёные. Рисуем в
+	# ЛОКАЛЬНЫХ координатах корпуса (0° = -Z), поэтому тут просто deg_to_rad(offset) без world_yaw.
+	var brake_hit_dbg: bool = _check_emergency_brake()
+	var brake_color: Color = Color(0.95, 0.15, 0.1, 0.9) if brake_hit_dbg else Color(0.2, 0.9, 0.3, 0.7)
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_set_color(brake_color)
+	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
+		var local_dir := Vector3(-sin(deg_to_rad(offset_deg)), 0.0, -cos(deg_to_rad(offset_deg)))
+		mesh.surface_add_vertex(Vector3(0.0, HEIGHT, 0.0))
+		mesh.surface_add_vertex(local_dir * emergency_brake_range + Vector3(0.0, HEIGHT, 0.0))
+	mesh.surface_end()
 
 ## Текстовая панель "что сейчас в голове у бота" — отдельный CanvasLayer+Label поверх HUD (не
 ## трогаем разметку самого HUD.tscn — это дебаг конкретно этой песочницы, не часть продакшен-UI).
@@ -1030,10 +939,8 @@ func _update_brain_debug_label() -> void:
 			if _has_waypoint_target:
 				var to_point: float = _body.global_position.distance_to(_waypoint_target_pos)
 				lines.append("to point: %.1fm" % to_point)
-			if _avoid_active:
-				lines.append("AVOID OBSTACLE: %s" % ("<- left" if _avoid_side < 0 else "right ->"))
-			else:
-				lines.append("path: clear")
+			if _nav_agent != null and _nav_agent.is_inside_tree():
+				lines.append("nav: %d pts left" % _nav_agent.get_current_navigation_path().size())
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

@@ -151,3 +151,10 @@ camera" model — see the vault's Bot AI Sandbox doc for the full design, its it
 a list of found-but-not-yet-ported-to-production bugs (notably: `TankAIController._drive_toward()`
 likely has an inverted turn-direction sign, found and fixed only in this sandbox's copy of the same
 formula).
+
+Obstacle avoidance is NavMesh-based (`NavigationRegion3D` + `NavigationAgent3D`), not raycasts — an
+earlier reactive raycast/"lidar" version was fully retired after diminishing returns (each fix to a
+corner-case oscillation opened a new one) and replaced with the standard NavMesh + A* approach; see
+the vault doc §12 for the switch (and §11, kept as an archived history of the raycast era, since
+`bot_sentry_controller.gd` no longer matches it). `agent_radius` on the baked mesh must exceed the
+tank hull's half-diagonal (not just its half-width) or the path clips corners on turns.
