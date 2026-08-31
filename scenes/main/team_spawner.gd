@@ -7,8 +7,16 @@ extends Node
 ## Должен идти В Main.tscn РАНЬШЕ MatchManager/ScoreManager: те сканируют группу "tanks"
 ## в своём _ready(), а порядок _ready() среди siblings соответствует порядку в файле —
 ## к моменту их запуска весь состав уже должен быть заспавнен и зарегистрирован.
+##
+## [ИЗМЕНЕНО, по прямому запросу — "одинаковые механизмы спавна на всех картах... спавнер это
+## зона... в радиусе спавна случайно появляются танки"] Раньше — по ОДНОЙ ФИКСИРОВАННОЙ точке
+## (AttackSpawnPoint1-5/DefenseSpawnPoint1-5) на каждого танка, без вариативности и без проверки
+## поверхности. Теперь — ОДНА `SpawnZone` (see spawn_zone.gd) на команду, КАЖДЫЙ танк (включая
+## игрока — "по тем же правилам, что и танки ботов") получает СВОЮ случайную точку внутри неё
+## через `zone.pick_spawn_position()`, который сам проверяет, что под точкой реальная земля.
 
 const BotTankScene := preload("res://scenes/tank/Tank.tscn")
+const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 
 ## Раздельные JSON-конфиги характеристик танка игрока/ботов (скорость, ускорение, скорость
 ## поворота башни, начальная скорость снаряда) — вне GameConfig.gd специально: это
@@ -32,40 +40,37 @@ func spawn_team() -> void:
 	# на дефолт при каждом reload_current_scene() (рестарт раунда) — а команды должны
 	# меняться сторонами именно между рестартами (см. hud.gd RestartButton).
 	var player_team: int = MatchState.player_team
-	var map: Node = get_tree().current_scene.get_node("Map")
 	var player: Node = get_tree().current_scene.get_node("PlayerTank")
 
-	var attack_points := _collect_points(map, "AttackSpawnPoint")
-	var defense_points := _collect_points(map, "DefenseSpawnPoint")
-
-	var player_points: Array = attack_points if player_team == 0 else defense_points
-	var opposite_points: Array = defense_points if player_team == 0 else attack_points
+	var attack_zone: Node3D = _find_spawn_zone("AttackSpawnZone")
+	var defense_zone: Node3D = _find_spawn_zone("DefenseSpawnZone")
+	var player_zone: Node3D = attack_zone if player_team == 0 else defense_zone
+	var opposite_zone: Node3D = defense_zone if player_team == 0 else attack_zone
 	var opposite_team: int = 1 - player_team
 
 	var player_config := _load_json_config(PlayerConfigPath)
 	var bot_config := _load_json_config(BotConfigPath)
 
 	player.team = player_team
-	if not player_points.is_empty():
-		player.global_position = player_points[0].global_position + _spawn_clearance
+	if player_zone != null:
+		player.global_position = player_zone.pick_spawn_position() + _spawn_clearance
+		SpawnZoneScript.face_center(player)
 	_apply_tank_config(player, player_config)
 
 	for i in range(1, GameConfig.team_size):
-		if i < player_points.size():
-			_spawn_bot(player_team, player_points[i].global_position, bot_config)
+		_spawn_bot(player_team, player_zone, bot_config)
 
 	for i in range(GameConfig.team_size):
-		if i < opposite_points.size():
-			_spawn_bot(opposite_team, opposite_points[i].global_position, bot_config)
+		_spawn_bot(opposite_team, opposite_zone, bot_config)
 
-func _collect_points(map: Node, prefix: String) -> Array:
-	var points: Array = []
-	for child in map.get_children():
-		if String(child.name).begins_with(prefix):
-			points.append(child)
-	return points
+## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей "Map" —
+## тот же обобщённый приём, что respawn_controller.gd/bot_sentry_controller.gd используют для
+## поиска Ground/Objective, работает одинаково на продакшен-карте (зона под "Map") и на тестовых
+## аренах, у которых отдельного узла "Map" вообще нет.
+func _find_spawn_zone(node_name: String) -> Node3D:
+	return get_tree().current_scene.find_child(node_name, true, false)
 
-func _spawn_bot(team: int, pos: Vector3, config: Dictionary) -> void:
+func _spawn_bot(team: int, zone: Node3D, config: Dictionary) -> void:
 	var bot: CharacterBody3D = BotTankScene.instantiate()
 	# CameraRig.is_active гасит Camera3D.current уже В СВОЁМ _ready() — тот срабатывает
 	# синхронно ВНУТРИ add_child() (нода уже в активном дереве), раньше следующей строки.
@@ -76,7 +81,9 @@ func _spawn_bot(team: int, pos: Vector3, config: Dictionary) -> void:
 	bot.team = team
 	bot.get_node("CameraRig").is_active = false
 	get_tree().current_scene.add_child(bot)
-	bot.global_position = pos + _spawn_clearance
+	if zone != null:
+		bot.global_position = zone.pick_spawn_position() + _spawn_clearance
+		SpawnZoneScript.face_center(bot)
 	var ai := bot.get_node("TankAIController")
 	ai.enabled = true
 	ai.patrol_enabled = false  # временно: боты стоят на месте, не бегают по вейпоинтам (см. дев-план)

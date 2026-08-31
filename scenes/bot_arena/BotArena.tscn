@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scenes/bot_arena/bot_sentry_controller.gd" id="3_idf45"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
 [ext_resource type="Script" path="res://scenes/hud/hud.gd" id="7_execi"]
+[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="8_execi"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_2uusy"]
 vertices = PackedVector3Array(-10.75, 0.5, -23, -8.25, 0.5, -23.25, -7.75, 0.5, -24.5, -6, 0.5, -34.75, -6, 0.5, -24.75, -34.75, 0.5, -19.75, -11.25, 0.5, -19.75, -11.25, 0.5, -22.25, -34.75, 0.5, -34.75, -3.5, 0.5, -21.5, -2.25, 0.5, -21, -1.25, 0.5, -22.25, -3.75, 0.5, -24.25, 1.5, 0.5, -22.25, 2.5, 0.5, -21, 3.75, 0.5, -21.5, -4.5, 0.5, -24.75, 4, 0.5, -24.25, 4.75, 0.5, -24.75, 6.25, 0.5, -34.75, 6.25, 0.5, -24.75, 8.25, 0.5, -15.25, 8.5, 0.5, -14.25, 11, 0.5, -14, 7.5, 0.5, -15.75, 8.5, 0.5, -21.25, 7.5, 0.5, -20.25, 8.5, 0.5, -23.75, 11.5, 0.5, -12, 34.75, 0.5, -12, 34.75, 0.5, -34.75, 7.5, 0.5, -24.75, 4, 0.5, -20.5, -4.25, 0.5, -20.25, -2.25, 0.5, -18.5, 2.5, 0.5, -18.75, 4.75, 0.5, -20, 4, 0.5, -11.75, -3.5, 0.5, -12.25, -5, 0.5, -11, -3, 0.5, -1.5, 2.75, 0.5, -1.5, -1.25, 0.5, -17.5, -4.5, 0.5, -15.75, -3.75, 0.5, -15.25, -7.25, 0.5, -18.75, -8, 0.5, -18.5, -7.5, 0.5, -15.5, -6.5, 0.5, -20, 1.75, 0.5, -17.75, 4.75, 0.5, -15.75, 4, 0.5, -15.25, -3.75, 0.5, -0.75, -8.25, 0.5, -14.75, -10.25, 0.5, -18.5, -7.25, 0.5, -11, -8, 0.5, -11.5, -3.75, 0.5, 1.25, -34.75, 0.5, 1.25, 7.5, 0.5, -9.75, 3.75, 0.5, -0.75, 4, 0.5, 0.75, 10.75, 0.5, -9.75, 3.5, 0.5, 1.5, 1, 0.5, 1.75, 1, 0.5, 34.75, 11.5, 0.5, -10.75, 34.75, 0.5, 34.75, 6.75, 0.5, -11, 4.75, 0.5, -11, -3, 0.5, 1.75, -34.75, 0.5, 34.75, -1, 0.5, 34.75, -1, 0.5, 1.75)
@@ -101,15 +102,16 @@ collision_mask = 3
 script = ExtResource("2_7eip8")
 
 [node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
-transform = Transform3D(0.2156917, 0, 0.9764336, 0, 1, 0, -0.9764336, 0, 0.2156917, 8.3495245, 0.0008707363, -24.187979)
+transform = Transform3D(0.91618246, 0, -0.4006744, 0, 1, 0, 0.4006744, 0, 0.91618246, -0.34465966, 0.0008727778, -7.8162875)
 collision_layer = 2
 collision_mask = 3
-velocity = Vector3(-4.393951, 0, -0.97061265)
 script = ExtResource("2_7eip8")
 team = 1
 
 [node name="BotSentryController" type="Node" parent="BotTank" unique_id=1729385129]
 script = ExtResource("3_idf45")
+hunt_area_center = Vector3(0, -0.25, 0)
+hunt_area_half_extents = Vector2(36, 36)
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
 script = ExtResource("7_execi")
@@ -241,3 +243,45 @@ shape = SubResource("BoxShape3D_0prsi")
 [node name="Mesh" type="MeshInstance3D" parent="NavigationRegion3D/HazardZone1" unique_id=600668854]
 material_override = SubResource("StandardMaterial3D_j8k2e")
 mesh = SubResource("BoxMesh_evrla")
+
+[node name="AttackBotTank" type="CharacterBody3D" parent="." unique_id=413402161 instance=ExtResource("1_b63ln")]
+transform = Transform3D(-0.9731885, 0, -0.23000547, 0, 1, 0, 0.23000547, 0, -0.9731885, 4.001146, 0, -14.057574)
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("2_7eip8")
+
+[node name="BotSentryController" type="Node" parent="AttackBotTank" unique_id=438827995]
+script = ExtResource("3_idf45")
+waypoint_name_prefix = "AttackWaypoint"
+waypoints_one_way = true
+hunt_area_center = Vector3(0, -0.25, 0)
+hunt_area_half_extents = Vector2(36, 36)
+debug_ui_slot = 1
+
+[node name="AttackWaypoint1" type="Node3D" parent="." unique_id=1592442195]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, 16)
+
+[node name="AttackWaypoint2" type="Node3D" parent="." unique_id=487532425]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 4)
+
+[node name="AttackWaypoint3" type="Node3D" parent="." unique_id=988336735]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, -8)
+
+[node name="AttackSpawnZone" type="Node3D" parent="." unique_id=1426286694]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 28)
+script = ExtResource("8_execi")
+radius = 8.0
+
+[node name="DefenseSpawnZone" type="Node3D" parent="." unique_id=1628911624]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28, 0, -28)
+script = ExtResource("8_execi")
+radius = 8.0
+
+[node name="DefenseWaypoint1" type="Node3D" parent="." unique_id=796650889]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21, 0, -26)
+
+[node name="DefenseWaypoint2" type="Node3D" parent="." unique_id=1636650743]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, -24)
+
+[node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=1517443530]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -22)

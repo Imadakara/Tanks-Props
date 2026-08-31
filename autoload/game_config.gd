@@ -6,7 +6,11 @@ extends Node
 
 @export var disguise_duration_sec: float = 30.0
 @export var disguise_cooldown_sec: float = 10.0
-@export var reload_duration_sec: float = 10.0
+## [ИЗМЕНЕНО, по прямому запросу — "сделай 3 сек кулдаун на выстрел по умолчанию всем включая
+## игрока"] Было 10.0. `bot_arena.gd` отдельно переопределяет на 1.0 ТОЛЬКО на тестовых аренах
+## (ускоренная перезарядка для обкатки ИИ) — этот точечный оверрайд не трогаем, запрос был про
+## дефолт, действующий везде, где он не переопределён явно (продакшен + игрок).
+@export var reload_duration_sec: float = 3.0
 @export var ammo_per_tank: int = 10
 @export var team_size: int = 2  # временно 2 для тестов 2×2 (1 бот игроку в помощь, 2 бота противнику) — вернуть на 5 для полного MVP-состава
 @export var final_stage_duration_sec: float = 30.0

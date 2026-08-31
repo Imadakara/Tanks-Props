@@ -2,8 +2,20 @@ extends Node
 ## HealthComponent — многоударное разрушение (изначально было one-hit-kill для танков,
 ## ТЗ §7; теперь настраивается через max_hits — переиспользуется и для DestructibleObjective
 ## режима "Destroy Target"). Танки читают max_hits из JSON-конфига игрока/бота
-## (config/*_tank_config.json), DestructibleObjective — из GameConfig.objective_hits_required
-## (оба выставляются извне, см. team_spawner.gd/match_manager.gd).
+## (config/*_tank_config.json, сейчас 2 у обоих), DestructibleObjective — из
+## GameConfig.objective_hits_required (оба выставляются извне, см. team_spawner.gd/match_manager.gd).
+##
+## [ИСПРАВЛЕНО, по прямому запросу — "танки уничтожались с двух попаданий и краснели при первом,
+## это надо вернуть и сделать валидным правилом на всех картах"] Дефолт этого @export поднят с 1 на
+## 2 — общее правило танкового урона, действующее ВЕЗДЕ, не только там, где team_spawner.gd успевает
+## переопределить его из JSON. Продакшен-карта (Main.tscn через team_spawner.gd) уже читала max_hits=2
+## из конфига — правка её не трогает (то же самое число, просто переприсваивается заново, без
+## эффекта). Тестовые арены (BotArena.tscn/KillerArena.tscn) — танки там СТАТИЧНЫЕ инстансы Tank.tscn
+## в .tscn-файле, НИКОГДА не проходящие через team_spawner.gd вообще — раньше молча наследовали
+## старый дефолт скрипта (1, one-hit-kill), теперь получают тот же дефолт 2, что и продакшен, без
+## необходимости хардкодить override на каждой отдельной тестовой сцене. Визуальное покраснение при
+## нефинальном попадании уже было реализовано отдельно (см. tank.gd._on_damaged()) — оно просто
+## никогда не успевало сработать при max_hits=1 (первый удар СРАЗУ финальный).
 
 ## killer добавлен в damaged (не только в destroyed) — нужен на КАЖДОМ попадании, не только
 ## смертельном, чтобы бот мог развернуться в сторону выстрела (см. bot_sentry_controller.gd).
@@ -13,7 +25,7 @@ extends Node
 signal damaged(current_hits: int, max_hits: int, killer: Node)
 signal destroyed(killer: Node)
 
-@export var max_hits: int = 1
+@export var max_hits: int = 2
 ## true только на HealthComponent DestructibleObjective (ставит match_manager.gd) — оборона
 ## не должна вредить цели (см. «Игровые режимы»/Destroy Target). Определяем атакующего через
 ## killer.is_attacker() — killer это корень танка-стрелка (см. weapon_controller.gd).

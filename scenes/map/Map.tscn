@@ -3,6 +3,7 @@
 [ext_resource type="PackedScene" path="res://scenes/map/DisguiseSlot.tscn" id="1_ub3q0"]
 [ext_resource type="Script" path="res://scenes/map/disguise_slot.gd" id="2_nuen2"]
 [ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="3_nuen2"]
+[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="4_hgphw"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_nuen2"]
 size = Vector3(60, 0.5, 60)
@@ -451,36 +452,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 6)
 [node name="PatrolWaypoint8" type="Node3D" parent="." unique_id=1658018056]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -6)
 
-[node name="AttackSpawnPoint1" type="Node3D" parent="." unique_id=886950207]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -24)
-
-[node name="DefenseSpawnPoint1" type="Node3D" parent="." unique_id=1860610210]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 24)
-
-[node name="AttackSpawnPoint2" type="Node3D" parent="." unique_id=2021233469]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0, -24)
-
-[node name="DefenseSpawnPoint2" type="Node3D" parent="." unique_id=1282709286]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 0, 24)
-
-[node name="AttackSpawnPoint3" type="Node3D" parent="." unique_id=1210046128]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -19)
-
-[node name="DefenseSpawnPoint3" type="Node3D" parent="." unique_id=132548644]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 29)
-
-[node name="AttackSpawnPoint4" type="Node3D" parent="." unique_id=1201019625]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29, 0, -24)
-
-[node name="DefenseSpawnPoint4" type="Node3D" parent="." unique_id=1468019150]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0, 24)
-
-[node name="AttackSpawnPoint5" type="Node3D" parent="." unique_id=929747470]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -29)
-
-[node name="DefenseSpawnPoint5" type="Node3D" parent="." unique_id=287209978]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 19)
-
 [node name="DestructibleObjective" type="StaticBody3D" parent="." unique_id=2039345402]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 collision_mask = 0
@@ -494,3 +465,31 @@ mesh = SubResource("BoxMesh_vyhe5")
 
 [node name="HealthComponent" type="Node" parent="DestructibleObjective" unique_id=614216465]
 script = ExtResource("3_nuen2")
+
+[node name="AttackSpawnZone" type="Node3D" parent="." unique_id=826566212]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -24)
+script = ExtResource("4_hgphw")
+radius = 7.0
+
+[node name="DefenseSpawnZone" type="Node3D" parent="." unique_id=1370263323]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 24)
+script = ExtResource("4_hgphw")
+radius = 7.0
+
+[node name="AttackWaypoint1" type="Node3D" parent="." unique_id=728237293]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0, -18)
+
+[node name="DefenseWaypoint1" type="Node3D" parent="." unique_id=1621236658]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0, 18)
+
+[node name="AttackWaypoint2" type="Node3D" parent="." unique_id=1883349444]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, -12)
+
+[node name="DefenseWaypoint2" type="Node3D" parent="." unique_id=1861079808]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 0, 12)
+
+[node name="AttackWaypoint3" type="Node3D" parent="." unique_id=1644554631]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -6)
+
+[node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=895862820]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 6)

@@ -69,10 +69,19 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   every child (including this state machine) is already ready, so caching would use a stale value.
 - `DisguiseController` / `CollisionDetector` — slot occupancy and the "hit while disguised by a
   moving tank" trigger.
-- `HealthComponent` — multi-hit (`max_hits`), reused verbatim for the destructible objective, not
-  tank-specific. `attackers_only` lets an objective ignore friendly fire; `free_on_destroy=false`
-  on tanks hands cleanup to `RespawnController` instead of freeing the node; `invincible` is a
-  point override for test scenes (see bot arena below), not part of normal balance.
+- `HealthComponent` — multi-hit (`max_hits`, **default 2** — by request, restoring the "two hits to
+  kill, red paint job after the first" rule as a project-wide default, not just a per-scene config
+  value), reused verbatim for the destructible objective, not tank-specific. `attackers_only` lets
+  an objective ignore friendly fire; `free_on_destroy=false` on tanks hands cleanup to
+  `RespawnController` instead of freeing the node; `invincible` is a point override for test scenes
+  (see bot arena below), not part of normal balance. The "red paint" on a non-fatal hit is
+  `tank.gd._on_damaged()` (material swap on `HullMesh`/turret mesh) — that logic was never missing,
+  it just never got to fire while the default was 1 (instant kill, no non-fatal hit to paint red).
+  Production (`team_spawner.gd`) already overrode this from `config/*_tank_config.json`
+  (`max_hits: 2` there too) — raising the component's own default doesn't change production
+  behavior, it just stops the bot-arena test scenes (`BotArena.tscn`/`KillerArena.tscn`, whose tanks
+  are static `.tscn` instances that never go through `team_spawner.gd`) from silently reverting to
+  one-hit-kill.
 - `RespawnController` — on death, disables the tank in place (hidden, colliders off,
   `process_mode = DISABLED` on every sibling except itself and `HealthComponent`) instead of
   freeing it, then teleports/resets it after `GameConfig.respawn_cooldown_sec`.
@@ -120,6 +129,66 @@ ordinary `@export` fields on scene nodes don't). `config/player_tank_config.json
 `config/bot_tank_config.json` hold per-profile physical stats (speed, turret turn rate, projectile
 speed, `max_hits`) read once by `team_spawner.gd` — these are tank-profile data, not match balance,
 which is why they're JSON next to `GameConfig` rather than fields on it.
+
+### Spawn system — `SpawnZone` (unified across all maps, by request)
+
+Every map (`Main.tscn`/`Map.tscn`, `BotArena.tscn`, `KillerArena.tscn`) now spawns and respawns
+tanks the same way: `scenes/main/spawn_zone.gd` is a `Node3D` marking a circular area (`radius`,
+`@export`) — team is encoded by node-name prefix, not a separate field, the same convention as
+`Waypoint`/`AttackWaypoint` and the old `AttackSpawnPoint`/`DefenseSpawnPoint` markers it replaces
+(`"AttackSpawnZone"` / `"DefenseSpawnZone"`). `pick_spawn_position()` picks a uniform-by-area random
+point inside the circle (`sqrt(randf())`, not `randf()` — same technique as
+`bot_sentry_controller.gd`'s `_pick_random_point_near()`) and raycasts straight down
+(`collision_mask = 1`, "environment") to find the actual ground surface under it, retrying up to
+`max_attempts` times before giving up and returning the zone's own center as a deterministic
+fallback. It also draws its own debug circle (`ImmediateMesh`, red for `Attack*`/blue for
+`Defense*`/yellow otherwise) so a screenshot can confirm placement without guessing. Every caller
+adds a small clearance on top (`Vector3(0, 0.3, 0)`) — spawning exactly on the raycast-hit y gives a
+degenerate zero-depth floor contact that Jolt handles badly (`move_and_slide()` drops the body
+through the floor instead of settling); a small gap lets it settle naturally over a few frames, same
+fix already used for the player's original hardcoded spawn.
+
+Three call sites, all funneling through the same `pick_spawn_position()`:
+- `team_spawner.gd` (production, `Main.tscn`) — finds both zones once via
+  `get_tree().current_scene.find_child(name, true, false)` (recursive — the zones live under `Map`
+  on the production tree, unlike the two sandbox arenas below, which have no `Map` node at all) and
+  gives every tank on a team, **including the player** (by request — "player spawns by the same
+  rules as the bots"), its own independent random point.
+- `respawn_controller.gd` — same recursive `find_child` lookup, called from `_on_respawn_timeout()`;
+  replaces the old fixed-point-array pick. Works unmodified on the sandbox arenas too since it's
+  scene-structure-agnostic.
+- `bot_arena.gd` — the two sandbox arenas have no `TeamSpawner` (tanks are static `.tscn` children,
+  not dynamically instanced), so `_spawn_from_zones()` (called once from `_ready()`) does the
+  equivalent by hand: loop over the known tank node names, skip whichever aren't present with
+  `get_node_or_null` (this script is shared between `BotArena.tscn`, which has `AttackBotTank`, and
+  `KillerArena.tscn`, which doesn't — a hard `get_node` here crashed `_ready()` on `KillerArena.tscn`
+  before this was caught live), route each to its zone by `tank.team`.
+
+Zones default to opposite corners of the map (by request) — production `Map.tscn`:
+`AttackSpawnZone` at `(-24,-24)`, `DefenseSpawnZone` at `(24,24)`, radius 7 (covers the old 5-point
+clusters' ~5-unit spread with margin); both sandbox arenas (72×72): `(28,28)`/`(-28,-28)`, radius 8.
+Each zone also gets 3 purely decorative `Attack/DefenseWaypointN` markers on a straight line toward
+the objective at 25/50/75% — **not** wired into any AI controller (`tank_ai_controller.gd` untouched,
+`bot_sentry_controller.gd`'s waypoint collector only reacts to the exact prefix it's configured
+with) — except on `BotArena.tscn`, where `AttackWaypointN` **is** the live route the ATTACK
+`AttackBotTank` already drives (see below); those 3 were recomputed here to actually originate from
+the new corner zone instead of the old off-corner hardcoded spawn.
+
+`SpawnZone.face_center(tank)` (static, called via a `preload()`'d script reference — **not**
+`class_name`: headless `run_project` doesn't pick up a freshly-added `class_name` without an editor
+rescan, same gotcha as new files with `class_name` in general) orients the tank's forward
+(`-basis.z`, confirmed against `tank_movement.gd`'s own forward convention) toward the map's XZ
+origin right after every spawn/respawn — all three maps have their `Ground` centered at world
+`(0,0)`, so "map center" never needs computing per-map. `look_at()` targets the tank's *own* Y (not
+world 0) specifically to keep pitch/roll at zero on flat ground; a degenerate near-origin spawn
+(distance < 0.01) is a no-op rather than an undefined `look_at()`.
+
+Deliberately out of scope for this pass (production combat AI, `tank_ai_controller.gd`, was never
+touched): the spawn *mechanism* is now uniform everywhere, but nothing routes production bots along
+the new production-map waypoints — they still patrol/hold from one shared shuffled pool exactly as
+before. Confirmed live on all three maps via `run_script`: repeated `pick_spawn_position()` calls
+land inside each zone's radius on real ground; a forced destroy→timeout cycle on both a production
+bot and a sandbox bot respawns it, fully reset, inside its own team's zone.
 
 ### Signals over polling
 
@@ -190,6 +259,56 @@ gap-scan-detour) is shared across `PATROL`/`HUNT`/`PURSUE`/`SEARCH` through one 
 `_drive_to_point(delta, target_pos, reach_dist)` — don't reimplement it per-state. The test bot on
 `BotArena.tscn` defaults to ACHIEVER; switching to KILLER for testing is manual (`role =
 Role.KILLER`, inspector or script), not a scene toggle.
+
+`BotArena.tscn` now has TWO ACHIEVER bots (by request) — `BotTank` (DEFENSE, unchanged: patrols
+`WaypointN` in an infinite loop around the objective) and `AttackBotTank` (ATTACK, new): drives
+`AttackWaypointN` (1→2→3) ONCE, then switches to `State.ATTACK_OBJECTIVE` — parks and fires at the
+`Objective` node itself (found once in `_ready()`, same recursive-`find_child` pattern as the `Ground`
+lookup for KILLER's hunt area) until it's destroyed, then sits in `IDLE` for good (a
+`_objective_mission_complete` flag stops `_ensure_home_state()` from restarting the same one-way
+route). Two per-instance knobs make this possible without the bots stepping on each other:
+`waypoint_name_prefix` (which node-name prefix `_collect_waypoints()` matches — `"Waypoint"` for
+defense, `"AttackWaypoint"` for attack, so neither bot picks up the other's markers) and
+`waypoints_one_way` (false = old infinite patrol loop, true = drive the list once then hand off to
+`ATTACK_OBJECTIVE`). Confirmed live end-to-end from a fresh scene load: `AttackBotTank` drove clear
+across the map, reached `ATTACK_OBJECTIVE`, and the `Objective` node was gone (destroyed, `state`
+settled on `IDLE`) with no manual intervention. Having two bots on one scene also surfaced a debug-UI
+bug worth knowing about: the brain-debug label and the reaction-toggle button are both anchored to a
+fixed screen position — with two bots showing them, they render on top of each other, unreadable.
+Fixed with a per-instance `debug_ui_slot: int` (0 = old position, unused = don't touch the existing
+defense bot's `.tscn` value) that offsets each bot's widgets down/up by one slot height, plus the bot's
+node name baked into both the widget names (`click_element` resolves by name — same name on two bots
+would hit whichever one it finds first) and their visible text.
+
+**DEFEND deadlock fix (by request, live-found via screenshot):** `vision_range` (10.0 MEDIUM) is
+wider than `fire_range` (8.0) by design — a target can be *seen* (triggering `DEFEND`) while still
+out of *firing* range. `DEFEND` used to hard-zero movement unconditionally, so two bots that spotted
+each other in that gap froze forever, aiming and never firing (never approaching either — nothing
+else in `DEFEND` moves them). Fixed in `_enter_defend()`/`State.DEFEND` (`_physics_process()`):
+while `dist > fire_range`, drive toward the target via the same `_drive_to_point()` NavMesh stack
+everything else uses (reach_dist = `fire_range * 0.85`, a margin so it actually lands inside the
+radius instead of hovering on the boundary); only stop and pure-aim once inside. `_nav_agent.target_position`
+is refreshed once per think-tick (inside `_enter_defend()`, which already re-fires every tick the
+target stays visible) rather than every physics frame — plenty for a 1v1 fight, and avoids forcing a
+NavMesh repath 60×/sec for no benefit.
+
+**Three follow-on bugs the deadlock fix exposed (by request, all fixed live):** approaching a target
+enabled code paths that previously never ran long enough to matter. (1) A killed tank isn't freed
+(`free_on_destroy=false`, it respawns) — `RespawnController` just hides it (`visible=false`), so
+`is_instance_valid()` stayed true and the corpse's disabled collider made `_can_see()`'s raycast find
+nothing (treated as "unobstructed") — bots kept firing at a dead tank's last position forever.
+`_can_see(target)` now starts with `if not target.visible: return false`. (2) `State.ATTACK_OBJECTIVE`
+had the same stop-and-aim-only bug as `DEFEND` did before this fix — the last `AttackWaypoint`'s
+distance to the objective on this map is ~14m, over `fire_range` (8.0), so the attacking bot froze at
+the end of its route forever, never approaching. Fixed the same way (`_drive_to_point()` when too
+far), plus `_advance_waypoint()` now explicitly points `_nav_agent.target_position` at the objective
+the moment it transitions into `ATTACK_OBJECTIVE` (previously left pointing at the last waypoint).
+(3) After winning a fight, the defending bot span in place instead of resuming its patrol route — the
+same `_has_hunt_target`-class staleness bug already documented once for KILLER/PURSUE→HUNT, now hit
+by ACHIEVER/PATROL because `DEFEND`'s approach logic (from this same fix) overwrites
+`_nav_agent.target_position` mid-patrol; `_on_target_lost()` now unconditionally resets
+`_has_waypoint_target = false` too (previously only `_has_hunt_target`, inside the KILLER branch), so
+`_drive_to_waypoint()` picks a fresh point and reassigns the nav target instead of trusting a stale one.
 
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
 request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the

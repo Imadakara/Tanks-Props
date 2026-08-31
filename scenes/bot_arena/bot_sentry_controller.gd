@@ -62,17 +62,34 @@ extends Node
 ##   PURSUE; _ensure_home_state() так же не трогает SEARCH, пока сам не решит выйти в HUNT.
 ## - DEFEND ("оборона позиции") — стоит на месте, башня/взгляд каждый кадр наводятся на ЖИВУЮ
 ##   позицию цели, огонь по готовности прицела/дальности/боекомплекта.
-## Обнаружил цель в любом "домашнем" стейте → мгновенно (в рамках think_interval_sec) переход в
-## DEFEND, движение останавливается. Потерял цель (вышла из конуса/дальности/видимости, или
-## уничтожена) → ACHIEVER возвращается к PATROL как раньше; KILLER уходит в PURSUE (см. выше), из
-## которого попадает в SEARCH, а из него — в HUNT. Блуждание взгляда продолжается с текущего угла на
-## всех переходах; вейпоинт-прогресс ACHIEVER (индекс/точка в круге) не сбрасывается.
+## - ATTACK_OBJECTIVE ("атака objective", по прямому запросу, ACHIEVER с waypoints_one_way=true) —
+##   стоит на месте, наводится на Objective.global_position и стреляет — та же механика, что
+##   DEFEND, только цель ВСЕГДА статичный Objective-узел (_objective_node), не танк из
+##   _scan_for_target(). Включается ИЗ PATROL, когда one-way вейпоинт-путь пройден до конца (см.
+##   _advance_waypoint()), не из _ensure_home_state() — та же логика исключения, что у PURSUE/
+##   SEARCH (не перезаписывается каждый think-тик). Objective уничтожен (или его вообще не было на
+##   карте) → _objective_mission_complete=true, IDLE НАВСЕГДА (см. _ensure_home_state()).
+## Обнаружил ТАНК в любом "домашнем" стейте (ATTACK_OBJECTIVE — не исключение, Objective не танк,
+## не мешает этой проверке) → мгновенно (в рамках think_interval_sec) переход в DEFEND, движение
+## останавливается. Потерял цель (вышла из конуса/дальности/видимости, или уничтожена) → ACHIEVER
+## ВСЕГДА возвращается через _ensure_home_state() в PATROL (если Objective ещё жив и вейпоинты не
+## пусты — так и для waypoints_one_way, даже если отвлеклись уже ИЗ ATTACK_OBJECTIVE: индекс
+## остаётся на последнем вейпоинте, не сбрасывается, значит PATROL тут же выберет новую точку в
+## ТОМ ЖЕ последнем вейпоинте, доедет за секунду-другую и снова уйдёт в ATTACK_OBJECTIVE — короткий,
+## безвредный лишний виток, не прямой скачок обратно, но тот же итоговый эффект); KILLER уходит в
+## PURSUE (см. выше), из которого попадает в SEARCH, а из него — в HUNT. Блуждание взгляда
+## продолжается с текущего угла на всех переходах; вейпоинт-прогресс ACHIEVER (индекс/точка в
+## круге) не сбрасывается.
 ##
-## Патруль по вейпоинтам — маркеры "WaypointN" (Node3D, ищутся по имени в корне текущей сцены,
-## сортируются по имени — тот же принцип, что PatrolWaypointN у tank_ai_controller.gd). Каждый
-## вейпоинт — не точка, а круглая область радиуса waypoint_radius: доехав до случайной точки
-## внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает новую случайную точку в круге СЛЕДУЮЩЕГО и едет
-## дальше, по кругу бесконечно (индекс всегда % количество).
+## Патруль по вейпоинтам — маркеры "<waypoint_name_prefix>N" (Node3D, ищутся по имени в корне
+## текущей сцены, сортируются по имени — тот же принцип, что PatrolWaypointN у
+## tank_ai_controller.gd; РАЗНЫЙ префикс на разных ботах одной карты, см. @export-блок —
+## разделяет вейпоинты обороны от вейпоинтов атаки). Каждый вейпоинт — не точка, а круглая область
+## радиуса waypoint_radius: доехав до случайной точки внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает
+## новую случайную точку в круге СЛЕДУЮЩЕГО и едет дальше. Дефолт (waypoints_one_way=false, оборона)
+## — по кругу бесконечно (индекс всегда % количество). waypoints_one_way=true (атака, по прямому
+## запросу — "должен уничтожить objective, двигаясь по 3-м вейпоинтам... от спавна на другом конце
+## карты") — ОДИН РАЗ 1→2→…→N, затем ATTACK_OBJECTIVE (см. выше), без зацикливания на 1.
 ##
 ## Объезд препятствий — v3, NavMesh + NavigationAgent3D (по прямому запросу: месяц правок
 ## реактивного raycast-лидара — v1..v2, вся история ниже сохранена в Bot AI Sandbox §11 как
@@ -132,7 +149,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -171,6 +188,17 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## Патруль по вейпоинтам (см. заголовок файла).
 @export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — область вокруг маркера
 @export var waypoint_reach_dist: float = 1.5
+## Префикс имени узла для _collect_waypoints() — РАЗНЫЙ на разных ботах одной карты (по прямому
+## запросу — второй ACHIEVER, атакующий, должен идти к objective по СВОИМ вейпоинтам, не по тем же
+## "WaypointN", что defense-бот патрулирует вокруг objective). "Waypoint" — оборона (дефолт, старое
+## поведение); "AttackWaypoint" — атака, см. waypoints_one_way ниже.
+@export var waypoint_name_prefix: String = "Waypoint"
+## false (дефолт, оборона) — бесконечный патруль по кругу, как раньше. true (по прямому запросу,
+## атака) — вейпоинты проходятся ЛИНЕЙНО ОДИН РАЗ (1→2→…→N, без зацикливания на 1), по достижении
+## ПОСЛЕДНЕГО — переход в State.ATTACK_OBJECTIVE (см. ниже и _advance_waypoint()). Соответствует
+## ТЗ §9.5: "боты атакующей команды... направляются к objective-зоне" (разовый marш, не патруль)
+## против "боты обороняющейся команды патрулируют вблизи неё" (текущее defense-поведение).
+@export var waypoints_one_way: bool = false
 
 ## HUNT — зона охоты для роли KILLER (см. заголовок файла). Прямоугольник по X/Z вокруг
 ## hunt_area_center с половинными размерами hunt_area_half_extents — оставлены НУЛЯМИ по умолчанию,
@@ -340,6 +368,13 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## Кнопка на экране, переключающая enemy_reaction_enabled ниже (по прямому запросу — гонять
 ## поведение вживую, катаясь на PlayerTank, без правки кода/рестарта).
 @export var show_reaction_toggle_button: bool = true
+## Несколько ботов с show_brain_debug/show_reaction_toggle_button на ОДНОЙ карте (по прямому
+## запросу — второй ACHIEVER на BotArena.tscn) иначе рисуют оба виджета РОВНО в одном месте экрана,
+## поверх друг друга, нечитаемо (нашли живьём на скриншоте с двумя ботами). debug_ui_slot сдвигает
+## оба виджета этого конкретного бота вниз (brain-панель от верхнего края) / вверх (кнопка от
+## нижнего) на debug_ui_slot× их собственную высоту — 0 (дефолт) даёт СТАРОЕ положение, не трогает
+## уже настроенного defense-бота; второй бот на карте — 1, третий — 2, и т.д.
+@export var debug_ui_slot: int = 0
 
 ## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
 ## Разница по трём осям: осведомлённость (радиус/угол конуса), реакция (think_interval +
@@ -402,6 +437,16 @@ var _has_waypoint_target: bool = false
 var _hunt_area_valid: bool = false
 var _hunt_target_pos: Vector3 = Vector3.ZERO
 var _has_hunt_target: bool = false
+
+## ATTACK_OBJECTIVE (см. заголовок файла и waypoints_one_way) — _objective_node ищется в _ready()
+## один раз (см. _find_objective()), null если на карте нет узла "Objective" вообще (тогда
+## waypoints_one_way просто зациклился бы на IDLE после последнего вейпоинта, см.
+## _advance_waypoint()). _objective_mission_complete — выставляется, когда objective уничтожен,
+## ПОКА бот его атаковал — держит _ensure_home_state() на IDLE НАВСЕГДА вместо того, чтобы
+## перезапустить те же (уже пройденные) вейпоинты по новой (waypoints_one_way не знает "уже
+## приходил сюда", каждый заход в PATROL с непустым _waypoints обычно ведёт к тому же исходу).
+var _objective_node: Node3D = null
+var _objective_mission_complete: bool = false
 var _hunt_target_timer: float = 0.0
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
@@ -503,6 +548,7 @@ func _ready() -> void:
 	_health.damaged.connect(_on_damaged)
 	_collect_waypoints()
 	_detect_hunt_area()
+	_find_objective()
 
 	# CameraRig этого танка на статичной сцене нельзя выключить оверрайдом в .tscn (нет
 	# редактируемых детей у инстанса) — гасим камеру здесь. BotSentryController стоит
@@ -543,12 +589,16 @@ func _apply_difficulty_preset() -> void:
 		move_speed_multiplier = preset["move_speed_multiplier"]
 
 ## Вейпоинты ищутся на КОРНЕ текущей сцены (не в "Map" — у этой тестовой арены нет отдельного
-## Map-узла, всё лежит прямо в BotArena.tscn), по префиксу имени "Waypoint", сортировка по
-## имени даёт стабильный порядок обхода (Waypoint1 → Waypoint2 → Waypoint3 → снова Waypoint1).
+## Map-узла, всё лежит прямо в BotArena.tscn), по префиксу имени waypoint_name_prefix (см.
+## @export-блок — РАЗНЫЙ для разных ботов на одной карте, иначе оба ACHIEVER подобрали бы ЧУЖИЕ
+## вейпоинты тоже: defense патрулирует вокруг objective по "WaypointN", attack идёт К objective
+## по "AttackWaypointN", см. заголовок файла и BotArena.tscn), сортировка по имени даёт стабильный
+## порядок обхода (…Waypoint1 → …Waypoint2 → …Waypoint3 → снова …Waypoint1, если не
+## waypoints_one_way).
 func _collect_waypoints() -> void:
 	_waypoints.clear()
 	for child in get_tree().current_scene.get_children():
-		if String(child.name).begins_with("Waypoint"):
+		if String(child.name).begins_with(waypoint_name_prefix):
 			_waypoints.append(child)
 	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
 
@@ -579,6 +629,13 @@ func _detect_hunt_area() -> void:
 	hunt_area_half_extents = Vector2(box.size.x * 0.5, box.size.z * 0.5)
 	_hunt_area_valid = true
 
+## ATTACK_OBJECTIVE — ищет узел "Objective" РЕКУРСИВНО по всей текущей сцене (та же логика, что и
+## "Ground" в _detect_hunt_area() — objective живёt под NavigationRegion3D, не в корне). Дёшево
+## искать всегда, даже если этот конкретный бот не atакующий (waypoints_one_way=false) — просто не
+## используется в таком случае.
+func _find_objective() -> void:
+	_objective_node = get_tree().current_scene.find_child("Objective", true, false)
+
 func _physics_process(delta: float) -> void:
 	_total_time_sec += delta
 	_think_timer -= delta
@@ -588,10 +645,20 @@ func _physics_process(delta: float) -> void:
 
 	match state:
 		State.DEFEND:
-			_movement.ai_move_input = 0.0
-			_movement.ai_turn_input = 0.0
 			if _current_target != null and is_instance_valid(_current_target):
+				# reach_dist = fire_range*0.85, не сам fire_range — запас, чтобы гарантированно
+				# оказаться ВНУТРИ радиуса стрельбы (не топтаться ровно на границе, где
+				# float-погрешность может дать dist чуть больше fire_range на отдельных кадрах).
+				var dist: float = _body.global_position.distance_to(_current_target.global_position)
+				if dist > fire_range:
+					_drive_to_point(delta, _current_target.global_position, fire_range * 0.85)
+				else:
+					_movement.ai_move_input = 0.0
+					_movement.ai_turn_input = 0.0
 				_aim_and_fire(_current_target)
+			else:
+				_movement.ai_move_input = 0.0
+				_movement.ai_turn_input = 0.0
 		State.PATROL:
 			_drive_to_waypoint(delta)
 			_wander(delta, true)
@@ -611,6 +678,28 @@ func _physics_process(delta: float) -> void:
 		State.SEARCH:
 			_process_search(delta)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.ATTACK_OBJECTIVE:
+			# objective уже уничтожен (свободился узел, free_on_destroy=true у DestructibleObjective)
+			# или на карте его вообще не было — фиксируем "миссия окончена", _ensure_home_state()
+			# держит на IDLE навсегда (см. её комментарий), не перезапускает те же вейпоинты заново.
+			if _objective_node == null or not is_instance_valid(_objective_node):
+				_objective_mission_complete = true
+				state = State.IDLE
+			else:
+				# [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот замирает не стреляя в
+				# objective"] Тот же дедлок, что уже был в DEFEND (см. её фикс выше): маршрут
+				# AttackWaypointN может закончиться дальше fire_range от objective (на этой карте
+				# так и есть — ~14м от AttackWaypoint3 при fire_range=8.0 у MEDIUM), а этот стейт
+				# раньше безусловно останавливал движение и просто целился — целиться и стрелять
+				# было НЕЧЕМ, dist<=fire_range никогда не выполнялось. Сближаемся тем же
+				# _drive_to_point(), пока не окажемся внутри радиуса.
+				var dist: float = _body.global_position.distance_to(_objective_node.global_position)
+				if dist > fire_range:
+					_drive_to_point(delta, _objective_node.global_position, fire_range * 0.85)
+				else:
+					_movement.ai_move_input = 0.0
+					_movement.ai_turn_input = 0.0
+				_aim_and_fire(_objective_node)
 		State.IDLE:
 			_movement.ai_move_input = 0.0
 			_movement.ai_turn_input = 0.0
@@ -659,10 +748,12 @@ func _think() -> void:
 ## иначе эта функция, вызываемая КАЖДЫЙ think-тик, пока цель не видна, немедленно перезаписала бы
 ## только что начатую погоню/локальный поиск обратно на HUNT на первом же тике.
 func _ensure_home_state() -> void:
-	if state == State.PURSUE or state == State.SEARCH:
+	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE:
 		return
 	var desired: State
-	if role == Role.ACHIEVER and not _waypoints.is_empty():
+	if role == Role.ACHIEVER and _objective_mission_complete:
+		desired = State.IDLE  # objective уже уничтожен (waypoints_one_way) — см. _objective_mission_complete
+	elif role == Role.ACHIEVER and not _waypoints.is_empty():
 		desired = State.PATROL
 	elif role == Role.KILLER and _hunt_area_valid:
 		desired = State.HUNT
@@ -698,6 +789,16 @@ func _on_target_lost() -> void:
 		state = State.PURSUE
 		_nav_agent.target_position = _pursue_target_pos
 		_has_hunt_target = false
+	# [ИСПРАВЛЕНО, по прямому запросу — "бот защиты крутится на месте, не может начать движение по
+	# новому маршруту после уничтожения цели"] Тот же класс бага, что уже был описан выше для
+	# _has_hunt_target: DEFEND (см. фикс дедлока сближения) сама переписывает
+	# _nav_agent.target_position на живую позицию цели, пока сближается с ней. Без сброса здесь
+	# _has_waypoint_target остаётся true (бой мог начаться НЕ доехав до текущего вейпоинта) —
+	# _drive_to_waypoint() видит "точка уже выбрана" и НЕ переустанавливает target_position при
+	# возврате в PATROL; агент продолжает "ехать" к nav-пути, ведущему к уже мёртвой/спрятанной
+	# цели, _get_lookahead_point() вырождается в текущую позицию бота — бот крутится на месте.
+	# Безусловно (не только для KILLER) — ACHIEVER/PATROL страдает от той же причины.
+	_has_waypoint_target = false
 	_stuck_reverse_timer = 0.0
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
@@ -718,7 +819,17 @@ func _scan_for_target() -> Node:
 ## ПРИЦЕЛЬНЫЙ (secondary_cone_deg вокруг РЕАЛЬНОГО угла башни _turret.rotation.y — "или в
 ## направлении поворота башни"). Главный конус вообще не двигается сам по себе (только корпус
 ## поворотом); прицельный следует за физическим поворотом башни (блуждание/слежение за целью).
+## [ИСПРАВЛЕНО, по прямому запросу — "боты продолжают стрелять в ту же точку после уничтожения
+## цели"] Убитый танк НЕ freed (`free_on_destroy=false`, см. health_component.gd/RespawnController) —
+## RespawnController прячет его (`visible=false`, коллайдеры отключены) и держит труп на месте до
+## respawn-кулдауна, не удаляя узел. Без проверки `target.visible` здесь: `is_instance_valid()` в
+## _think() остаётся true (узел жив, просто спрятан), а raycast-проверка ниже — с отключенным
+## коллайдером — обычно ничего не находит по пути (result.is_empty()==true трактуется как "цель НЕ
+## заслонена"), так что _can_see() продолжала бы возвращать true на труп. DEFEND не выходил бы
+## никогда — стрелял бы в неподвижную точку до respawn'а цели. Дешёвая проверка, до всех остальных.
 func _can_see(target: Node3D) -> bool:
+	if not target.visible:
+		return false
 	var to_target: Vector3 = target.global_position - _turret.global_position
 	var dist: float = to_target.length()
 	if dist > vision_range or dist < 0.01:
@@ -755,10 +866,23 @@ func _can_see(target: Node3D) -> bool:
 ## найдено живым тестом с резким телепортом цели (утрировало обычно небольшую 0.1с-погрешность до
 ## абсурдной: pursue-точка совпала с координатами телепорта за 96м от бота, не с последней реально
 ## видимой позицией).
+## [ИСПРАВЛЕНО, живьём найденный дедлок по прямому запросу — "боты замирают при обнаружении друг
+## друга, держат на прицеле и не стреляют"] Причина: vision_range (10.0 у MEDIUM) шире fire_range
+## (8.0) — цель за пределами fire_range, но внутри vision_range, ВИДНА (значит DEFEND), но
+## недостижима для выстрела, а DEFEND раньше безусловно глушил движение (`ai_move_input=0` для
+## ЛЮБОЙ дистанции) — два бота, оказавшиеся друг у друга в этом "мёртвом кольце", замирали НАВСЕГДА,
+## целясь и не стреляя (см. скриншот в диалоге: dist=8.9м при fire_range=8.0). Фикс — сближение
+## внутри fire_range, см. State.DEFEND в _physics_process(). `_nav_agent.target_position`
+## переустанавливается здесь (не в _physics_process()) — _enter_defend() уже вызывается каждый
+## think-тик, пока цель видна (см. _think()), этого достаточно для живой цели в 1v1-бою;
+## переустанавливать на каждом физ.кадре форсило бы repath 60 раз/сек без реальной пользы.
 func _enter_defend(target: Node) -> void:
 	state = State.DEFEND
 	_current_target = target
 	_last_known_target_pos = target.global_position
+	var dist: float = _body.global_position.distance_to(target.global_position)
+	if dist > fire_range and _nav_agent.is_inside_tree():
+		_nav_agent.target_position = target.global_position
 
 ## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня физически
 ## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()).
@@ -1155,11 +1279,25 @@ func _pick_new_waypoint_target() -> void:
 	_waypoint_target_pos = wp.global_position + offset
 	_has_waypoint_target = true
 
+## waypoints_one_way (см. @export-блок) — на ПОСЛЕДНЕМ вейпоинте (index уже на последнем, ПЕРЕД
+## тем как обычный % зациклил бы обратно на 0) переход в ATTACK_OBJECTIVE вместо продолжения
+## патруля. _waypoint_index намеренно НЕ трогаем в этой ветке — не нужен для ATTACK_OBJECTIVE, и
+## если миссия почему-то не завершится (см. State.ATTACK_OBJECTIVE) и бот как-то вернётся в PATROL,
+## пусть это будет тот же последний вейпоинт, не откат на первый.
 func _advance_waypoint() -> void:
 	_max_leg_time_sec = max(_max_leg_time_sec, _leg_timer)  # рекорд — только обновляется, никогда не сбрасывается
 	_leg_timer = 0.0
-	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 	_has_waypoint_target = false
+	if waypoints_one_way and _waypoint_index >= _waypoints.size() - 1:
+		state = State.ATTACK_OBJECTIVE
+		# [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот замирает не стреляя в objective"] Тот же
+		# класс бага: без явной переустановки здесь _nav_agent.target_position остаётся указывать на
+		# последний AttackWaypoint (старая PATROL-цель), не на objective — State.ATTACK_OBJECTIVE
+		# ниже сближается через _drive_to_point(), которая полагается именно на этот target_position.
+		if _objective_node != null and is_instance_valid(_objective_node) and _nav_agent.is_inside_tree():
+			_nav_agent.target_position = _objective_node.global_position
+		return
+	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 
 ## Случайная точка в прямоугольнике зоны охоты (равномерно по X/Z — тут это буквально
 ## randf_range на каждую ось независимо, не нужен трюк со sqrt(), как у круга вейпоинта: зона
@@ -1321,6 +1459,8 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(1.0, 0.45, 0.05, 0.26)  # ближе к красному — уже почти нашёл, погоня
 		State.SEARCH:
 			fill_color = Color(0.95, 0.25, 0.55, 0.26)  # розовый — между PURSUE и HUNT, свой цвет
+		State.ATTACK_OBJECTIVE:
+			fill_color = Color(1.0, 0.1, 0.05, 0.3)  # насыщенный красный — активно стреляет, как DEFEND
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
@@ -1474,15 +1614,17 @@ func _update_path_debug_draw() -> void:
 ## Текстовая панель "что сейчас в голове у бота" — отдельный CanvasLayer+Label поверх HUD (не
 ## трогаем разметку самого HUD.tscn — это дебаг конкретно этой песочницы, не часть продакшен-UI).
 func _setup_brain_debug_label() -> void:
+	const SLOT_HEIGHT := 260.0
+	var slot_offset: float = debug_ui_slot * SLOT_HEIGHT
 	var layer := CanvasLayer.new()
-	layer.name = "BotBrainDebugLayer"
+	layer.name = "BotBrainDebugLayer_%s" % _body.name  # уникально — несколько ботов на карте, см. debug_ui_slot
 	var label := Label.new()
-	label.name = "BotBrainDebugLabel"
+	label.name = "BotBrainDebugLabel_%s" % _body.name
 	label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	label.offset_left = -340.0
-	label.offset_top = 16.0
+	label.offset_top = 16.0 + slot_offset
 	label.offset_right = -16.0
-	label.offset_bottom = 260.0
+	label.offset_bottom = 260.0 + slot_offset
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
@@ -1498,15 +1640,18 @@ func _setup_brain_debug_label() -> void:
 ## Тот же приём, что и у _setup_brain_debug_label() — отдельный CanvasLayer, не трогаем разметку
 ## HUD.tscn. Внизу слева (HUD занимает левый верх, brain debug — правый верх, тут свободно).
 func _setup_reaction_toggle_button() -> void:
+	const SLOT_HEIGHT := 48.0
+	var slot_offset: float = debug_ui_slot * SLOT_HEIGHT
 	var layer := CanvasLayer.new()
-	layer.name = "BotReactionToggleLayer"
+	layer.name = "BotReactionToggleLayer_%s" % _body.name  # уникально — см. debug_ui_slot
 	var button := Button.new()
-	button.name = "BotReactionToggleButton"
+	button.name = "BotReactionToggleButton_%s" % _body.name  # click_element резолвит по имени — с
+	# одинаковым именем на двух ботах кликнул бы по ПЕРВОМУ попавшемуся, не обязательно нужному
 	button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	button.offset_left = 16.0
-	button.offset_top = -56.0
+	button.offset_top = -56.0 - slot_offset
 	button.offset_right = 236.0
-	button.offset_bottom = -16.0
+	button.offset_bottom = -16.0 - slot_offset
 	button.pressed.connect(_on_reaction_toggle_pressed)
 	layer.add_child(button)
 	_reaction_toggle_button = button
@@ -1522,13 +1667,13 @@ func _on_reaction_toggle_pressed() -> void:
 func _update_reaction_toggle_button() -> void:
 	if _reaction_toggle_button == null:
 		return
-	_reaction_toggle_button.text = "Enemy reaction: ON" if enemy_reaction_enabled else "Enemy reaction: OFF"
+	_reaction_toggle_button.text = "%s reaction: %s" % [_body.name, "ON" if enemy_reaction_enabled else "OFF"]
 
 func _update_brain_debug_label() -> void:
 	if _brain_debug_label == null:
 		return
 	var lines: Array = []
-	lines.append("=== BOT BRAIN ===")
+	lines.append("=== BOT BRAIN: %s ===" % _body.name)
 	lines.append("session: %.1f min   record leg: %.1fs" % [_total_time_sec / 60.0, _max_leg_time_sec])
 	lines.append("role: %s   difficulty: %s" % [Role.keys()[role], Difficulty.keys()[difficulty]])
 	lines.append("state: %s   reaction: %s" % [State.keys()[state], "ON" if enemy_reaction_enabled else "OFF"])
@@ -1562,6 +1707,12 @@ func _update_brain_debug_label() -> void:
 				_append_nav_debug_lines(lines)
 			else:
 				lines.append("looking around (%d turns left)" % _search_look_turns_left)
+		State.ATTACK_OBJECTIVE:
+			if _objective_node != null and is_instance_valid(_objective_node):
+				var dist: float = _body.global_position.distance_to(_objective_node.global_position)
+				lines.append("target: Objective (%.1fm)" % dist)
+			else:
+				lines.append("target: Objective (destroyed)")
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

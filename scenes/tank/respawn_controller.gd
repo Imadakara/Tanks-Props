@@ -11,6 +11,8 @@ extends Node
 ## DestructibleObjective (та же HealthComponent, другие настройки) респаун не задействует —
 ## free_on_destroy там остался true, сцена по-прежнему теряет объект при разрушении.
 
+const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
+
 @onready var _tank: CharacterBody3D = get_parent()
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
@@ -30,9 +32,10 @@ func _on_destroyed(_killer: Node) -> void:
 	_respawn_timer.start()
 
 func _on_respawn_timeout() -> void:
-	var point: Node3D = _pick_spawn_point()
-	if point != null:
-		_tank.global_position = point.global_position + Vector3(0, 0.3, 0)  # тот же зазор, что и у TeamSpawner — иначе провал сквозь пол
+	var zone: Node3D = _pick_spawn_zone()
+	if zone != null:
+		_tank.global_position = zone.pick_spawn_position() + Vector3(0, 0.3, 0)  # тот же зазор, что и у TeamSpawner — иначе провал сквозь пол
+		SpawnZoneScript.face_center(_tank)
 	_tank.velocity = Vector3.ZERO
 	_health.current_hits = 0
 	_health.is_alive = true
@@ -52,17 +55,9 @@ func _set_frozen(frozen: bool) -> void:
 			continue
 		child.process_mode = mode
 
-## Случайная точка спавна СВОЕЙ команды (не противника) — та же группа маркеров, что и у
-## TeamSpawner при старте матча (AttackSpawnPoint*/DefenseSpawnPoint* на Map.tscn).
-func _pick_spawn_point() -> Node3D:
-	var prefix: String = "AttackSpawnPoint" if _tank.is_attacker() else "DefenseSpawnPoint"
-	var map: Node = get_tree().current_scene.get_node_or_null("Map")
-	if map == null:
-		return null
-	var points: Array = []
-	for child in map.get_children():
-		if String(child.name).begins_with(prefix):
-			points.append(child)
-	if points.is_empty():
-		return null
-	return points[randi() % points.size()]
+## Зона спавна СВОЕЙ команды (не противника) — та же `SpawnZone` (см. spawn_zone.gd), что и у
+## TeamSpawner при старте матча. Рекурсивный find_child по всей сцене (не get_node("Map")) —
+## работает и на продакшене (зона под "Map"), и на тестовых аренах (зона в корне, узла "Map" нет).
+func _pick_spawn_zone() -> Node3D:
+	var zone_name: String = "AttackSpawnZone" if _tank.is_attacker() else "DefenseSpawnZone"
+	return get_tree().current_scene.find_child(zone_name, true, false)
