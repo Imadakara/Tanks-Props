@@ -154,20 +154,45 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 
 ## [ГИБРИД, по прямому запросу] Веер из 3 коротких лучей (0°, ±emergency_brake_spread_deg от
 ## корпуса) — ТОЛЬКО аварийный тормоз, не выбор направления (направление всегда решает навмеш/
-## pure pursuit выше). [ИСПРАВЛЕНО] Один луч строго по центру не ловил контакт корпусом ПОД
-## УГЛОМ (см. Bot AI Sandbox §12 — живой тест: get_slide_collision() показал реальный физический
-## контакт с препятствием, а brake_hit с одним центральным лучом был false, тот же слепой угол,
-## что и у одиночного луча в самой первой версии объезда, §11.1) — три луча веером, ЛЮБОЙ хит
-## близко считается тормозом. Если что-то оказалось ближе emergency_brake_range — ai_move_input
-## жёстко на 0 в этом кадре (доворот продолжается) — последний рубеж защиты от несовершенства
-## pure-pursuit-следования, не замена NavMesh-планирования тем самым реактивным лидаром, от
-## которого ушли (три коротких луча на кадр несравнимо дешевле прежних 3 непрерывно качающихся
-## на полную дальность, и не участвуют в выборе курса вообще).
-## Длина лучей поднята с 1.3 (по прямому запросу — "чуть больше времени реакции на внезапный
-## объект на пути"): при move_speed*multiplier это даёт заметно больше запаса до контакта, не
-## меняя саму логику тормоза (по-прежнему стоп-стоп, не рулевое решение).
+## pure pursuit выше, а угол объезда при застревании — отдельный скан _scan_gap(), см. ниже).
+## [ИСПРАВЛЕНО] Один луч строго по центру не ловил контакт корпусом ПОД УГЛОМ (см. Bot AI Sandbox
+## §12 — живой тест: get_slide_collision() показал реальный физический контакт с препятствием, а
+## brake_hit с одним центральным лучом был false, тот же слепой угол, что и у одиночного луча в
+## самой первой версии объезда, §11.1) — веер, ЛЮБОЙ хит близко считается тормозом. Если что-то
+## оказалось ближе emergency_brake_range — ai_move_input жёстко на 0 в этом кадре (доворот
+## продолжается) — последний рубеж защиты от несовершенства pure-pursuit-следования, не замена
+## NavMesh-планирования тем самым реактивным лидаром, от которого ушли (три коротких луча на кадр
+## несравнимо дешевле прежних 3 непрерывно качающихся на полную дальность, и не участвуют в выборе
+## курса вообще). Пробовал расширить веер ещё двумя лучами ±60° — откачено, см. ниже.
+## Длина лучей (по прямому запросу — "бот порой не успевает остановиться перед препятствием"):
+## тормозной путь на полном ходу v²/(2·acceleration) = 4.5²/(2·12) ≈ 0.84м (TankMovement:
+## move_speed=6.0 × move_speed_multiplier=0.75, acceleration=12 м/с²) — геометрически 1.8м уже
+## хватало с запасом на статике. [ПОПРОБОВАНО И ОТКАЧЕНО] Поднимал до 3.0 — на этой карте статика
+## расставлена ПЛОТНО, а NavMesh-путь по конструкции идёт впритык к agent_radius (см. @export выше
+## про полудиагональ) — луч длиннее ~1.8-2.0м стабильно задевает СОСЕДНЕЕ препятствие на обычной
+## дуге объезда угла, даже когда прямо по курсу ничего нет. Проверено живьём (`run_script`, один и
+## тот же стартовый сегмент карты, без игрока-блокиратора вообще, 20с): range=1.8 → 2 ложных
+## реверса/25.6м прогресса; range=2.0 → уже 4/11.3м; range=2.2 → 9/1.9м; range=3.0 → 5-10/3.5-5.4м
+## (хуже почти вдвое-впятеро при любом угле). Вывод: на ЭТОЙ карте 1.8м — практический потолок,
+## дальше цена (частые ложные "застревания" на ровном месте) быстро перекрывает выгоду реакции.
+## Оставлено 1.8 — если карта станет просторнее, стоит перепроверить эмпирически заново, не
+## поднимать вслепую.
 @export var emergency_brake_range: float = 1.8
 @export var emergency_brake_spread_deg: float = 20.0
+## [ЗАМЕНЕНО НА GAP-SCAN] Была пара фиксированных лучей ±60° для выбора стороны объезда — по
+## прямому запросу заменена на скан веером (_scan_gap() ниже), см. Bot AI Sandbox §12.9: два
+## фиксированных угла не находили реально свободный проём, если он лежал под ДРУГИМ углом (узкое
+## место у стыка двух статических препятствий + рядом стоящий игрок) — бот выбирал "LEFT" или
+## "RIGHT" по зонду, физически упирался во что-то ещё под этим же зафиксированным углом, откатывался
+## и пробовал ТО ЖЕ самое направление снова (зонд на новой попытке видел ту же геометрию) —
+## наблюдаемый живьём бесконечный "отъехал-довернул-снова уткнулся" без сходимости.
+## Скан кастует лучи от -stuck_detour_scan_span_deg/2 до +.../2 с шагом stuck_detour_scan_step_deg
+## на stuck_detour_probe_range, ищет самый широкий НЕПРЕРЫВНЫЙ интервал лучей с клиренсом не хуже
+## stuck_detour_scan_clear_ratio·probe_range — то есть находит РЕАЛЬНО открытый проём, а не гадает
+## по двум точкам.
+@export var stuck_detour_scan_span_deg: float = 160.0
+@export var stuck_detour_scan_step_deg: float = 10.0
+@export var stuck_detour_scan_clear_ratio: float = 0.6
 
 ## Антизастрял — страховка на физические заедания (контакт с препятствием под углом, столкновение
 ## с другим танком) — по чистому СМЕЩЕНИЮ ПОЗИЦИИ за окно stuck_detect_sec, НЕ по мгновенной
@@ -188,15 +213,29 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## поперёк маршрута) — навмеш ничего не знает про игрока, путь остаётся тем же, pure pursuit после
 ## реверса снова целится в ту же точку старого пути → снова тормоз → снова реверс, бесконечный
 ## цикл подъехал-откатился (воспроизведено живьём по прямому запросу — скриншот). После реверса —
-## короткая фаза БОКОВОГО обхода: прямое рулевое отклонение в сторону (не выбор навмеша), тот
-## самый гибрид с лучами, о котором спрашивали. Сторону выбираем зондирующими лучами под
-## stuck_detour_angle_deg вправо/влево на stuck_detour_probe_range (см. _pick_detour_side()) —
-## какая сторона свободна на эту дальность, туда и уходим на stuck_detour_sec, потом возвращаемся
-## к обычному pure pursuit (бот уже физически сбоку от препятствия — навигация сама довернёт
-## обратно к пути/цели, без ручного сброса состояния).
+## короткая фаза БОКОВОГО обхода: прямое рулевое отклонение в сторону найденного скан-веером проёма
+## (_scan_gap(), не выбор навмеша) на stuck_detour_sec, потом возвращаемся к обычному pure pursuit.
+## Целимся в ФИКСИРОВАННЫЙ мировой угол (посчитанный ОДИН раз в момент обнаружения застревания —
+## см. _detour_target_world_yaw), не пересчитываем его каждый кадр от текущего rotation.y — иначе
+## по мере доворота цель "убегает" вместе с корпусом, yaw_diff никогда не уменьшается, руль
+## насыщен весь stuck_detour_sec целиком, и на второй/третий такой цикл подряд бот каждый раз
+## доворачивает на один и тот же (иногда неверный) угол вместо плавного схождения к найденному
+## проёму — см. Bot AI Sandbox §12.9.
+##
+## [ДОБАВЛЕНО, по прямому запросу — "после отъезда надо запускать пересчёт маршрута"] По окончании
+## фазы обхода — принудительный реассайн _nav_agent.target_position (см. _drive_to_waypoint()).
+## Проверено эмпирически (run_script, подписка на path_changed): NavigationAgent3D САМ ПО СЕБЕ не
+## перезапрашивает путь просто от того, что агент физически сдвинулся — 5 кадров движения без
+## нашего вмешательства дали 0 эмиссий path_changed. Путь остаётся ТОЙ ЖЕ полилинией, посчитанной
+## один раз при первой постановке target_position; get_next_path_position()/pure pursuit лишь
+## проецируют текущую позицию на эту старую полилинию (см. Bot AI Sandbox §12.6 про её собственный
+## "рефреш" — это продвижение курсора по СУЩЕСТВУЮЩЕМУ пути, не новый A*-запрос). Пользователь был
+## прав: "маршрут тот же" — буквально так и есть. Реассайн target_position ЛЮБЫМ значением (даже
+## тем же самым) форсит НОВЫЙ запрос к NavigationServer3D от ТЕКУЩЕЙ позиции (подтверждено: +1
+## эмиссия path_changed на реассайн тем же значением) — после обхода бот физически в другой точке,
+## новый путь от неё может быть удобнее старого.
 @export var stuck_detour_sec: float = 1.2
-@export var stuck_detour_angle_deg: float = 55.0
-@export var stuck_detour_probe_range: float = 3.5
+@export var stuck_detour_probe_range: float = 4.5
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
@@ -287,12 +326,12 @@ var _stuck_check_pos: Vector3 = Vector3.ZERO
 var _stuck_check_timer: float = 0.0
 var _stuck_reverse_timer: float = 0.0
 
-## Фаза бокового обхода после реверса (см. @export-блок выше) — _detour_side: -1/+1, тот же знак,
-## что офсет в _cast_ray() (влево/вправо определяется реальной геометрией, не абстрактным
-## компасом — знаку доверяем ровно потому, что и зонд, и рулёжка используют одну и ту же формулу).
-## 0.0 — обход не идёт (либо не начинался, либо обе стороны были заняты при последней попытке).
+## Фаза бокового обхода после реверса (см. @export-блок выше) — _detour_target_world_yaw:
+## ФИКСИРОВАННЫЙ мировой угол (посчитан один раз в момент обнаружения застревания через
+## _scan_gap(), см. её комментарий), не пересчитывается по ходу самой фазы. _detour_timer<=0 —
+## обход не идёт (либо не начинался, либо скан не нашёл проёма при последней попытке).
 var _detour_timer: float = 0.0
-var _detour_side: float = 0.0
+var _detour_target_world_yaw: float = 0.0
 
 var _brain_debug_label: Label
 
@@ -621,17 +660,24 @@ func _drive_to_waypoint(delta: float) -> void:
 		_movement.ai_turn_input = 0.0
 		return
 
-	# Фаза бокового обхода после реверса (см. @export-блок про stuck_detour_* и _pick_detour_side()
-	# выше) — держим руль зажатым в сторону _detour_side ВЕСЬ stuck_detour_sec (цель пересчитывается
-	# заново каждый кадр от ТЕКУЩЕГО _body.rotation.y, поэтому разница всегда упирается в клэмп —
-	# это намеренно: "держим руль" на фиксированное время даёт дугу-объезд, а не доворот-в-точку-и-
-	# прямо, что было бы, целься мы в фиксированную мировую точку). Тормоз по-прежнему гасит ход
-	# (не рулит), yaw-гейт на move_input здесь НЕ нужен — за это и обходим, что едем боком.
+	# Фаза бокового обхода после реверса (см. @export-блок про stuck_detour_*/_scan_gap() выше) —
+	# рулим к ФИКСИРОВАННОМУ мировому углу _detour_target_world_yaw (посчитан один раз в момент
+	# обнаружения застревания, не пересчитывается тут) — та же формула, что и обычный pure pursuit
+	# ниже, поэтому yaw_diff естественно СХОДИТСЯ по мере доворота, а не остаётся насыщенным весь
+	# stuck_detour_sec (в отличие от прежней версии, где цель пересчитывалась каждый кадр от
+	# текущего rotation.y — см. её разбор в @export-блоке). Тормоз по-прежнему только гасит ход,
+	# не рулит; yaw-гейт на move_input здесь не нужен — двигаться боком и есть цель этой фазы.
 	if _detour_timer > 0.0:
 		_detour_timer -= delta
-		var detour_yaw_diff: float = deg_to_rad(_detour_side * stuck_detour_angle_deg)
+		var detour_yaw_diff: float = wrapf(_detour_target_world_yaw - _body.rotation.y, -PI, PI)
 		_movement.ai_turn_input = clamp(-detour_yaw_diff / 0.5, -1.0, 1.0)
 		_movement.ai_move_input = 1.0 if not _check_emergency_brake() else 0.0
+		if _detour_timer <= 0.0:
+			# Обход закончился — форсируем пересчёт пути от ТЕКУЩЕЙ (уже смещённой в сторону)
+			# позиции (см. @export-блок про stuck_detour_* — проверено живьём: без этого путь
+			# остаётся старой полилинией). Реассайн тем же значением достаточен — сработает даже
+			# если _waypoint_target_pos не поменялась.
+			_nav_agent.target_position = _waypoint_target_pos
 		return
 
 	if not _has_waypoint_target:
@@ -686,12 +732,16 @@ func _drive_to_waypoint(delta: float) -> void:
 			_stuck_check_timer = 0.0
 			if progress < stuck_min_progress:
 				_stuck_reverse_timer = stuck_reverse_sec
-				# Сторона обхода выбирается ЗДЕСЬ (позиция/поворот на момент обнаружения
-				# застревания), а не после реверса — реверс не меняет rotation.y (turn_input=0
-				# всё это время), так что выбор остаётся валиден к началу фазы обхода. Обе стороны
-				# заняты — _detour_side=0.0, detour-фазу пропускаем в этот раз (см. блок выше).
-				_detour_side = _pick_detour_side()
-				_detour_timer = stuck_detour_sec if _detour_side != 0.0 else 0.0
+				# Проём выбирается ЗДЕСЬ (позиция/поворот на момент обнаружения застревания), а
+				# не после реверса — реверс не меняет rotation.y (turn_input=0 всё это время), так
+				# что мировой угол остаётся валиден к началу фазы обхода. Проёма нет вообще (NAN) —
+				# detour-фазу пропускаем в этот раз, только реверс (см. блок выше).
+				var gap_deg: float = _scan_gap()
+				if is_nan(gap_deg):
+					_detour_timer = 0.0
+				else:
+					_detour_target_world_yaw = wrapf(_body.rotation.y + deg_to_rad(gap_deg), -PI, PI)
+					_detour_timer = stuck_detour_sec
 	else:
 		_stuck_check_timer = 0.0
 		_stuck_check_pos = _body.global_position
@@ -757,19 +807,21 @@ func _get_lookahead_point() -> Vector3:
 		i += 1
 	return path[path.size() - 1]
 
-## Веер из 3 коротких лучей (0°, ±emergency_brake_spread_deg от корпуса) — см. @export-блок в
-## заголовке файла про слепой угол одного центрального луча. ЛЮБОЙ хит ближе emergency_brake_range
-## считается тормозом; никакая сторона/направление здесь не выбирается, только да/нет.
+## Веер из 3 коротких лучей (0°, ±emergency_brake_spread_deg от корпуса) — см. @export-блок про
+## отдельную, широкую попытку добавить сюда ещё пару лучей и её откат. ЛЮБОЙ хит ближе
+## emergency_brake_range считается тормозом; сторона/направление здесь не выбирается, только да/нет
+## (сторону/угол объезда решает _scan_gap()).
 func _check_emergency_brake() -> bool:
 	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
 		if _cast_ray(offset_deg, emergency_brake_range):
 			return true
 	return false
 
-## Один луч от корпуса (высота +0.4, тот же принцип, что у аварийного тормоза) под offset_deg от
-## текущего направления корпуса, длиной range. true — что-то на пути; переиспользуется тормозом и
-## зондом обхода (_pick_detour_side()), чтобы не дублировать настройку PhysicsRayQueryParameters3D.
-func _cast_ray(offset_deg: float, range: float) -> bool:
+## Один луч от корпуса (высота +0.4, тот же принцип, что у аварийного тормоза), возвращает
+## РАССТОЯНИЕ до хита (или range, если ничего не поймал) — не просто bool, нужно для _scan_gap()
+## (сравнение с порогом клиренса), для bool-использования (_check_emergency_brake()) достаточно
+## сравнить результат с range.
+func _cast_ray_dist(offset_deg: float, range: float) -> float:
 	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
 	var ray_yaw: float = _body.rotation.y + deg_to_rad(offset_deg)
 	var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
@@ -778,23 +830,67 @@ func _cast_ray(offset_deg: float, range: float) -> bool:
 	query.exclude = [_body]
 	query.collision_mask = 1 | 2 | 4
 	query.collide_with_areas = true
-	return not space_state.intersect_ray(query).is_empty()
+	var result: Dictionary = space_state.intersect_ray(query)
+	if result.is_empty():
+		return range
+	return origin.distance_to(result["position"])
 
-## Зонд для фазы обхода (см. @export-блок про stuck_detour_*) — два луча под ±stuck_detour_angle_deg
-## на stuck_detour_probe_range (дальше, чем аварийный тормоз — нужно видеть, реально ли сторона
-## свободна для обхода, не только впритык у носа). Свободна ОДНА сторона — идём туда. Свободны ОБЕ —
-## держим прошлый выбор (не 0, чтобы не дёргаться туда-сюда без причины), иначе (первый раз) влево.
-## Заняты ОБЕ — возвращаем 0.0 (обход не начинаем, см. вызывающий код).
-func _pick_detour_side() -> float:
-	var left_clear: bool = not _cast_ray(-stuck_detour_angle_deg, stuck_detour_probe_range)
-	var right_clear: bool = not _cast_ray(stuck_detour_angle_deg, stuck_detour_probe_range)
-	if left_clear and not right_clear:
-		return -1.0
-	if right_clear and not left_clear:
-		return 1.0
-	if left_clear and right_clear:
-		return _detour_side if _detour_side != 0.0 else -1.0
-	return 0.0
+## bool-обёртка над _cast_ray_dist() — true, если что-то есть БЛИЖЕ range (используется тормозом,
+## где нужен только да/нет, не расстояние).
+func _cast_ray(offset_deg: float, range: float) -> bool:
+	return _cast_ray_dist(offset_deg, range) < range
+
+## Скан веером (см. @export-блок про stuck_detour_scan_*) — ищет РЕАЛЬНО открытый проём вместо
+## гадания по двум фиксированным углам (см. её историю в @export-блоке). Кастует лучи от
+## -stuck_detour_scan_span_deg/2 до +.../2 с шагом stuck_detour_scan_step_deg на
+## stuck_detour_probe_range; луч считается "открытым", если хит дальше stuck_detour_scan_clear_ratio
+## · stuck_detour_probe_range (или вообще не поймал ничего). Среди НЕПРЕРЫВНЫХ пробегов открытых
+## лучей берём самый широкий (при равенстве — ближе к 0°, минимальный лишний доворот) и возвращаем
+## угол его середины в градусах, ОТНОСИТЕЛЬНО текущего _body.rotation.y. Ни одного открытого луча —
+## возвращаем NAN (вызывающий код тогда не запускает фазу обхода, только реверс).
+func _scan_gap() -> float:
+	var half_span: float = stuck_detour_scan_span_deg * 0.5
+	var step: float = maxf(stuck_detour_scan_step_deg, 1.0)
+	var angles: Array[float] = []
+	var a: float = -half_span
+	while a <= half_span + 0.01:
+		angles.append(a)
+		a += step
+
+	var clearance: float = stuck_detour_probe_range * stuck_detour_scan_clear_ratio
+	var clear: Array[bool] = []
+	for ang in angles:
+		clear.append(_cast_ray_dist(ang, stuck_detour_probe_range) >= clearance)
+
+	var zero_idx := 0
+	var zero_dist := INF
+	for i in range(angles.size()):
+		if absf(angles[i]) < zero_dist:
+			zero_dist = absf(angles[i])
+			zero_idx = i
+
+	var best_start := -1
+	var best_len := 0
+	var best_center_dist := INF
+	var i := 0
+	while i < clear.size():
+		if not clear[i]:
+			i += 1
+			continue
+		var start: int = i
+		while i < clear.size() and clear[i]:
+			i += 1
+		var run_len: int = i - start
+		var center_dist: float = absf((start + i - 1) / 2.0 - zero_idx)
+		if run_len > best_len or (run_len == best_len and center_dist < best_center_dist):
+			best_len = run_len
+			best_start = start
+			best_center_dist = center_dist
+
+	if best_start == -1:
+		return NAN
+	var center_idx: float = (best_start + best_start + best_len - 1) / 2.0
+	return -half_span + center_idx * step
 
 ## Случайная точка внутри круга (равномерно по площади — sqrt(randf()), не randf() напрямую,
 ## иначе точки скучивались бы у центра).
@@ -972,10 +1068,10 @@ func _update_path_debug_draw() -> void:
 	mesh.surface_add_vertex(lookahead + Vector3(0, 0, MARK))
 	mesh.surface_end()
 
-	# Веер из 3 лучей-тормоза (0°, ±emergency_brake_spread_deg, см. @export-блок в заголовке файла)
-	# — красные, если ЛЮБОЙ хит ближе emergency_brake_range (тормоз реально держит ai_move_input
-	# на нуле для всех троих разом, см. _check_emergency_brake()), иначе все зелёные. Рисуем в
-	# ЛОКАЛЬНЫХ координатах корпуса (0° = -Z), поэтому тут просто deg_to_rad(offset) без world_yaw.
+	# Веер из 3 лучей-тормоза (0°, ±emergency_brake_spread_deg, см. @export-блок в заголовке файла
+	# про то, почему широкая пара НЕ входит сюда) — красные, если ЛЮБОЙ хит ближе
+	# emergency_brake_range (тормоз реально держит ai_move_input на нуле для всех разом, см.
+	# _check_emergency_brake()), иначе все зелёные. ЛОКАЛЬНЫЕ координаты корпуса (0° = -Z).
 	var brake_hit_dbg: bool = _check_emergency_brake()
 	var brake_color: Color = Color(0.95, 0.15, 0.1, 0.9) if brake_hit_dbg else Color(0.2, 0.9, 0.3, 0.7)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
@@ -985,6 +1081,19 @@ func _update_path_debug_draw() -> void:
 		mesh.surface_add_vertex(Vector3(0.0, HEIGHT, 0.0))
 		mesh.surface_add_vertex(local_dir * emergency_brake_range + Vector3(0.0, HEIGHT, 0.0))
 	mesh.surface_end()
+
+	# Пока идёт фаза обхода — жёлтая линия на найденный _scan_gap() проём (_detour_target_world_yaw,
+	# мировой угол, переводим в локальные координаты корпуса вычитанием rotation.y). Не
+	# пересчитываем сам скан каждый кадр только ради отрисовки (17 лучей — не бесплатно) — рисуем
+	# уже сохранённый результат, есть только пока _detour_timer>0.
+	if _detour_timer > 0.0:
+		var local_target_deg: float = rad_to_deg(wrapf(_detour_target_world_yaw - _body.rotation.y, -PI, PI))
+		var target_dir := Vector3(-sin(deg_to_rad(local_target_deg)), 0.0, -cos(deg_to_rad(local_target_deg)))
+		mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+		mesh.surface_set_color(Color(0.95, 0.85, 0.15, 0.9))
+		mesh.surface_add_vertex(Vector3(0.0, HEIGHT, 0.0))
+		mesh.surface_add_vertex(target_dir * stuck_detour_probe_range + Vector3(0.0, HEIGHT, 0.0))
+		mesh.surface_end()
 
 ## Текстовая панель "что сейчас в голове у бота" — отдельный CanvasLayer+Label поверх HUD (не
 ## трогаем разметку самого HUD.tscn — это дебаг конкретно этой песочницы, не часть продакшен-UI).
@@ -1065,8 +1174,8 @@ func _update_brain_debug_label() -> void:
 			if _stuck_reverse_timer > 0.0:
 				lines.append("STUCK: reversing (%.1fs left)" % _stuck_reverse_timer)
 			elif _detour_timer > 0.0:
-				var side_str: String = "LEFT" if _detour_side < 0.0 else "RIGHT"
-				lines.append("STUCK: detour %s (%.1fs left)" % [side_str, _detour_timer])
+				var local_deg: float = rad_to_deg(wrapf(_detour_target_world_yaw - _body.rotation.y, -PI, PI))
+				lines.append("STUCK: detour %.0f° (%.1fs left)" % [local_deg, _detour_timer])
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

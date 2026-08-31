@@ -158,3 +158,20 @@ corner-case oscillation opened a new one) and replaced with the standard NavMesh
 the vault doc §12 for the switch (and §11, kept as an archived history of the raycast era, since
 `bot_sentry_controller.gd` no longer matches it). `agent_radius` on the baked mesh must exceed the
 tank hull's half-diagonal (not just its half-width) or the path clips corners on turns.
+
+NavMesh only knows the STATIC map — it has no idea a player tank is parked across the route. Layered
+on top, purely for that dynamic case (never for steering choice, which stays NavMesh's job): pure
+pursuit path-following (§12.6, lookahead projected onto the path, not the nearest vertex — a vertex-
+anchored lookahead has a self-stalling equilibrium, found live), a short-range 3-ray emergency brake
+that only halts (§12.6-12.7), a windowed-displacement stuck detector (instant velocity is fooled by
+Jolt corner-contact jitter, §12.6), and — when actually stuck — a reverse followed by a gap-scan
+detour (~17-ray fan, steers into the widest genuinely open gap, not a fixed ±angle guess that can
+loop forever retrying the same wrong direction, §12.9) that forces `NavigationAgent3D.target_position`
+to reassign itself afterward (confirmed live: Godot does **not** repath on its own just because the
+agent moved — reassigning `target_position`, even to the same value, is what forces a fresh query,
+§12.8). A runtime on-screen toggle (`enemy_reaction_enabled` on `BotSentryController`) lets the player
+disable target-seeking/combat for testing while leaving this avoidance stack fully active — the bot
+still treats the player as a physical obstacle either way. Vault doc §12.6-12.9 has the full
+diagnostic history (each is a "tried X, live-tested, found a regression, dial it back" cycle — read
+before changing any of `emergency_brake_*`/`stuck_*`/`nav_lookahead_distance`, the current numbers
+are not arbitrary).
