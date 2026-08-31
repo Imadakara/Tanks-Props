@@ -154,6 +154,10 @@ enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
 const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "камера" дошла до выбранного угла
+## Должна совпадать с Projectile.fall_acceleration (scenes/projectile/projectile.gd) — не читаем
+## оттуда напрямую (снаряд ещё не существует до момента выстрела, инстанцировать только ради
+## константы — лишняя возня), дублируем с явной привязкой здесь же в комментарии.
+const _PROJECTILE_GRAVITY := 9.8
 
 @export var role: Role = Role.ACHIEVER
 @export var difficulty: Difficulty = Difficulty.MEDIUM
@@ -165,6 +169,20 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var look_cone_deg: float = 100.0  # полный угол конуса вокруг направления корпуса
 @export var fire_range: float = 8.0
 @export var fire_aim_tolerance_deg: float = 5.0
+
+## [ДОБАВЛЕНО, по прямому запросу — "текущая реализация стрельбы не учитывает параболическую
+## траекторию снарядов, боты должны приподнимать дуло на нужный угол для гарантированного попадания
+## с небольшим разбросом в пределах корпуса цели"] Снаряд падает под гравитацией (см.
+## projectile.gd/fall_acceleration) — прицел точно в центр цели БЕЗ угла возвышения промахивался бы
+## мимо на любой заметной дистанции. fire_pitch_tolerance_deg — допуск довода дула (аналог
+## fire_aim_tolerance_deg для башни), проверяется вместе с ним в _aim_and_fire() перед выстрелом.
+## aim_spread_horizontal/vertical — половина габаритов реального хитбокса танка с запасом ВНУТРЬ
+## (CollisionShape3D корпуса — Vector3(1.2, 0.6, 1.8), см. Tank.tscn: половина ширины/длины 0.6/0.9,
+## половина высоты 0.3 — берём чуть меньше, 0.5/0.2, чтобы точка прицеливания ГАРАНТИРОВАННО падала
+## внутри хитбокса при любом угле офсета, не только по одной оси).
+@export var fire_pitch_tolerance_deg: float = 3.0
+@export var aim_spread_horizontal: float = 0.5
+@export var aim_spread_vertical: float = 0.2
 
 ## ПРИЦЕЛЬНЫЙ сектор — узкий, зафиксирован на РЕАЛЬНОМ текущем угле башни (не на _look_yaw, куда
 ## башня только стремится, а именно на _turret.rotation.y — куда ствол физически повёрнут прямо
@@ -418,6 +436,12 @@ var state: State = State.IDLE
 ## обзора больше не влияет, см. заголовок файла).
 var _look_yaw: float = 0.0
 var _current_target: Node = null
+## Случайное смещение точки прицеливания внутри хитбокса цели (см. @export-блок про
+## aim_spread_horizontal/vertical) — берётся ОДИН РАЗ за заход прицеливания (см. _reroll_aim_offset(),
+## вызывается из _enter_defend() и в момент входа в ATTACK_OBJECTIVE), не каждый кадр: иначе
+## _turret.target_yaw/_barrel.target_pitch дёргались бы на каждом физ.кадре и никогда стабильно не
+## попадали бы в допуск (fire_aim_tolerance_deg/fire_pitch_tolerance_deg).
+var _aim_offset: Vector3 = Vector3.ZERO
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
 
@@ -877,6 +901,11 @@ func _can_see(target: Node3D) -> bool:
 ## think-тик, пока цель видна (см. _think()), этого достаточно для живой цели в 1v1-бою;
 ## переустанавливать на каждом физ.кадре форсило бы repath 60 раз/сек без реальной пользы.
 func _enter_defend(target: Node) -> void:
+	# Новая переустановка прицельного смещения только на смену цели (см. _reroll_aim_offset()) —
+	# _enter_defend() вызывается КАЖДЫЙ think-тик, пока цель видна (см. _think()), рероллить offset
+	# на каждый такой вызов заставлял бы прицел дёргаться внутри одного и того же боя.
+	if _current_target != target:
+		_reroll_aim_offset()
 	state = State.DEFEND
 	_current_target = target
 	_last_known_target_pos = target.global_position
@@ -884,15 +913,63 @@ func _enter_defend(target: Node) -> void:
 	if dist > fire_range and _nav_agent.is_inside_tree():
 		_nav_agent.target_position = target.global_position
 
-## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня физически
-## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()).
+## Случайное смещение точки прицеливания внутри хитбокса цели — берётся ОДИН РАЗ за заход
+## прицеливания (см. @export-блок про aim_spread_horizontal/vertical и комментарий у _aim_offset),
+## не пересчитывается каждый кадр. Вызывается из _enter_defend() и в момент входа в
+## ATTACK_OBJECTIVE (_advance_waypoint()).
+func _reroll_aim_offset() -> void:
+	_aim_offset = Vector3(
+		randf_range(-aim_spread_horizontal, aim_spread_horizontal),
+		randf_range(-aim_spread_vertical, aim_spread_vertical),
+		randf_range(-aim_spread_horizontal, aim_spread_horizontal)
+	)
+
+## Угол возвышения дула для гарантированного попадания по параболической траектории снаряда (см.
+## projectile.gd — гравитация интегрируется по времени, не мгновенный рейкаст). Стандартное
+## уравнение снаряда `y = x*tanθ - g*x²/(2v²cos²θ)`, решается как квадратное относительно t=tanθ
+## (используя 1/cos²θ = 1+t²): `(g*x²/2v²)*t² - x*t + (y + g*x²/2v²) = 0`. Два корня — настильная
+## (низкая) и навесная (высокая) дуги; берём НИЗКУЮ (t_low = меньший корень) — обычная танковая
+## пушка, не миномёт; на игровых дистанциях (fire_range 8-11м, launch_speed ~20) угол получается
+## единицы градусов, комфортно внутри диапазона дула бота (-15°..+30°, см. barrel_controller.gd).
+## Дискриминант < 0 — цель физически недостижима на данной скорости снаряда (не должно случаться
+## при dist<=fire_range с текущим балансом, но на случай будущей рассинхронизации баланса — берём
+## максимальный доступный угол вместо NaN/деления на некорректный результат).
+func _compute_ballistic_pitch(dist_xz: float, height_diff: float) -> float:
+	var v: float = _weapon.launch_speed
+	var g: float = _PROJECTILE_GRAVITY
+	if dist_xz < 0.01 or v < 0.01:
+		return 0.0
+	var a: float = (g * dist_xz * dist_xz) / (2.0 * v * v)
+	var c: float = height_diff + a
+	var discriminant: float = dist_xz * dist_xz - 4.0 * a * c
+	var pitch: float
+	if discriminant < 0.0:
+		pitch = deg_to_rad(_barrel.max_pitch_deg)
+	else:
+		var sqrt_d: float = sqrt(discriminant)
+		var t_low: float = (dist_xz - sqrt_d) / (2.0 * a)
+		pitch = atan(t_low)
+	return clamp(pitch, deg_to_rad(_barrel.min_pitch_deg), deg_to_rad(_barrel.max_pitch_deg))
+
+## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня/дуло физически
+## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()). Целимся не в
+## голый target.global_position, а в него же + _aim_offset (см. _reroll_aim_offset()) — небольшой
+## разброс в пределах хитбокса, не идеальный лазерный центр. Выстрел ждёт готовности ОБЕИХ осей —
+## yaw (башня) И pitch (дуло, см. _compute_ballistic_pitch()) — стрелять с недоведённым углом
+## возвышения означало бы систематический недолёт/перелёт мимо параболы.
 func _aim_and_fire(target: Node3D) -> void:
-	_look_yaw = _yaw_to_world_point(_turret.global_position, target.global_position)
+	var aim_point: Vector3 = target.global_position + _aim_offset
+	_look_yaw = _yaw_to_world_point(_turret.global_position, aim_point)
 	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+
+	var to_aim: Vector3 = aim_point - _turret.global_position
+	var dist_xz: float = Vector2(to_aim.x, to_aim.z).length()
+	_barrel.target_pitch = _compute_ballistic_pitch(dist_xz, to_aim.y)
 
 	var dist: float = _body.global_position.distance_to(target.global_position)
 	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
-	if dist <= fire_range and aim_diff_deg <= fire_aim_tolerance_deg:
+	var pitch_diff_deg: float = rad_to_deg(absf(_barrel.target_pitch - _barrel.rotation.x))
+	if dist <= fire_range and aim_diff_deg <= fire_aim_tolerance_deg and pitch_diff_deg <= fire_pitch_tolerance_deg:
 		_weapon.try_fire()
 
 func _yaw_to_world_point(from: Vector3, to_point: Vector3) -> float:
@@ -1290,6 +1367,7 @@ func _advance_waypoint() -> void:
 	_has_waypoint_target = false
 	if waypoints_one_way and _waypoint_index >= _waypoints.size() - 1:
 		state = State.ATTACK_OBJECTIVE
+		_reroll_aim_offset()
 		# [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот замирает не стреляя в objective"] Тот же
 		# класс бага: без явной переустановки здесь _nav_agent.target_position остаётся указывать на
 		# последний AttackWaypoint (старая PATROL-цель), не на objective — State.ATTACK_OBJECTIVE

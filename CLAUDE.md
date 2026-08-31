@@ -310,6 +310,44 @@ by ACHIEVER/PATROL because `DEFEND`'s approach logic (from this same fix) overwr
 `_has_waypoint_target = false` too (previously only `_has_hunt_target`, inside the KILLER branch), so
 `_drive_to_waypoint()` picks a fresh point and reassigns the nav target instead of trusting a stale one.
 
+**Ballistic aiming (by request).** Bots used to aim by yaw only — `BarrelController.target_pitch`
+was never touched by AI (stayed 0.0, gun always level) even though the projectile physically falls
+under gravity (`projectile.gd`, kinematic integration, not raycast) — shots simply undershot at any
+real distance. `_compute_ballistic_pitch(dist_xz, height_diff)` solves the standard projectile
+equation as a quadratic in `tanθ`, picks the LOW-arc root (flat cannon shot, not a mortar lob), and
+`_aim_and_fire()` now gates `try_fire()` on BOTH yaw and pitch tolerance being satisfied. Aiming
+targets `target.global_position + _aim_offset` — a small random offset sized from the tank's actual
+hull `CollisionShape3D` (`Vector3(1.2, 0.6, 1.8)`) so the shot always lands inside the hitbox, never
+dead-center every time; the offset is rolled ONCE per targeting bout (`_reroll_aim_offset()`, called
+from `_enter_defend()` only on a NEW target and once on entering `ATTACK_OBJECTIVE`), not every
+frame — re-rolling continuously would make the aim angles jitter and never settle inside tolerance.
+Confirmed live: a forced shot at a known distance actually connected (target's `current_hits` went
+up), and a full unforced fight on `BotArena.tscn` showed real hits both ways with the barrel visibly
+elevated. The "turn turret toward whoever just hit you" reaction (`_on_damaged()`) was *already*
+implemented correctly — verified live rather than re-adding it.
+
+`AttackBotTank`'s marching-to-objective phase gets a per-instance `forward_look_bias=0.8` override
+(vs. the script's global default 0.7, still used by the defense patrol/KILLER hunt) — 80% forward-
+biased turret wander, 20% full 360°, same underlying mechanism as the default, just tuned per this
+one bot via the `.tscn`, not a script change.
+
+**`OBJECTIVE: TARGET` label + invincibility toggle (test-only, both sandbox arenas).** `hud.gd`
+looks up the objective via the hardcoded path `"Map/DestructibleObjective/HealthComponent"` —
+production-only (`Map.tscn` lives under "Map"); on these two arenas there's no "Map" node at all
+(Objective sits directly under `NavigationRegion3D`), so `ObjectiveLabel` silently stuck on its
+default "Objective: --" text the whole time (not a `hud.gd` bug per se — correct on `Main.tscn`,
+just not arena-agnostic). Rather than touch the shared `hud.gd`/`HUD.tscn`, `bot_arena.gd` (already
+shared by both arenas) finds the objective itself via the same recursive `find_child("Objective",
+true, false)` pattern `bot_sentry_controller.gd` already uses for `ATTACK_OBJECTIVE`, and overwrites
+`$HUD/ObjectiveLabel.text` with `"OBJECTIVE: TARGET — X/Y попаданий"` — naming the objective mode
+explicitly (there used to be a different one, Capture Zone, since removed — see "Current objective
+mode" above) while also fixing the broken counter. A programmatically-built toggle button (same
+pattern as `bot_sentry_controller.gd`'s reaction-toggle buttons — own `CanvasLayer`, bottom-right
+corner, free of the other debug widgets) flips `HealthComponent.invincible` on that objective; text
+reflects state (`"Objective: ON"` vulnerable / `"Objective: OFF"` invincible). Lives only in
+`bot_arena.gd` — `Main.tscn` runs `main.gd` instead, so this cheat button structurally cannot appear
+in a real match.
+
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
 request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the
 scene file itself (not the runtime default), it has 6 extra `ObstacleN` static bodies spread across
