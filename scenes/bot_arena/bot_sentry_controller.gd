@@ -618,11 +618,28 @@ func _ensure_home_state() -> void:
 ## в заголовке файла) — уходит в PURSUE к _last_known_target_pos (записана КАЖДЫЙ кадр, пока цель
 ## была видна, см. _aim_and_fire() — не читаем target.global_position ЗДЕСЬ, target может быть уже
 ## невалиден/freed к этому моменту, если цель именно уничтожена, не просто скрылась из виду).
+##
+## [ИСПРАВЛЕНО] `_has_hunt_target=false` — без этого сброса, если бот заметил цель НЕ доехав до
+## текущей hunt-точки, `_has_hunt_target` оставался true всё время PURSUE. По возврату в HUNT
+## `_drive_to_hunt_point()` видит "точка уже выбрана" и НЕ переустанавливает
+## `_nav_agent.target_position` — а он к этому моменту уже указывает на _pursue_target_pos (только
+## что достигнутую), а не на старую _hunt_target_pos. NavMesh-путь оказывается тривиальным/пустым
+## (агент "у цели" по мнению навигации), `_get_lookahead_point()` вырождается в текущую позицию
+## бота (тот же класс бага, что и "цель = я сам" в pure pursuit, см. Bot AI Sandbox §12.6) — бот
+## крутится на месте, пока reach_dist/hunt_target_timeout_sec не разрешит ситуацию (до 25с). Найдено
+## по прямому запросу пользователя, подтверждено живьём (run_script): `_hunt_target_pos` и
+## `_nav_agent.target_position` разъезжались на 30+м после возврата в HUNT. Заодно сбрасываем
+## reverse/detour-таймеры — DEFEND останавливает движение полностью, любое "в процессе" застревание
+## с прошлого сегмента пути физически неактуально к моменту возобновления движения.
 func _on_target_lost() -> void:
 	if role == Role.KILLER:
 		_pursue_target_pos = _last_known_target_pos
 		state = State.PURSUE
 		_nav_agent.target_position = _pursue_target_pos
+		_has_hunt_target = false
+	_stuck_reverse_timer = 0.0
+	_detour_timer = 0.0
+	_stuck_check_timer = 0.0
 	_current_target = null
 
 func _scan_for_target() -> Node:
