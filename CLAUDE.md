@@ -27,10 +27,12 @@ gotchas of that MCP server; don't rediscover them by trial and error.
 — its correctness is established the same way (live `run_script` assertions on state, not manual
 play).
 
-**Current `run/main_scene`** (`project.godot`) points at `res://scenes/bot_arena/BotArena.tscn`
-(an isolated bot-AI sandbox, see below and the vault's Bot AI Sandbox doc), not at the production
-game (`res://scenes/main/Main.tscn`) — this is deliberate for the current `Bot` branch, not a
-misconfiguration. Point it back at `Main.tscn` to run the actual 5×5 game.
+**Current `run/main_scene`** (`project.godot`) points at `res://scenes/bot_arena/KillerArena.tscn`
+(an isolated bot-AI sandbox for the KILLER role, see below and the vault's Bot AI Sandbox doc), not
+at the production game (`res://scenes/main/Main.tscn`) — this is deliberate for the current `Bot`
+branch, not a misconfiguration. See "Map inventory" further down for the other two scenes
+(`BotArena.tscn`, ACHIEVER; `Main.tscn`, production) — point `run/main_scene` at whichever one you
+actually want to run.
 
 ## Architecture
 
@@ -175,3 +177,36 @@ still treats the player as a physical obstacle either way. Vault doc §12.6-12.9
 diagnostic history (each is a "tried X, live-tested, found a regression, dial it back" cycle — read
 before changing any of `emergency_brake_*`/`stuck_*`/`nav_lookahead_distance`, the current numbers
 are not arbitrary).
+
+Both roles (`Role.ACHIEVER`/`Role.KILLER`) are fully implemented (vault doc §14). ACHIEVER's home
+behavior is `PATROL` (fixed waypoints around the objective); KILLER's is `HUNT` — same driving stack,
+random points across a rectangular area auto-detected from the `Ground` node's `BoxShape3D` AABB at
+`_ready()` (no per-map hardcoding needed) — and on losing sight of a target it goes to `PURSUE` (the
+last position it was actually SEEN at, not just its last known node position — those differ by up to
+one `think_interval_sec`, which mattered enough to be a live-found bug, §14.3) before returning to
+`HUNT`. The whole driving stack (NavMesh/pure pursuit/brake/stuck-detector/gap-scan-detour) is shared
+across `PATROL`/`HUNT`/`PURSUE` through one parameterized `_drive_to_point(delta, target_pos,
+reach_dist)` — don't reimplement it per-state. The test bot on `BotArena.tscn` defaults to ACHIEVER;
+switching to KILLER for testing is manual (`role = Role.KILLER`, inspector or script), not a scene
+toggle.
+
+`scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
+request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the
+scene file itself (not the runtime default), it has 6 extra `ObstacleN` static bodies spread across
+previously-empty parts of the 72×72 map (the original 5 all cluster in one small patch near
+`Objective`), and `PlayerTank`/`BotTank` spawn at opposite corners instead of a few meters apart —
+confirmed live: on a fresh load the bot drove clear across the map on its own and found the player
+(`HUNT`→`DEFEND`) with zero manual intervention. This IS `run/main_scene` now (see above) — to run
+`BotArena.tscn` instead, either point `run/main_scene` at it or pass `scene:
+"res://scenes/bot_arena/BotArena.tscn"` to `run_project` for a one-off run without touching
+`project.godot`.
+
+### Map inventory (by request — the project now has three distinct scenes, don't confuse them)
+
+- `scenes/main/Main.tscn` — the actual production game: 5×5, two teams, `Objective`/`MatchManager`,
+  the real `TankAIController` brain. Not currently `run/main_scene` on the `Bot` branch (see above).
+- `scenes/bot_arena/BotArena.tscn` — bot-AI sandbox with an `Objective` and an ACHIEVER test bot
+  (patrols/defends around it). Not currently `run/main_scene`, launch explicitly via `run_project`'s
+  `scene:` param when you want it, or repoint `run/main_scene`.
+- `scenes/bot_arena/KillerArena.tscn` — bot-AI sandbox for the KILLER role, described above.
+  Currently `run/main_scene`.

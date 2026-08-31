@@ -25,23 +25,38 @@ extends Node
 ## РОЛЬ (role) + ДВИЖОК ВЫБОРА СТЕЙТА (_think()) — приоритет один и тот же для всех ролей:
 ##   1. Видна цель (только что замечена ЛИБО уже отслеживаемая и всё ещё видна) → DEFEND.
 ##   2. Иначе — "домашнее" поведение роли: ACHIEVER с расставленными вейпоинтами → PATROL;
-##      KILLER — пока НЕ реализован (нет стейта "охота", см. дев-план ниже) → падает в IDLE,
-##      это временная заглушка, не финальное поведение убийцы.
-##   3. Нет вообще ничего подходящего (ACHIEVER без вейпоинтов на карте) → IDLE.
-## Явный класс-приоритет, а не набор независимых if — переход между PATROL/IDLE и DEFEND всегда
-## решается заново каждый think-тик, поэтому оба направления (заметил/потерял цель) идут через
-## одну и ту же точку принятия решения, не рассинхронизируются.
+##      KILLER со сконфигурированной зоной охоты (см. HUNT ниже) → HUNT.
+##   3. Нет вообще ничего подходящего (ACHIEVER без вейпоинтов/KILLER без зоны охоты) → IDLE.
+## Явный класс-приоритет, а не набор независимых if — переход между "домашним" стейтом и DEFEND
+## всегда решается заново каждый think-тик, поэтому оба направления (заметил/потерял цель) идут
+## через одну и ту же точку принятия решения, не рассинхронизируются. PURSUE — ИСКЛЮЧЕНИЕ из этого
+## правила по конструкции, см. его описание ниже.
 ##
 ## Стейты:
 ## - IDLE ("ожидание") — бот неподвижен, взгляд блуждает по всему кругу (360°, см. _wander()).
-## - PATROL ("патруль") — бесконечное движение по вейпоинтам (см. ниже), взгляд блуждает С
-##   УКЛОНОМ ВПЕРЁД (forward_look_bias) — чаще смотрит по ходу движения, реже — по сторонам/назад.
+## - PATROL ("патруль", домашнее для ACHIEVER) — бесконечное движение по вейпоинтам (см. ниже).
+## - HUNT ("охота", домашнее для KILLER, по прямому запросу) — бесконечное движение по СЛУЧАЙНЫМ
+##   точкам в пределах зоны охоты (см. _pick_new_hunt_target()) — тот же driving-стек
+##   (NavMesh/pure pursuit/тормоз/антизастрял/gap-scan-обход), что и PATROL, просто без привязки к
+##   вейпоинтам objective: KILLER не сторожит точку, а прочёсывает всю карту в поиске цели.
+##   Достигнутая точка не даёт "накопленного маршрута" — просто выбирается новая случайная (в
+##   отличие от PATROL, где порядок вейпоинтов фиксирован). Цель недостижима (перегорожена
+##   геометрией, слишком далеко) — hunt_target_timeout_sec страхует от вечного тыка в одну точку.
+## - PURSUE ("преследование", по прямому запросу) — включается ТОЛЬКО у KILLER, ТОЛЬКО в момент
+##   потери видимой цели (_on_target_lost()), еду к _pursue_target_pos — последней ЖИВОЙ позиции
+##   цели (запоминается в _last_known_target_pos КАЖДЫЙ кадр, пока цель видна в DEFEND, см.
+##   _aim_and_fire()). Тот же driving-стек, что PATROL/HUNT. Доехал (или изначально не видел, кого
+##   догонять) → возврат в HUNT. Заметил цель СНОВА по дороге — обычный приоритет "видит → DEFEND"
+##   из _think() срабатывает как обычно (PURSUE не особый случай для этой проверки, только для
+##   _ensure_home_state(), см. её комментарий — PURSUE не перезаписывается домашним поведением
+##   каждый think-тик, завершается только сам, доехав до точки).
 ## - DEFEND ("оборона позиции") — стоит на месте, башня/взгляд каждый кадр наводятся на ЖИВУЮ
 ##   позицию цели, огонь по готовности прицела/дальности/боекомплекта.
-## Обнаружил цель в PATROL/IDLE → мгновенно (в рамках think_interval_sec) переход в DEFEND,
-## движение останавливается. Потерял цель (вышла из конуса/дальности/видимости, или уничтожена)
-## → возврат к "домашнему" поведению роли (см. приоритет выше) — блуждание взгляда продолжается
-## с текущего угла, вейпоинт-прогресс (индекс/выбранная точка внутри круга) не сбрасывается.
+## Обнаружил цель в любом "домашнем" стейте → мгновенно (в рамках think_interval_sec) переход в
+## DEFEND, движение останавливается. Потерял цель (вышла из конуса/дальности/видимости, или
+## уничтожена) → ACHIEVER возвращается к PATROL как раньше; KILLER уходит в PURSUE (см. выше), из
+## которого попадает в HUNT. Блуждание взгляда продолжается с текущего угла на всех переходах;
+## вейпоинт-прогресс ACHIEVER (индекс/точка в круге) не сбрасывается.
 ##
 ## Патруль по вейпоинтам — маркеры "WaypointN" (Node3D, ищутся по имени в корне текущей сцены,
 ## сортируются по имени — тот же принцип, что PatrolWaypointN у tank_ai_controller.gd). Каждый
@@ -82,17 +97,26 @@ extends Node
 ## обзора, радиусы, etc.) — это настройка под тип objective/карту, не смена алгоритма.
 ##
 ## Дев-план (не реализовано в этом заходе, только заложены точки расширения):
-## - Стейт HUNT (свободный поиск) и роль KILLER — сейчас KILLER это IDLE-заглушка.
-## - Стейт PURSUE (преследование к последней видимой точке) — по ТЗ должен включаться у HARD
-##   при потере цели ВМЕСТО возврата в PATROL/IDLE; сейчас HARD ведёт себя как EASY/MEDIUM
-##   (_on_target_lost() ниже — единая точка, куда позже добавится ветка по difficulty).
+## - HUNT/PURSUE (см. выше) реализованы для роли KILLER целиком, не только у HARD, по прямому
+##   запросу — изначально в ТЗ PURSUE обсуждался как HARD-эксклюзив, но финальное решение шире:
+##   это часть цикла самой роли KILLER, не тонкая настройка сложности. Если позже понадобится
+##   разница по уровням — например, EASY/MEDIUM забывают last-known-position быстрее или вообще
+##   возвращаются в HUNT сразу без PURSUE — единая точка правки всё та же: _on_target_lost().
+## - Роль ACHIEVER для команды атаки — сейчас проверена только для обороны (движение к
+##   objective/патруль вокруг него). Поведение атакующего ачивера (движение К objective противника,
+##   через собственные вейпоинты/линию атаки) не проверялось.
+## - Пересчёт положения вейпоинтов относительно objective для произвольной боевой карты (не
+##   зафиксировано формулой, сейчас три точки подобраны вручную под конкретную геометрию тестовой
+##   арены).
+## - Правка знака `ai_turn_input` в продакшен `tank_ai_controller.gd` — см. дев-план в Bot AI
+##   Sandbox §8, находка №7.
 ##
 ## Уровни сложности (difficulty) — все числовые @export ниже это тюнинг MEDIUM (тот самый
 ## "текущий бот"), EASY/HARD — пресеты в _apply_difficulty_preset(), применяются поверх этих
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -131,6 +155,22 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## Патруль по вейпоинтам (см. заголовок файла).
 @export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — область вокруг маркера
 @export var waypoint_reach_dist: float = 1.5
+
+## HUNT — зона охоты для роли KILLER (см. заголовок файла). Прямоугольник по X/Z вокруг
+## hunt_area_center с половинными размерами hunt_area_half_extents — оставлены НУЛЯМИ по умолчанию,
+## тогда в _ready() зона детектится АВТОМАТИЧЕСКИ по AABB узла "Ground" на карте (см.
+## _detect_hunt_area()): архитектурная заметка в заголовке файла требует, чтобы логика бота не была
+## завязана на конкретную геометрию тестовой арены — на боевой карте другой размер/форма земли не
+## потребует правки кода, только пересборки навмеша. Задать вручную (например, если Ground на карте
+## не единый прямоугольник, или нужна зона УЖЕ карты) — выставить hunt_area_half_extents ненулевым,
+## тогда автодетект пропускается целиком.
+@export var hunt_area_center: Vector3 = Vector3.ZERO
+@export var hunt_area_half_extents: Vector2 = Vector2.ZERO
+## Точка HUNT недостижима (перегорожена геометрией, слишком далеко) — не тыкаться в неё вечно,
+## переключиться на новую случайную точку после этого времени. Отдельная страховка ПОВЕРХ
+## stuck_reverse_sec/stuck_detour_sec (те лечат локальное заедание, эта — "может, сама точка
+## недостижима в принципе", не про физику конкретного столкновения).
+@export var hunt_target_timeout_sec: float = 25.0
 
 ## Объезд препятствий — см. заголовок файла (v3, NavMesh). NavigationAgent3D заводится в _ready(),
 ## тюнинг — прямо на нём (radius/path_desired_distance), не через @export здесь: это не параметры
@@ -315,6 +355,23 @@ var _waypoint_index: int = 0
 var _waypoint_target_pos: Vector3 = Vector3.ZERO
 var _has_waypoint_target: bool = false
 
+## HUNT — зона детектится в _ready() (см. @export-блок выше), _hunt_area_valid=false, если не
+## удалось (нет ни ручных half_extents, ни узла "Ground" на карте) — тогда KILLER без вейпоинтов
+## падает в IDLE, симметрично тому, как ACHIEVER без вейпоинтов падает в IDLE.
+var _hunt_area_valid: bool = false
+var _hunt_target_pos: Vector3 = Vector3.ZERO
+var _has_hunt_target: bool = false
+var _hunt_target_timer: float = 0.0
+
+## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
+## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
+## и требуют флага "уже выбрана" — PURSUE-цель разовая, флаг не нужен). _last_known_target_pos —
+## обновляется КАЖДЫЙ кадр в _aim_and_fire(), пока цель видна (для ЛЮБОЙ роли — дёшево, читается
+## только когда роль KILLER решает уйти в PURSUE, но пишется всегда, не хранить отдельный путь для
+## KILLER-only).
+var _pursue_target_pos: Vector3 = Vector3.ZERO
+var _last_known_target_pos: Vector3 = Vector3.ZERO
+
 ## NavigationAgent3D — заводится в _ready() как ребёнок _body (см. заголовок файла). Плюс сам
 ## meш для отрисовки текущего пути (see _update_path_debug_draw()).
 var _nav_agent: NavigationAgent3D
@@ -388,6 +445,7 @@ func _ready() -> void:
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
 	_collect_waypoints()
+	_detect_hunt_area()
 
 	# CameraRig этого танка на статичной сцене нельзя выключить оверрайдом в .tscn (нет
 	# редактируемых детей у инстанса) — гасим камеру здесь. BotSentryController стоит
@@ -437,6 +495,33 @@ func _collect_waypoints() -> void:
 			_waypoints.append(child)
 	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
 
+## Зона охоты для KILLER (см. @export-блок выше) — вручную заданный hunt_area_half_extents
+## побеждает автодетект целиком (проверяется первым). Автодетект ищет узел "Ground" РЕКУРСИВНО по
+## всей текущей сцене (find_child, owned=false — вейпоинты лежат в корне, но статическая геометрия
+## карты в этой песочнице живёт глубже, под NavigationRegion3D, см. BotArena.tscn), берёт его
+## CollisionShape3D и, если это BoxShape3D, вычисляет мировой AABB по X/Z из shape.size и
+## глобальной позиции узла (предполагает, что земля НЕ повёрнута — разумное допущение для плоской
+## карты; если понадобится наклонная/непрямоугольная земля — тогда вручную через @export).
+## Ничего не нашли/не тот тип формы — _hunt_area_valid остаётся false, KILLER без зоны падает в
+## IDLE (см. _ensure_home_state()), не молча катается по всей карте с нулевым радиусом.
+func _detect_hunt_area() -> void:
+	if hunt_area_half_extents != Vector2.ZERO:
+		_hunt_area_valid = true
+		return
+	var ground: Node = get_tree().current_scene.find_child("Ground", true, false)
+	if ground == null:
+		return
+	var collision_shape: CollisionShape3D = ground.get_node_or_null("CollisionShape3D")
+	if collision_shape == null or collision_shape.shape == null:
+		return
+	var shape: Shape3D = collision_shape.shape
+	if not (shape is BoxShape3D):
+		return
+	var box: BoxShape3D = shape
+	hunt_area_center = collision_shape.global_position
+	hunt_area_half_extents = Vector2(box.size.x * 0.5, box.size.z * 0.5)
+	_hunt_area_valid = true
+
 func _physics_process(delta: float) -> void:
 	_total_time_sec += delta
 	_think_timer -= delta
@@ -452,6 +537,18 @@ func _physics_process(delta: float) -> void:
 				_aim_and_fire(_current_target)
 		State.PATROL:
 			_drive_to_waypoint(delta)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.HUNT:
+			_drive_to_hunt_point(delta)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.PURSUE:
+			# Доехал до последней видимой позиции цели (или не с чем сравнивать — reach_dist от
+			# самого начала) → возврат к поиску; нет зоны охоты (не настроена) — тогда IDLE, а не
+			# HUNT-без-области (см. _detect_hunt_area()/_ensure_home_state()).
+			if _drive_to_point(delta, _pursue_target_pos, waypoint_reach_dist):
+				state = State.HUNT if _hunt_area_valid else State.IDLE
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.IDLE:
@@ -495,19 +592,37 @@ func _think() -> void:
 	_ensure_home_state()
 
 ## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). ACHIEVER
-## с расставленными вейпоинтами патрулирует; иначе (в т.ч. KILLER — заглушка, см. дев-план)
-## просто стоит и смотрит по кругу.
+## с расставленными вейпоинтами патрулирует; KILLER со сконфигурированной зоной охотится (HUNT);
+## иначе — просто стоит и смотрит по кругу (IDLE). PURSUE — ИСКЛЮЧЕНИЕ: не трогаем, пока сам
+## не завершится (доехал до последней видимой позиции цели, см. State.PURSUE в _physics_process())
+## — иначе эта функция, вызываемая КАЖДЫЙ think-тик, пока цель не видна, немедленно перезаписала бы
+## только что начатую погоню обратно на HUNT на первом же тике.
 func _ensure_home_state() -> void:
-	var desired: State = State.PATROL if (role == Role.ACHIEVER and not _waypoints.is_empty()) else State.IDLE
+	if state == State.PURSUE:
+		return
+	var desired: State
+	if role == Role.ACHIEVER and not _waypoints.is_empty():
+		desired = State.PATROL
+	elif role == Role.KILLER and _hunt_area_valid:
+		desired = State.HUNT
+	else:
+		desired = State.IDLE
 	if state != desired:
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
-		# текущего угла что при переходе в PATROL, что в IDLE.
+		# текущего угла на любом переходе.
 
-## Цель потеряна/уничтожена во время DEFEND. Сейчас единообразно для всех уровней сложности —
-## возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в _think()).
-## Точка расширения под HARD → PURSUE, см. дев-план в заголовке файла.
+## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
+## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в
+## _think()). KILLER (любой уровень сложности, по прямому запросу — не HARD-эксклюзив, см. дев-план
+## в заголовке файла) — уходит в PURSUE к _last_known_target_pos (записана КАЖДЫЙ кадр, пока цель
+## была видна, см. _aim_and_fire() — не читаем target.global_position ЗДЕСЬ, target может быть уже
+## невалиден/freed к этому моменту, если цель именно уничтожена, не просто скрылась из виду).
 func _on_target_lost() -> void:
+	if role == Role.KILLER:
+		_pursue_target_pos = _last_known_target_pos
+		state = State.PURSUE
+		_nav_agent.target_position = _pursue_target_pos
 	_current_target = null
 
 func _scan_for_target() -> Node:
@@ -551,9 +666,21 @@ func _can_see(target: Node3D) -> bool:
 	var result: Dictionary = space_state.intersect_ray(query)
 	return result.is_empty() or result.get("collider") == target
 
+## Вызывается КАЖДЫЙ think-тик, пока _can_see(target) подтверждает видимость (см. _think()) — не
+## каждый физ.кадр. Поэтому именно здесь, а не в _aim_and_fire() (которая крутится каждый физ.кадр
+## БЕЗ проверки видимости, чисто по живой позиции _current_target для плавной наводки), обновляем
+## _last_known_target_pos — источник PURSUE у KILLER (см. _on_target_lost()). [ИСПРАВЛЕНО] Раньше
+## обновлялась в _aim_and_fire() каждый физ.кадр безусловно — между think-тиками (до
+## think_interval_sec) цель могла реально скрыться из виду, а _aim_and_fire() продолжала бы писать
+## её ТЕКУЩУЮ (уже физически невидимую боту) позицию до следующей проверки _can_see(); PURSUE тогда
+## ехал бы не к последней ВИДИМОЙ точке, а к точке, где цель оказалась ПОСЛЕ того как скрылась —
+## найдено живым тестом с резким телепортом цели (утрировало обычно небольшую 0.1с-погрешность до
+## абсурдной: pursue-точка совпала с координатами телепорта за 96м от бота, не с последней реально
+## видимой позицией).
 func _enter_defend(target: Node) -> void:
 	state = State.DEFEND
 	_current_target = target
+	_last_known_target_pos = target.global_position
 
 ## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня физически
 ## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()).
@@ -633,16 +760,48 @@ func _pick_forward_biased_deg(current_local_deg: float) -> float:
 	return forward_look_cone_deg * 0.5 if current_local_deg <= 0.0 else -forward_look_cone_deg * 0.5
 
 ## Движение в PATROL — доехать до случайной точки в круге текущего вейпоинта, затем перейти к
-## следующему (индекс всегда по модулю — патруль бесконечный). Объезд статических препятствий —
-## NavigationAgent3D/NavMesh, следование — pure pursuit (см. _get_lookahead_point()), плюс один
-## короткий луч-тормоз (emergency_brake_range) как последний рубеж, см. заголовок файла.
+## следующему (индекс всегда по модулю — патруль бесконечный). Тонкая обёртка над _drive_to_point()
+## (общий driving-стек, см. её комментарий) — тут только вейпоинт-специфика: выбор точки внутри
+## круга текущего маркера и статистика _leg_timer/_advance_waypoint().
 func _drive_to_waypoint(delta: float) -> void:
 	_leg_timer += delta  # копится, пока пытаемся дойти до текущего вейпоинта — см. _advance_waypoint()
 	if _waypoints.is_empty():
 		_movement.ai_move_input = 0.0
 		_movement.ai_turn_input = 0.0
 		return
+	if not _has_waypoint_target:
+		_pick_new_waypoint_target()
+		_nav_agent.target_position = _waypoint_target_pos
+	if _drive_to_point(delta, _waypoint_target_pos, waypoint_reach_dist):
+		_advance_waypoint()
 
+## HUNT — доехать до случайной точки в зоне охоты, затем выбрать новую (см. @export-блок про
+## hunt_area_*/_pick_new_hunt_target()). Тонкая обёртка, симметричная _drive_to_waypoint(), только
+## без вейпоинт-индекса (все точки равноправны, никакого фиксированного порядка) и с
+## hunt_target_timeout_sec — точка может оказаться физически недостижимой (перегорожена
+## геометрией), обычный антизастрял в _drive_to_point() лечит ЛОКАЛЬНОЕ заедание, а не "эта
+## конкретная точка в принципе плохая цель", отдельный таймер страхует именно от второго.
+func _drive_to_hunt_point(delta: float) -> void:
+	if not _hunt_area_valid:
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
+		return
+	if not _has_hunt_target:
+		_pick_new_hunt_target()
+		_nav_agent.target_position = _hunt_target_pos
+		_hunt_target_timer = 0.0
+	_hunt_target_timer += delta
+	if _drive_to_point(delta, _hunt_target_pos, waypoint_reach_dist) or _hunt_target_timer >= hunt_target_timeout_sec:
+		_has_hunt_target = false
+
+## Общий driving-стек для ЛЮБОЙ точки-цели (PATROL/HUNT/PURSUE зовут её с разным target_pos) —
+## NavigationAgent3D/NavMesh для маршрута, pure pursuit для следования (см. _get_lookahead_point()),
+## короткий луч-тормоз (emergency_brake_range), антизастрял по чистому смещению за окно, и, если
+## застряли — реверс + gap-scan-обход (см. соответствующие @export-блоки выше). НЕ трогает
+## _nav_agent.target_position САМ — это ответственность вызывающего (решает, КОГДА цель сменилась
+## и требует нового реассайна, см. _drive_to_waypoint()/_drive_to_hunt_point() и State.PURSUE).
+## Возвращает true, когда target_pos достигнута (reach_dist) — что делать дальше решает вызывающий.
+func _drive_to_point(delta: float, target_pos: Vector3, reach_dist: float) -> bool:
 	# NavigationAgent3D добавляется через add_child.call_deferred() в _ready() (сцена ещё строится
 	# в момент, когда доходит очередь до этого сиблинга) — на первый физ.кадр(ы) он ещё может быть
 	# не в дереве. get_next_path_position() на таком агенте кидает ошибку ("agent has no parent"),
@@ -650,7 +809,7 @@ func _drive_to_waypoint(delta: float) -> void:
 	if not _nav_agent.is_inside_tree():
 		_movement.ai_move_input = 0.0
 		_movement.ai_turn_input = 0.0
-		return
+		return false
 
 	# Аварийный реверс уже идёт — досиживаем его, дальше идёт фаза обхода (ниже), а не сразу
 	# обратно к pure pursuit.
@@ -658,7 +817,7 @@ func _drive_to_waypoint(delta: float) -> void:
 		_stuck_reverse_timer -= delta
 		_movement.ai_move_input = -1.0
 		_movement.ai_turn_input = 0.0
-		return
+		return false
 
 	# Фаза бокового обхода после реверса (см. @export-блок про stuck_detour_*/_scan_gap() выше) —
 	# рулим к ФИКСИРОВАННОМУ мировому углу _detour_target_world_yaw (посчитан один раз в момент
@@ -676,19 +835,14 @@ func _drive_to_waypoint(delta: float) -> void:
 			# Обход закончился — форсируем пересчёт пути от ТЕКУЩЕЙ (уже смещённой в сторону)
 			# позиции (см. @export-блок про stuck_detour_* — проверено живьём: без этого путь
 			# остаётся старой полилинией). Реассайн тем же значением достаточен — сработает даже
-			# если _waypoint_target_pos не поменялась.
-			_nav_agent.target_position = _waypoint_target_pos
-		return
+			# если target_pos не поменялась.
+			_nav_agent.target_position = target_pos
+		return false
 
-	if not _has_waypoint_target:
-		_pick_new_waypoint_target()
-		_nav_agent.target_position = _waypoint_target_pos
-
-	var to_target: Vector3 = _waypoint_target_pos - _body.global_position
+	var to_target: Vector3 = target_pos - _body.global_position
 	to_target.y = 0.0
-	if to_target.length() < waypoint_reach_dist:
-		_advance_waypoint()
-		return
+	if to_target.length() < reach_dist:
+		return true
 
 	# [ИСПРАВЛЕНО] get_current_navigation_path() САМ ПО СЕБЕ не обновляется — Godot пересчитывает
 	# путь под капотом именно по вызову get_next_path_position() (проверено живьём: path[0] был
@@ -699,7 +853,7 @@ func _drive_to_waypoint(delta: float) -> void:
 	# _get_lookahead_point() работала бы по протухшему пути и бот кружил бы у собственной позиции
 	# нескольких вейпоинтов назад (живой тест: 0-2 перехода/30с вместо 30+, пока не нашли).
 	_nav_agent.get_next_path_position()
-	var next_point: Vector3 = _get_lookahead_point()
+	var next_point: Vector3 = _get_lookahead_point(target_pos)
 	var desired_world_yaw: float = _yaw_to_world_point(_body.global_position, next_point)
 
 	var yaw_diff: float = wrapf(desired_world_yaw - _body.rotation.y, -PI, PI)
@@ -745,6 +899,23 @@ func _drive_to_waypoint(delta: float) -> void:
 	else:
 		_stuck_check_timer = 0.0
 		_stuck_check_pos = _body.global_position
+	return false
+
+## Текущая цель driving-стека — какой бы стейт её ни задавал. Нужна ТОЛЬКО для отладочной
+## отрисовки (см. _update_path_debug_draw()) — сама driving-логика (_drive_to_point()) получает
+## target_pos явным параметром от вызывающего стейта и этот helper не использует. IDLE/DEFEND сюда
+## не попадают (см. вызывающий код), но на случай будущих изменений возвращают текущую позицию
+## бота как безопасный no-op, а не мусорное значение.
+func _current_drive_target() -> Vector3:
+	match state:
+		State.PATROL:
+			return _waypoint_target_pos
+		State.HUNT:
+			return _hunt_target_pos
+		State.PURSUE:
+			return _pursue_target_pos
+		_:
+			return _body.global_position
 
 ## Pure pursuit — точка на (эффективном) lookahead ВПЕРЁД по полилинии текущего NavMesh-пути от
 ## позиции, ближайшей к боту прямо сейчас (не просто "следующий узел пути", см. @export-блок в
@@ -757,16 +928,18 @@ func _drive_to_waypoint(delta: float) -> void:
 ## расстояния до ФИНАЛЬНОЙ цели, геометрия "целься на N метров вперёд" на подъезде уводит корпус
 ## по кругу вокруг цели, а не к ней (найдено живым тестом: 0 переходов за 30с, позиция металась в
 ## радиусе ~0.15м у вейпоинта бесконечно). Решение — эффективный lookahead ограничен расстоянием
-## до _waypoint_target_pos: далеко от цели используется полный nav_lookahead_distance (широкие
-## дуги вокруг препятствий), а на подъезде lookahead плавно сжимается до нуля, вырождаясь в "целься
-## точно в цель" — без этого схождение вообще невозможно геометрически, не только медленное.
-func _get_lookahead_point() -> Vector3:
+## до target_pos (общий параметр — раньше читался прямо из _waypoint_target_pos, когда эта функция
+## умела следовать только за PATROL-вейпоинтом; см. @export-блок про refactor под HUNT/PURSUE):
+## далеко от цели используется полный nav_lookahead_distance (широкие дуги вокруг препятствий), а
+## на подъезде lookahead плавно сжимается до нуля, вырождаясь в "целься точно в цель" — без этого
+## схождение вообще невозможно геометрически, не только медленное.
+func _get_lookahead_point(target_pos: Vector3) -> Vector3:
 	var path: PackedVector3Array = _nav_agent.get_current_navigation_path()
 	if path.size() < 2:
 		return _nav_agent.get_next_path_position()
 
 	var pos: Vector3 = _body.global_position
-	var effective_lookahead: float = minf(nav_lookahead_distance, pos.distance_to(_waypoint_target_pos))
+	var effective_lookahead: float = minf(nav_lookahead_distance, pos.distance_to(target_pos))
 
 	# Проекция бота на саму ломаную (на ОТРЕЗОК, не на ближайшую вершину) — иначе получается
 	# самоподдерживающееся равновесие "цель = я сам": если считать lookahead-дистанцию от
@@ -908,6 +1081,15 @@ func _advance_waypoint() -> void:
 	_waypoint_index = (_waypoint_index + 1) % _waypoints.size()
 	_has_waypoint_target = false
 
+## Случайная точка в прямоугольнике зоны охоты (равномерно по X/Z — тут это буквально
+## randf_range на каждую ось независимо, не нужен трюк со sqrt(), как у круга вейпоинта: зона
+## прямоугольная, не круглая, равномерность площади уже есть "из коробки").
+func _pick_new_hunt_target() -> void:
+	var x: float = randf_range(-hunt_area_half_extents.x, hunt_area_half_extents.x)
+	var z: float = randf_range(-hunt_area_half_extents.y, hunt_area_half_extents.y)
+	_hunt_target_pos = hunt_area_center + Vector3(x, 0.0, z)
+	_has_hunt_target = true
+
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
 ## Node, у Node3D-детей под ним не было бы осмысленной мировой трансформации) — так веер сам
@@ -947,6 +1129,10 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(1.0, 0.15, 0.1, 0.28)
 		State.PATROL:
 			fill_color = Color(0.2, 0.6, 0.95, 0.22)
+		State.HUNT:
+			fill_color = Color(0.95, 0.7, 0.1, 0.24)  # жёлто-оранжевый — "охотится", между PATROL и DEFEND
+		State.PURSUE:
+			fill_color = Color(1.0, 0.45, 0.05, 0.26)  # ближе к красному — уже почти нашёл, погоня
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
@@ -1040,7 +1226,8 @@ func _setup_path_debug_draw() -> void:
 func _update_path_debug_draw() -> void:
 	var mesh: ImmediateMesh = _path_debug_mesh.mesh
 	mesh.clear_surfaces()
-	if state != State.PATROL or _nav_agent == null or not _nav_agent.is_inside_tree():
+	var driving: bool = state == State.PATROL or state == State.HUNT or state == State.PURSUE
+	if not driving or _nav_agent == null or not _nav_agent.is_inside_tree():
 		return
 	var path: PackedVector3Array = _nav_agent.get_current_navigation_path()
 	if path.size() < 2:
@@ -1057,8 +1244,8 @@ func _update_path_debug_draw() -> void:
 	# Оранжевая точка — куда РЕАЛЬНО целится pure pursuit прямо сейчас (_get_lookahead_point(),
 	# см. заголовок файла) — НЕ то же самое, что ближайший узел голубой линии; лежит дальше по
 	# полилинии на nav_lookahead_distance. Маленький крестик, не просто линия, чтобы не путать
-	# с самой ломаной пути.
-	var lookahead: Vector3 = inv_xform * (_get_lookahead_point() + Vector3.UP * HEIGHT)
+	# с самой ломаной пути. Целевая точка зависит от текущего state (см. _current_drive_target()).
+	var lookahead: Vector3 = inv_xform * (_get_lookahead_point(_current_drive_target()) + Vector3.UP * HEIGHT)
 	const MARK := 0.4
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	mesh.surface_set_color(Color(1.0, 0.6, 0.1, 0.95))
@@ -1167,15 +1354,15 @@ func _update_brain_debug_label() -> void:
 			if not _waypoints.is_empty():
 				lines.append("waypoint: %d/%d" % [_waypoint_index + 1, _waypoints.size()])
 			if _has_waypoint_target:
-				var to_point: float = _body.global_position.distance_to(_waypoint_target_pos)
-				lines.append("to point: %.1fm" % to_point)
-			if _nav_agent != null and _nav_agent.is_inside_tree():
-				lines.append("nav: %d pts left" % _nav_agent.get_current_navigation_path().size())
-			if _stuck_reverse_timer > 0.0:
-				lines.append("STUCK: reversing (%.1fs left)" % _stuck_reverse_timer)
-			elif _detour_timer > 0.0:
-				var local_deg: float = rad_to_deg(wrapf(_detour_target_world_yaw - _body.rotation.y, -PI, PI))
-				lines.append("STUCK: detour %.0f° (%.1fs left)" % [local_deg, _detour_timer])
+				lines.append("to point: %.1fm" % _body.global_position.distance_to(_waypoint_target_pos))
+			_append_nav_debug_lines(lines)
+		State.HUNT:
+			if _has_hunt_target:
+				lines.append("to point: %.1fm" % _body.global_position.distance_to(_hunt_target_pos))
+			_append_nav_debug_lines(lines)
+		State.PURSUE:
+			lines.append("last seen at: %.1fm" % _body.global_position.distance_to(_pursue_target_pos))
+			_append_nav_debug_lines(lines)
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:
@@ -1183,3 +1370,14 @@ func _update_brain_debug_label() -> void:
 	else:
 		lines.append("look: turning")
 	_brain_debug_label.text = "\n".join(lines)
+
+## Общий хвост для всех driving-стейтов (PATROL/HUNT/PURSUE) в brain-панели — путь навмеша и
+## статус реверса/обхода, если он идёт. Вынесено, чтобы не дублировать одни и те же 5 строк трижды.
+func _append_nav_debug_lines(lines: Array) -> void:
+	if _nav_agent != null and _nav_agent.is_inside_tree():
+		lines.append("nav: %d pts left" % _nav_agent.get_current_navigation_path().size())
+	if _stuck_reverse_timer > 0.0:
+		lines.append("STUCK: reversing (%.1fs left)" % _stuck_reverse_timer)
+	elif _detour_timer > 0.0:
+		var local_deg: float = rad_to_deg(wrapf(_detour_target_world_yaw - _body.rotation.y, -PI, PI))
+		lines.append("STUCK: detour %.0f° (%.1fs left)" % [local_deg, _detour_timer])

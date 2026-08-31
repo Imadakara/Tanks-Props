@@ -14,7 +14,7 @@ config/name="Tanks&Props"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 
-run/main_scene="res://scenes/bot_arena/BotArena.tscn"
+run/main_scene="res://scenes/bot_arena/KillerArena.tscn"
 
 [display]
 
