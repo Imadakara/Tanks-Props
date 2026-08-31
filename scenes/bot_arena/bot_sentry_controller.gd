@@ -163,7 +163,10 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## pure-pursuit-следования, не замена NavMesh-планирования тем самым реактивным лидаром, от
 ## которого ушли (три коротких луча на кадр несравнимо дешевле прежних 3 непрерывно качающихся
 ## на полную дальность, и не участвуют в выборе курса вообще).
-@export var emergency_brake_range: float = 1.3
+## Длина лучей поднята с 1.3 (по прямому запросу — "чуть больше времени реакции на внезапный
+## объект на пути"): при move_speed*multiplier это даёт заметно больше запаса до контакта, не
+## меняя саму логику тормоза (по-прежнему стоп-стоп, не рулевое решение).
+@export var emergency_brake_range: float = 1.8
 @export var emergency_brake_spread_deg: float = 20.0
 
 ## Антизастрял — страховка на физические заедания (контакт с препятствием под углом, столкновение
@@ -180,6 +183,20 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 @export var stuck_detect_sec: float = 0.6
 @export var stuck_reverse_sec: float = 0.4
 @export var stuck_min_progress: float = 0.3
+
+## Реверс один не спасает от СТАТИЧНО стоящего динамического препятствия (игрок специально встал
+## поперёк маршрута) — навмеш ничего не знает про игрока, путь остаётся тем же, pure pursuit после
+## реверса снова целится в ту же точку старого пути → снова тормоз → снова реверс, бесконечный
+## цикл подъехал-откатился (воспроизведено живьём по прямому запросу — скриншот). После реверса —
+## короткая фаза БОКОВОГО обхода: прямое рулевое отклонение в сторону (не выбор навмеша), тот
+## самый гибрид с лучами, о котором спрашивали. Сторону выбираем зондирующими лучами под
+## stuck_detour_angle_deg вправо/влево на stuck_detour_probe_range (см. _pick_detour_side()) —
+## какая сторона свободна на эту дальность, туда и уходим на stuck_detour_sec, потом возвращаемся
+## к обычному pure pursuit (бот уже физически сбоку от препятствия — навигация сама довернёт
+## обратно к пути/цели, без ручного сброса состояния).
+@export var stuck_detour_sec: float = 1.2
+@export var stuck_detour_angle_deg: float = 55.0
+@export var stuck_detour_probe_range: float = 3.5
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
@@ -200,6 +217,9 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## Текстовая панель "что сейчас в голове у бота" — роль/сложность/стейт/цель/объезд — в правом
 ## верхнем углу экрана (отдельный CanvasLayer поверх HUD, не часть его разметки).
 @export var show_brain_debug: bool = true
+## Кнопка на экране, переключающая enemy_reaction_enabled ниже (по прямому запросу — гонять
+## поведение вживую, катаясь на PlayerTank, без правки кода/рестарта).
+@export var show_reaction_toggle_button: bool = true
 
 ## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
 ## Разница по трём осям: осведомлённость (радиус/угол конуса), реакция (think_interval +
@@ -267,7 +287,25 @@ var _stuck_check_pos: Vector3 = Vector3.ZERO
 var _stuck_check_timer: float = 0.0
 var _stuck_reverse_timer: float = 0.0
 
+## Фаза бокового обхода после реверса (см. @export-блок выше) — _detour_side: -1/+1, тот же знак,
+## что офсет в _cast_ray() (влево/вправо определяется реальной геометрией, не абстрактным
+## компасом — знаку доверяем ровно потому, что и зонд, и рулёжка используют одну и ту же формулу).
+## 0.0 — обход не идёт (либо не начинался, либо обе стороны были заняты при последней попытке).
+var _detour_timer: float = 0.0
+var _detour_side: float = 0.0
+
 var _brain_debug_label: Label
+
+## Тумблер "реакция на противников" (по прямому запросу) — обычная var, НЕ @export: регулируется
+## В РАНТАЙМЕ кнопкой (_setup_reaction_toggle_button()), а не настройкой инстанса при старте.
+## ВЫКЛ означает: бот продолжает домашнее поведение роли (патруль/ожидание), не сканирует и не
+## реагирует на попадания (см. гейты в _think()/_on_damaged()) — но физически всё ещё считает
+## противника препятствием: _check_emergency_brake() смотрит на collision_mask 1|2|4 (tanks
+## входит) и вообще не завязан на _think()/_current_target, так что тормозит перед игроком
+## независимо от этого флага — ровно то разделение "игнорирует как цель, но объезжает как объект",
+## которое просили.
+var enemy_reaction_enabled: bool = true
+var _reaction_toggle_button: Button
 
 ## Статистика для дебаг-панели (по прямому запросу) — обе копятся с _ready(), никогда не
 ## сбрасываются сами (переживают смену стейта/цели, в отличие от вейпоинт-прогресса):
@@ -329,6 +367,8 @@ func _ready() -> void:
 		_setup_path_debug_draw()
 	if show_brain_debug:
 		_setup_brain_debug_label()
+	if show_reaction_toggle_button:
+		_setup_reaction_toggle_button()
 
 ## MEDIUM ничего не меняет (числа выше УЖЕ тюнинг medium). EASY/HARD перезаписывают поля
 ## значениями из _DIFFICULTY_PRESETS — правки конкретных @export-полей в инспекторе этого
@@ -391,6 +431,16 @@ func _physics_process(delta: float) -> void:
 ## Движок выбора стейта — приоритет "вижу цель" НАД любым домашним поведением роли (см.
 ## заголовок файла). Вызывается раз в think_interval_sec, не каждый физ.кадр.
 func _think() -> void:
+	# Тумблер выключен (см. @export-блок про show_reaction_toggle_button) — не сканируем и не
+	# держим цель вообще, сразу домашнее поведение роли. Если бот был в DEFEND в момент выключения
+	# (нажали кнопку прямо во время боя) — выходим из него тем же путём, что при обычной потере
+	# цели, максимум через один think_interval_sec.
+	if not enemy_reaction_enabled:
+		if state == State.DEFEND:
+			_on_target_lost()
+		_ensure_home_state()
+		return
+
 	var visible_target: Node = null
 	if state == State.DEFEND and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target):
 		visible_target = _current_target
@@ -484,6 +534,8 @@ func _yaw_to_world_point(from: Vector3, to_point: Vector3) -> float:
 ## Реакция на попадание — разворот "камеры" (значит и башни) туда, откуда стреляли, в любом
 ## стейте, кроме уже-DEFEND. Если после разворота цель уже в конусе — сразу DEFEND.
 func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
+	if not enemy_reaction_enabled:
+		return
 	if killer == null or not is_instance_valid(killer) or killer == _body:
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
@@ -561,12 +613,25 @@ func _drive_to_waypoint(delta: float) -> void:
 		_movement.ai_turn_input = 0.0
 		return
 
-	# Аварийный реверс уже идёт — досиживаем его, дальше NavigationAgent3D пересчитает путь сам
-	# со следующей (уже сдвинутой реверсом) позиции.
+	# Аварийный реверс уже идёт — досиживаем его, дальше идёт фаза обхода (ниже), а не сразу
+	# обратно к pure pursuit.
 	if _stuck_reverse_timer > 0.0:
 		_stuck_reverse_timer -= delta
 		_movement.ai_move_input = -1.0
 		_movement.ai_turn_input = 0.0
+		return
+
+	# Фаза бокового обхода после реверса (см. @export-блок про stuck_detour_* и _pick_detour_side()
+	# выше) — держим руль зажатым в сторону _detour_side ВЕСЬ stuck_detour_sec (цель пересчитывается
+	# заново каждый кадр от ТЕКУЩЕГО _body.rotation.y, поэтому разница всегда упирается в клэмп —
+	# это намеренно: "держим руль" на фиксированное время даёт дугу-объезд, а не доворот-в-точку-и-
+	# прямо, что было бы, целься мы в фиксированную мировую точку). Тормоз по-прежнему гасит ход
+	# (не рулит), yaw-гейт на move_input здесь НЕ нужен — за это и обходим, что едем боком.
+	if _detour_timer > 0.0:
+		_detour_timer -= delta
+		var detour_yaw_diff: float = deg_to_rad(_detour_side * stuck_detour_angle_deg)
+		_movement.ai_turn_input = clamp(-detour_yaw_diff / 0.5, -1.0, 1.0)
+		_movement.ai_move_input = 1.0 if not _check_emergency_brake() else 0.0
 		return
 
 	if not _has_waypoint_target:
@@ -621,6 +686,12 @@ func _drive_to_waypoint(delta: float) -> void:
 			_stuck_check_timer = 0.0
 			if progress < stuck_min_progress:
 				_stuck_reverse_timer = stuck_reverse_sec
+				# Сторона обхода выбирается ЗДЕСЬ (позиция/поворот на момент обнаружения
+				# застревания), а не после реверса — реверс не меняет rotation.y (turn_input=0
+				# всё это время), так что выбор остаётся валиден к началу фазы обхода. Обе стороны
+				# заняты — _detour_side=0.0, detour-фазу пропускаем в этот раз (см. блок выше).
+				_detour_side = _pick_detour_side()
+				_detour_timer = stuck_detour_sec if _detour_side != 0.0 else 0.0
 	else:
 		_stuck_check_timer = 0.0
 		_stuck_check_pos = _body.global_position
@@ -690,19 +761,40 @@ func _get_lookahead_point() -> Vector3:
 ## заголовке файла про слепой угол одного центрального луча. ЛЮБОЙ хит ближе emergency_brake_range
 ## считается тормозом; никакая сторона/направление здесь не выбирается, только да/нет.
 func _check_emergency_brake() -> bool:
-	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
-	var body_yaw: float = _body.rotation.y
-	var space_state := _body.get_world_3d().direct_space_state
 	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
-		var ray_yaw: float = body_yaw + deg_to_rad(offset_deg)
-		var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
-		var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * emergency_brake_range)
-		query.exclude = [_body]
-		query.collision_mask = 1 | 2 | 4
-		query.collide_with_areas = true
-		if not space_state.intersect_ray(query).is_empty():
+		if _cast_ray(offset_deg, emergency_brake_range):
 			return true
 	return false
+
+## Один луч от корпуса (высота +0.4, тот же принцип, что у аварийного тормоза) под offset_deg от
+## текущего направления корпуса, длиной range. true — что-то на пути; переиспользуется тормозом и
+## зондом обхода (_pick_detour_side()), чтобы не дублировать настройку PhysicsRayQueryParameters3D.
+func _cast_ray(offset_deg: float, range: float) -> bool:
+	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
+	var ray_yaw: float = _body.rotation.y + deg_to_rad(offset_deg)
+	var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
+	var space_state := _body.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * range)
+	query.exclude = [_body]
+	query.collision_mask = 1 | 2 | 4
+	query.collide_with_areas = true
+	return not space_state.intersect_ray(query).is_empty()
+
+## Зонд для фазы обхода (см. @export-блок про stuck_detour_*) — два луча под ±stuck_detour_angle_deg
+## на stuck_detour_probe_range (дальше, чем аварийный тормоз — нужно видеть, реально ли сторона
+## свободна для обхода, не только впритык у носа). Свободна ОДНА сторона — идём туда. Свободны ОБЕ —
+## держим прошлый выбор (не 0, чтобы не дёргаться туда-сюда без причины), иначе (первый раз) влево.
+## Заняты ОБЕ — возвращаем 0.0 (обход не начинаем, см. вызывающий код).
+func _pick_detour_side() -> float:
+	var left_clear: bool = not _cast_ray(-stuck_detour_angle_deg, stuck_detour_probe_range)
+	var right_clear: bool = not _cast_ray(stuck_detour_angle_deg, stuck_detour_probe_range)
+	if left_clear and not right_clear:
+		return -1.0
+	if right_clear and not left_clear:
+		return 1.0
+	if left_clear and right_clear:
+		return _detour_side if _detour_side != 0.0 else -1.0
+	return 0.0
 
 ## Случайная точка внутри круга (равномерно по площади — sqrt(randf()), не randf() напрямую,
 ## иначе точки скучивались бы у центра).
@@ -918,6 +1010,35 @@ func _setup_brain_debug_label() -> void:
 	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
 	get_tree().current_scene.add_child.call_deferred(layer)
 
+## Тот же приём, что и у _setup_brain_debug_label() — отдельный CanvasLayer, не трогаем разметку
+## HUD.tscn. Внизу слева (HUD занимает левый верх, brain debug — правый верх, тут свободно).
+func _setup_reaction_toggle_button() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "BotReactionToggleLayer"
+	var button := Button.new()
+	button.name = "BotReactionToggleButton"
+	button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	button.offset_left = 16.0
+	button.offset_top = -56.0
+	button.offset_right = 236.0
+	button.offset_bottom = -16.0
+	button.pressed.connect(_on_reaction_toggle_pressed)
+	layer.add_child(button)
+	_reaction_toggle_button = button
+	# call_deferred по той же причине, что и у остальных дебаг-узлов (см. _setup_fov_debug_draw) —
+	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
+	get_tree().current_scene.add_child.call_deferred(layer)
+	_update_reaction_toggle_button()
+
+func _on_reaction_toggle_pressed() -> void:
+	enemy_reaction_enabled = not enemy_reaction_enabled
+	_update_reaction_toggle_button()
+
+func _update_reaction_toggle_button() -> void:
+	if _reaction_toggle_button == null:
+		return
+	_reaction_toggle_button.text = "Enemy reaction: ON" if enemy_reaction_enabled else "Enemy reaction: OFF"
+
 func _update_brain_debug_label() -> void:
 	if _brain_debug_label == null:
 		return
@@ -925,7 +1046,7 @@ func _update_brain_debug_label() -> void:
 	lines.append("=== BOT BRAIN ===")
 	lines.append("session: %.1f min   record leg: %.1fs" % [_total_time_sec / 60.0, _max_leg_time_sec])
 	lines.append("role: %s   difficulty: %s" % [Role.keys()[role], Difficulty.keys()[difficulty]])
-	lines.append("state: %s" % State.keys()[state])
+	lines.append("state: %s   reaction: %s" % [State.keys()[state], "ON" if enemy_reaction_enabled else "OFF"])
 	match state:
 		State.DEFEND:
 			if _current_target != null and is_instance_valid(_current_target):
@@ -941,6 +1062,11 @@ func _update_brain_debug_label() -> void:
 				lines.append("to point: %.1fm" % to_point)
 			if _nav_agent != null and _nav_agent.is_inside_tree():
 				lines.append("nav: %d pts left" % _nav_agent.get_current_navigation_path().size())
+			if _stuck_reverse_timer > 0.0:
+				lines.append("STUCK: reversing (%.1fs left)" % _stuck_reverse_timer)
+			elif _detour_timer > 0.0:
+				var side_str: String = "LEFT" if _detour_side < 0.0 else "RIGHT"
+				lines.append("STUCK: detour %s (%.1fs left)" % [side_str, _detour_timer])
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:
