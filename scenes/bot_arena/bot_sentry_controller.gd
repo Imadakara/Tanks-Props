@@ -46,17 +46,27 @@ extends Node
 ##   потери видимой цели (_on_target_lost()), еду к _pursue_target_pos — последней ЖИВОЙ позиции
 ##   цели (запоминается в _last_known_target_pos КАЖДЫЙ кадр, пока цель видна в DEFEND, см.
 ##   _aim_and_fire()). Тот же driving-стек, что PATROL/HUNT. Доехал (или изначально не видел, кого
-##   догонять) → возврат в HUNT. Заметил цель СНОВА по дороге — обычный приоритет "видит → DEFEND"
-##   из _think() срабатывает как обычно (PURSUE не особый случай для этой проверки, только для
-##   _ensure_home_state(), см. её комментарий — PURSUE не перезаписывается домашним поведением
+##   догонять) → переход в SEARCH (см. ниже), НЕ сразу в HUNT (по прямому запросу — "ещё чуть-чуть
+##   поискать потерянную цель поблизости"). Заметил цель СНОВА по дороге — обычный приоритет "видит
+##   → DEFEND" из _think() срабатывает как обычно (PURSUE не особый случай для этой проверки, только
+##   для _ensure_home_state(), см. её комментарий — PURSUE не перезаписывается домашним поведением
 ##   каждый think-тик, завершается только сам, доехав до точки).
+## - SEARCH ("локальный поиск", по прямому запросу, только KILLER) — включается ТОЛЬКО по
+##   завершении PURSUE, промежуточное звено ПЕРЕД возвратом в HUNT. Последовательность "попыток"
+##   вокруг _search_anchor_pos (точка, где PURSUE закончился = последняя видимая позиция цели):
+##   каждая попытка — либо MOVE (доехать до случайной точки в search_radius от anchor, тот же
+##   driving-стек), либо LOOK (постоять и покрутить башней в 1-3 разных направления, без движения,
+##   см. _search_look()). Вероятности и общая механика — см. @export-блок и _decide_search_attempt()
+##   ниже, сейчас настроены только под MEDIUM (по прямому запросу — EASY/HARD пока используют то
+##   же самое, дев-план). Заметил цель СНОВА — тот же общий приоритет "видит → DEFEND", как и в
+##   PURSUE; _ensure_home_state() так же не трогает SEARCH, пока сам не решит выйти в HUNT.
 ## - DEFEND ("оборона позиции") — стоит на месте, башня/взгляд каждый кадр наводятся на ЖИВУЮ
 ##   позицию цели, огонь по готовности прицела/дальности/боекомплекта.
 ## Обнаружил цель в любом "домашнем" стейте → мгновенно (в рамках think_interval_sec) переход в
 ## DEFEND, движение останавливается. Потерял цель (вышла из конуса/дальности/видимости, или
 ## уничтожена) → ACHIEVER возвращается к PATROL как раньше; KILLER уходит в PURSUE (см. выше), из
-## которого попадает в HUNT. Блуждание взгляда продолжается с текущего угла на всех переходах;
-## вейпоинт-прогресс ACHIEVER (индекс/точка в круге) не сбрасывается.
+## которого попадает в SEARCH, а из него — в HUNT. Блуждание взгляда продолжается с текущего угла на
+## всех переходах; вейпоинт-прогресс ACHIEVER (индекс/точка в круге) не сбрасывается.
 ##
 ## Патруль по вейпоинтам — маркеры "WaypointN" (Node3D, ищутся по имени в корне текущей сцены,
 ## сортируются по имени — тот же принцип, что PatrolWaypointN у tank_ai_controller.gd). Каждый
@@ -110,13 +120,19 @@ extends Node
 ##   арены).
 ## - Правка знака `ai_turn_input` в продакшен `tank_ai_controller.gd` — см. дев-план в Bot AI
 ##   Sandbox §8, находка №7.
+## - Вероятности SEARCH (search_move_chance/search_continue_chance/search_return_to_anchor_chance/
+##   search_look_turns_min/max) настроены только под MEDIUM, по прямому запросу. EASY/HARD пока
+##   используют те же значения (не добавлены в _DIFFICULTY_PRESETS вообще) — разумное направление
+##   на будущее: EASY более настойчиво держится anchor (выше search_return_to_anchor_chance, реже
+##   уходит в HUNT), HARD быстрее переключается на глобальный поиск (ниже search_continue_chance) —
+##   не реализовано, только заготовка под точку расширения.
 ##
 ## Уровни сложности (difficulty) — все числовые @export ниже это тюнинг MEDIUM (тот самый
 ## "текущий бот"), EASY/HARD — пресеты в _apply_difficulty_preset(), применяются поверх этих
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -171,6 +187,31 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## stuck_reverse_sec/stuck_detour_sec (те лечат локальное заедание, эта — "может, сама точка
 ## недостижима в принципе", не про физику конкретного столкновения).
 @export var hunt_target_timeout_sec: float = 25.0
+
+## SEARCH — промежуточный локальный поиск после PURSUE, ПЕРЕД возвратом в HUNT (по прямому запросу
+## — "не сразу переходить к обычному поиску целей по карте, а ещё чуть-чуть поискать потерянную
+## цель поблизости"). Последовательность "попыток" вокруг _search_anchor_pos (см. заголовок файла и
+## _decide_search_attempt()); настроено только под MEDIUM (по прямому запросу), см. дев-план про
+## EASY/HARD. Трактовка неоднозначных мест в исходном описании (зафиксировано явно, раз просили
+## задокументировать):
+## - "60%/40% на первой попытке" и "70%/30% на последующих" — РАЗНЫЕ броски: первая попытка всегда
+##   использует search_move_chance (MOVE vs LOOK), а КАЖДАЯ следующая попытка — search_continue_chance
+##   (ещё одна MOVE-попытка vs выход в HUNT; после первой LOOK-попытка больше не предлагается).
+## - "50% вернётся спустя 1-2 поездки" — ОДНОКРАТНЫЙ бросок при входе в SEARCH (не перебрасывается
+##   каждую попытку): решаем, будет ли вообще возврат на anchor в этом заходе SEARCH
+##   (search_return_to_anchor_chance) и после какого числа MOVE-попыток (1 или 2, 50/50) — см.
+##   _enter_search(). Возврат подставляется вместо обычной случайной точки РОВНО один раз.
+@export var search_move_chance: float = 0.6
+@export var search_continue_chance: float = 0.7
+@export var search_return_to_anchor_chance: float = 0.5
+@export var search_radius: float = 7.0  # "неподалёку" — круг вокруг anchor для случайных точек
+@export var search_reach_dist: float = 1.5  # аналог waypoint_reach_dist для search-точек
+@export var search_look_turns_min: int = 1
+@export var search_look_turns_max: int = 3
+## Страховка от вечного цикла — вероятности сами затухают экспоненциально (после N попыток шанс
+## продолжать ~search_continue_chance^N), но не гарантируют завершение. После этого числа попыток
+## подряд — форсированный выход в HUNT, независимо от бросков.
+@export var search_max_attempts: int = 6
 
 ## Объезд препятствий — см. заголовок файла (v3, NavMesh). NavigationAgent3D заводится в _ready(),
 ## тюнинг — прямо на нём (radius/path_desired_distance), не через @export здесь: это не параметры
@@ -372,6 +413,22 @@ var _hunt_target_timer: float = 0.0
 var _pursue_target_pos: Vector3 = Vector3.ZERO
 var _last_known_target_pos: Vector3 = Vector3.ZERO
 
+## SEARCH — см. @export-блок и _decide_search_attempt(). _search_anchor_pos фиксируется один раз
+## при входе (_enter_search()), не меняется по ходу всего захода. _search_attempt считает ЛЮБЫЕ
+## попытки (MOVE и LOOK вместе) для safety-cap (search_max_attempts). _search_moves_since_anchor
+## считает только MOVE-попытки — используется для "вернуться спустя 1-2 поездки". Однократные
+## броски вероятности возврата (_search_will_return_to_anchor/_search_return_after_trips) решаются
+## один раз в _enter_search(), не перебрасываются каждую попытку — см. их описание в @export-блоке.
+var _search_anchor_pos: Vector3 = Vector3.ZERO
+var _search_attempt: int = 0
+var _search_moves_since_anchor: int = 0
+var _search_will_return_to_anchor: bool = false
+var _search_return_after_trips: int = 1
+var _search_returned_to_anchor: bool = false
+var _search_target_pos: Vector3 = Vector3.ZERO
+var _has_search_target: bool = false
+var _search_look_turns_left: int = 0
+
 ## NavigationAgent3D — заводится в _ready() как ребёнок _body (см. заголовок файла). Плюс сам
 ## meш для отрисовки текущего пути (see _update_path_debug_draw()).
 var _nav_agent: NavigationAgent3D
@@ -545,11 +602,14 @@ func _physics_process(delta: float) -> void:
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.PURSUE:
 			# Доехал до последней видимой позиции цели (или не с чем сравнивать — reach_dist от
-			# самого начала) → возврат к поиску; нет зоны охоты (не настроена) — тогда IDLE, а не
-			# HUNT-без-области (см. _detect_hunt_area()/_ensure_home_state()).
+			# самого начала) → SEARCH (локальный поиск рядом, см. заголовок файла), не сразу HUNT.
 			if _drive_to_point(delta, _pursue_target_pos, waypoint_reach_dist):
-				state = State.HUNT if _hunt_area_valid else State.IDLE
-			_wander(delta, true)
+				_enter_search()
+			else:
+				_wander(delta, true)
+				_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.SEARCH:
+			_process_search(delta)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.IDLE:
 			_movement.ai_move_input = 0.0
@@ -593,12 +653,13 @@ func _think() -> void:
 
 ## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). ACHIEVER
 ## с расставленными вейпоинтами патрулирует; KILLER со сконфигурированной зоной охотится (HUNT);
-## иначе — просто стоит и смотрит по кругу (IDLE). PURSUE — ИСКЛЮЧЕНИЕ: не трогаем, пока сам
-## не завершится (доехал до последней видимой позиции цели, см. State.PURSUE в _physics_process())
-## — иначе эта функция, вызываемая КАЖДЫЙ think-тик, пока цель не видна, немедленно перезаписала бы
-## только что начатую погоню обратно на HUNT на первом же тике.
+## иначе — просто стоит и смотрит по кругу (IDLE). PURSUE и SEARCH — ИСКЛЮЧЕНИЕ: не трогаем, пока
+## каждый не завершится сам (PURSUE — доехал до последней видимой позиции цели, см. State.PURSUE в
+## _physics_process(); SEARCH — исчерпал попытки/решил вернуться в HUNT, см. _process_search()) —
+## иначе эта функция, вызываемая КАЖДЫЙ think-тик, пока цель не видна, немедленно перезаписала бы
+## только что начатую погоню/локальный поиск обратно на HUNT на первом же тике.
 func _ensure_home_state() -> void:
-	if state == State.PURSUE:
+	if state == State.PURSUE or state == State.SEARCH:
 		return
 	var desired: State
 	if role == Role.ACHIEVER and not _waypoints.is_empty():
@@ -931,6 +992,8 @@ func _current_drive_target() -> Vector3:
 			return _hunt_target_pos
 		State.PURSUE:
 			return _pursue_target_pos
+		State.SEARCH:
+			return _search_target_pos if _has_search_target else _body.global_position
 		_:
 			return _body.global_position
 
@@ -1107,6 +1170,112 @@ func _pick_new_hunt_target() -> void:
 	_hunt_target_pos = hunt_area_center + Vector3(x, 0.0, z)
 	_has_hunt_target = true
 
+## Точка входа в SEARCH (см. заголовок файла) — вызывается РОВНО ОДИН РАЗ, когда PURSUE доезжает
+## до последней видимой позиции цели. Фиксирует anchor и делает ОДНОКРАТНЫЕ броски вероятности
+## "будет ли возврат на anchor в этом заходе" и "после какого числа поездок" (см. @export-блок про
+## search_return_to_anchor_chance) — они НЕ перебрасываются на каждой попытке.
+func _enter_search() -> void:
+	state = State.SEARCH
+	_search_anchor_pos = _pursue_target_pos
+	_search_attempt = 0
+	_search_moves_since_anchor = 0
+	_search_returned_to_anchor = false
+	_search_will_return_to_anchor = randf() < search_return_to_anchor_chance
+	_search_return_after_trips = 1 if randf() < 0.5 else 2
+	_has_search_target = false
+	_decide_search_attempt()
+
+## Решает содержимое ОДНОЙ попытки SEARCH — вызывается при входе в SEARCH и каждый раз, когда
+## предыдущая попытка завершается (см. _process_search()). Первая попытка (_search_attempt==0)
+## всегда бросает search_move_chance (MOVE vs LOOK); каждая следующая — search_continue_chance
+## (ещё одна MOVE-попытка vs выход в HUNT — LOOK на попытках после первой не предлагается, см.
+## @export-блок про трактовку исходного описания). MOVE-попытка либо едет в случайную точку рядом
+## с anchor, либо (если подошла очередь по однократному броску из _enter_search()) — на сам anchor.
+func _decide_search_attempt() -> void:
+	var do_move: bool
+	if _search_attempt == 0:
+		do_move = randf() < search_move_chance
+	else:
+		do_move = randf() < search_continue_chance
+		if not do_move:
+			_exit_search_to_hunt()
+			return
+
+	if do_move:
+		var target: Vector3
+		if _search_will_return_to_anchor and not _search_returned_to_anchor \
+				and _search_moves_since_anchor >= _search_return_after_trips:
+			target = _search_anchor_pos
+			_search_returned_to_anchor = true
+			_search_moves_since_anchor = 0
+		else:
+			target = _pick_random_point_near(_search_anchor_pos, search_radius)
+		_search_target_pos = target
+		_has_search_target = true
+		_nav_agent.target_position = _search_target_pos
+	else:
+		_has_search_target = false
+		_search_look_turns_left = randi_range(search_look_turns_min, search_look_turns_max)
+		_pick_new_wander_target(false)  # первый угол LOOK-попытки — сразу, "в разные стороны"
+
+## Физика одного физ.кадра SEARCH — либо едем (MOVE, тот же _drive_to_point(), что PATROL/HUNT),
+## либо стоим и крутим башней (LOOK, см. _search_look()). Завершение текущей попытки → следующая
+## решается заново в _decide_search_attempt(), либо safety-cap обрывает в HUNT.
+func _process_search(delta: float) -> void:
+	if _has_search_target:
+		var arrived: bool = _drive_to_point(delta, _search_target_pos, search_reach_dist)
+		_wander(delta, true)
+		if arrived:
+			_has_search_target = false
+			_search_moves_since_anchor += 1
+			_advance_search_attempt()
+	else:
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
+		if _search_look(delta):
+			_advance_search_attempt()
+
+## Общий "попытка закончена" хвост — считает попытку, страхует от вечного цикла
+## (search_max_attempts), иначе решает следующую попытку заново.
+func _advance_search_attempt() -> void:
+	_search_attempt += 1
+	if _search_attempt >= search_max_attempts:
+		_exit_search_to_hunt()
+	else:
+		_decide_search_attempt()
+
+## Выход из SEARCH — HUNT, если зона охоты настроена, иначе IDLE (тот же выбор, что и у PURSUE, см.
+## State.PURSUE в _physics_process()).
+func _exit_search_to_hunt() -> void:
+	state = State.HUNT if _hunt_area_valid else State.IDLE
+	_has_hunt_target = false
+
+## LOOK-попытка SEARCH — переиспользует ТЕ ЖЕ поля, что обычный _wander() (_look_yaw/_wander_holding/
+## _wander_hold_timer/_pick_new_wander_target()), просто с собственным счётчиком завершения
+## (_search_look_turns_left, выставлен в _decide_search_attempt() ДО первого вызова этой функции —
+## первый угол уже выбран там). Возвращает true, когда отсмотрели заданное число раз.
+func _search_look(delta: float) -> bool:
+	if _wander_holding:
+		_wander_hold_timer -= delta
+		if _wander_hold_timer <= 0.0:
+			_search_look_turns_left -= 1
+			if _search_look_turns_left <= 0:
+				return true
+			_pick_new_wander_target(false)
+		return false
+	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
+	if aim_diff_deg <= _WANDER_ARRIVE_TOLERANCE_DEG:
+		_wander_holding = true
+		_wander_hold_timer = randf_range(wander_hold_min_sec, wander_hold_max_sec)
+	return false
+
+## Случайная точка в круге радиуса radius вокруг center (равномерно по площади — sqrt(randf()), тот
+## же приём, что и _pick_new_waypoint_target()).
+func _pick_random_point_near(center: Vector3, radius: float) -> Vector3:
+	var angle: float = randf() * TAU
+	var dist: float = sqrt(randf()) * radius
+	return center + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
 ## Node, у Node3D-детей под ним не было бы осмысленной мировой трансформации) — так веер сам
@@ -1150,6 +1319,8 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(0.95, 0.7, 0.1, 0.24)  # жёлто-оранжевый — "охотится", между PATROL и DEFEND
 		State.PURSUE:
 			fill_color = Color(1.0, 0.45, 0.05, 0.26)  # ближе к красному — уже почти нашёл, погоня
+		State.SEARCH:
+			fill_color = Color(0.95, 0.25, 0.55, 0.26)  # розовый — между PURSUE и HUNT, свой цвет
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
@@ -1243,7 +1414,8 @@ func _setup_path_debug_draw() -> void:
 func _update_path_debug_draw() -> void:
 	var mesh: ImmediateMesh = _path_debug_mesh.mesh
 	mesh.clear_surfaces()
-	var driving: bool = state == State.PATROL or state == State.HUNT or state == State.PURSUE
+	var driving: bool = state == State.PATROL or state == State.HUNT or state == State.PURSUE \
+		or (state == State.SEARCH and _has_search_target)
 	if not driving or _nav_agent == null or not _nav_agent.is_inside_tree():
 		return
 	var path: PackedVector3Array = _nav_agent.get_current_navigation_path()
@@ -1380,6 +1552,16 @@ func _update_brain_debug_label() -> void:
 		State.PURSUE:
 			lines.append("last seen at: %.1fm" % _body.global_position.distance_to(_pursue_target_pos))
 			_append_nav_debug_lines(lines)
+		State.SEARCH:
+			lines.append("attempt %d/%d   anchor: %.1fm" % [
+				_search_attempt + 1, search_max_attempts,
+				_body.global_position.distance_to(_search_anchor_pos)
+			])
+			if _has_search_target:
+				lines.append("to point: %.1fm" % _body.global_position.distance_to(_search_target_pos))
+				_append_nav_debug_lines(lines)
+			else:
+				lines.append("looking around (%d turns left)" % _search_look_turns_left)
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

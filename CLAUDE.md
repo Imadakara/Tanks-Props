@@ -181,12 +181,15 @@ behavior is `PATROL` (fixed waypoints around the objective); KILLER's is `HUNT` 
 random points across a rectangular area auto-detected from the `Ground` node's `BoxShape3D` AABB at
 `_ready()` (no per-map hardcoding needed) — and on losing sight of a target it goes to `PURSUE` (the
 last position it was actually SEEN at, not just its last known node position — those differ by up to
-one `think_interval_sec`, which mattered enough to be a live-found bug, §14.3) before returning to
-`HUNT`. The whole driving stack (NavMesh/pure pursuit/brake/stuck-detector/gap-scan-detour) is shared
-across `PATROL`/`HUNT`/`PURSUE` through one parameterized `_drive_to_point(delta, target_pos,
-reach_dist)` — don't reimplement it per-state. The test bot on `BotArena.tscn` defaults to ACHIEVER;
-switching to KILLER for testing is manual (`role = Role.KILLER`, inspector or script), not a scene
-toggle.
+one `think_interval_sec`, which mattered enough to be a live-found bug, §14.3), then `SEARCH` (a
+probabilistic sequence of a few MOVE/LOOK attempts near where the target was lost — by request, "don't
+immediately give up and go back to scanning the whole map" — tuned for MEDIUM only right now, see
+§14.8 for the exact probabilities and the ambiguity calls made turning the request into code) before
+finally falling back to `HUNT`. The whole driving stack (NavMesh/pure pursuit/brake/stuck-detector/
+gap-scan-detour) is shared across `PATROL`/`HUNT`/`PURSUE`/`SEARCH` through one parameterized
+`_drive_to_point(delta, target_pos, reach_dist)` — don't reimplement it per-state. The test bot on
+`BotArena.tscn` defaults to ACHIEVER; switching to KILLER for testing is manual (`role =
+Role.KILLER`, inspector or script), not a scene toggle.
 
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
 request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the
