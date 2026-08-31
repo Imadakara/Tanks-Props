@@ -1,0 +1,55 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scenes/main_menu/main_menu.gd" id="1_isws5"]
+
+[node name="MainMenu" type="Control" unique_id=1740177909]
+layout_mode = 3
+anchors_preset = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_isws5")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1211035229]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.08, 0.09, 0.11, 1)
+
+[node name="TitleLabel" type="Label" parent="." unique_id=2124283818]
+layout_mode = 0
+anchor_right = 1.0
+offset_top = 60.0
+offset_bottom = 140.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 48
+text = "TANK PROP HUNT"
+horizontal_alignment = 1
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=133404442]
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -190.0
+offset_top = -104.0
+offset_right = 190.0
+offset_bottom = 104.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 20
+
+[node name="AchieverButton" type="Button" parent="VBoxContainer" unique_id=109292456]
+custom_minimum_size = Vector2(380, 56)
+layout_mode = 2
+text = "Тестовая арена — ACHIEVER"
+
+[node name="KillerButton" type="Button" parent="VBoxContainer" unique_id=1190121093]
+custom_minimum_size = Vector2(380, 56)
+layout_mode = 2
+text = "Тестовая арена — KILLER"
+
+[node name="MainButton" type="Button" parent="VBoxContainer" unique_id=2078981241]
+custom_minimum_size = Vector2(380, 56)
+layout_mode = 2
+text = "Основная карта (5×5)"

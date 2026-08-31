@@ -27,12 +27,10 @@ gotchas of that MCP server; don't rediscover them by trial and error.
 — its correctness is established the same way (live `run_script` assertions on state, not manual
 play).
 
-**Current `run/main_scene`** (`project.godot`) points at `res://scenes/bot_arena/KillerArena.tscn`
-(an isolated bot-AI sandbox for the KILLER role, see below and the vault's Bot AI Sandbox doc), not
-at the production game (`res://scenes/main/Main.tscn`) — this is deliberate for the current `Bot`
-branch, not a misconfiguration. See "Map inventory" further down for the other two scenes
-(`BotArena.tscn`, ACHIEVER; `Main.tscn`, production) — point `run/main_scene` at whichever one you
-actually want to run.
+**Current `run/main_scene`** (`project.godot`) points at `res://scenes/main_menu/MainMenu.tscn` — a
+plain three-button launcher (by request), not any of the actual game/test scenes directly. Pick one
+from there, or see "Map inventory" further down and point `run/main_scene` at a specific scene (or
+pass `scene:` to `run_project`) to skip the menu when iterating on one map.
 
 ## Architecture
 
@@ -196,17 +194,19 @@ scene file itself (not the runtime default), it has 6 extra `ObstacleN` static b
 previously-empty parts of the 72×72 map (the original 5 all cluster in one small patch near
 `Objective`), and `PlayerTank`/`BotTank` spawn at opposite corners instead of a few meters apart —
 confirmed live: on a fresh load the bot drove clear across the map on its own and found the player
-(`HUNT`→`DEFEND`) with zero manual intervention. This IS `run/main_scene` now (see above) — to run
-`BotArena.tscn` instead, either point `run/main_scene` at it or pass `scene:
-"res://scenes/bot_arena/BotArena.tscn"` to `run_project` for a one-off run without touching
-`project.godot`.
+(`HUNT`→`DEFEND`) with zero manual intervention. Launch it explicitly (`run_project` with `scene:
+"res://scenes/bot_arena/KillerArena.tscn"`, or point `run/main_scene` at it) — it's not the default
+scene, see below.
 
-### Map inventory (by request — the project now has three distinct scenes, don't confuse them)
+### Map inventory (by request — the project now has four distinct scenes, don't confuse them)
+
+`run/main_scene` is `scenes/main_menu/MainMenu.tscn` (by request) — a plain `Control` scene, three
+buttons, each just calls `get_tree().change_scene_to_file()` at one of the scenes below; carries no
+game logic of its own. The other three are unchanged, just no longer the default — launch any of
+them directly via `run_project`'s `scene:` param (or repoint `run/main_scene`) to skip the menu:
 
 - `scenes/main/Main.tscn` — the actual production game: 5×5, two teams, `Objective`/`MatchManager`,
-  the real `TankAIController` brain. Not currently `run/main_scene` on the `Bot` branch (see above).
+  the real `TankAIController` brain.
 - `scenes/bot_arena/BotArena.tscn` — bot-AI sandbox with an `Objective` and an ACHIEVER test bot
-  (patrols/defends around it). Not currently `run/main_scene`, launch explicitly via `run_project`'s
-  `scene:` param when you want it, or repoint `run/main_scene`.
+  (patrols/defends around it).
 - `scenes/bot_arena/KillerArena.tscn` — bot-AI sandbox for the KILLER role, described above.
-  Currently `run/main_scene`.
