@@ -26,6 +26,10 @@ what the code does, including reasoning behind changes that were tried and rever
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
   prefab (circle + high dummy) placed in every map's empty corners, its drop/pickup/anti-overlap
   rules, per-map placement, `GameConfig` defaults.
+- `Tank_Prop_Hunt_Disguise.md` — **current-state reference for disguise**: activation (player-only,
+  key **M**), the `GameConfig`-driven prop (meta-game picks it later), x-ray-silhouette player view,
+  full break-trigger list incl. the two enemy-relative rules, and the bot's `_can_see()` blindness
+  gate.
 
 ## Running / testing
 
@@ -80,11 +84,29 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   needs to override `GameConfig.reload_duration_sec` from its own root's `_ready()` (which Godot
   always runs *after* every child, including this state machine, is already ready — caching would
   use a stale value); no current map does this, both use the shared default (3s).
-- `DisguiseController` / `CollisionDetector` — slot occupancy and the "hit while disguised by a
-  moving tank" trigger. **Currently orphaned everywhere**: neither map has `DisguiseSlot` props
-  placed on it (the old, retired production map used to), and `TankAIController` has no
-  disguise-seeking logic at all — the mechanic is implemented and player-usable, just not exercised
-  by any current map or by bots. Accepted gap, not scheduled.
+- `DisguiseController` — the disguise mechanic (full detail: `Tank_Prop_Hunt_Disguise.md`). Live and
+  player-usable: key **M** anywhere → tank looks like a `GameConfig`-configured obstacle prop (brown
+  box for MVP; the meta-game picks the prop later — no per-map `DisguiseSlot` markers, that system is
+  deleted). The disguising player sees the prop with an x-ray silhouette of their tank through it;
+  everyone else sees the prop only. Bots never activate or seek disguise. A bot **won't acquire** a
+  disguised enemy (`TankAIController._can_see()` returns false in `_scan_for_target()` while the
+  target's `TankStateMachine` is `DISGUISED`, unless `GameConfig.ai_can_see_disguised_tanks`) — but a
+  bot **already in `DEFEND` on that tank keeps firing** through the disguise (`_can_see(target,
+  ignore_disguise=true)` in `_think()`): disguising while already someone's target doesn't save you.
+  Break triggers: turret turn / move /
+  fire / moving-tank bump (`CollisionDetector`, below) / **projectile hit** (`HealthComponent.damaged`
+  → `break_disguise("projectile_hit")`; an `invincible` tank absorbs the shell so no `damaged`, no
+  break) / **enemy within `GameConfig.disguise_enemy_proximity_break_dist` of the tank collider**
+  (when the prop is smaller than the tank on any axis) / **enemy entering the prop's volume** (when
+  it's larger — the MVP prop's case; the prop collider itself is never a physics body). The moment disguise drops for any
+  reason, the bot re-acquires next think-tick. For bot pathfinding a disguised tank carries a
+  prop-sized `DisguiseObstacle` Area3D on layer `disguise_obstacle` (4): the AI's gap-scan detour
+  rays see the full prop footprint, but the emergency brake does not — so a bot with a disguised
+  tank on its committed route drives up to the real hull, contact breaks the disguise, bot aggros
+  (no A* re-plan; the static navmesh never held any tank).
+- `CollisionDetector` — Area3D on the tank body; a *moving* tank of any team touching a `DISGUISED`
+  tank breaks its disguise (`break_disguise("collision")`). Independent of the enemy-relative rules
+  above.
 - `HealthComponent` — multi-hit (`max_hits`, **default 2**, restoring the "two hits to kill, red
   paint job after the first" rule as a project-wide default), reused verbatim for the destructible
   objective, not tank-specific. `attackers_only` lets an objective ignore friendly fire;
@@ -314,8 +336,10 @@ gap-scan detour), two roles (`ACHIEVER`/`KILLER` — `ACHIEVER` self-degrades to
 init if the map has no objective), three difficulty tiers, and integrations with the shared
 `RespawnController`/`HealthComponent`/`AmmoComponent` (death state, alert-on-hit, ballistic aim,
 ammo-crate seeking). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
-name- or scene-structure-specific, so the same file works unmodified on any map. Known accepted
-gap: no disguise-seeking logic (see `DisguiseController` above).
+name- or scene-structure-specific, so the same file works unmodified on any map. Bots don't activate
+or seek disguise; `_can_see()` hides a `DISGUISED` enemy from *acquisition* but not from a bot
+already fighting it (`ignore_disguise` param — see `DisguiseController` above and
+`Tank_Prop_Hunt_Disguise.md`).
 
 **Full architecture reference — states, priority ladder, driving-stack internals, per-tier
 parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_Prop_Hunt_Bot_AI_Sandbox.md`),

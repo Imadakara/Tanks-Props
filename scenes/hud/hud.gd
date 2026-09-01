@@ -276,7 +276,7 @@ func _on_state_changed(_old_state, _new_state) -> void:
 func _update_state_label() -> void:
 	match _fsm.state:
 		TankStateMachineScript.State.NORMAL:
-			_state_label.text = "Статус: обычное"
+			_state_label.text = "Статус: обычное  |  Маскировка: M"
 		TankStateMachineScript.State.DISGUISED:
 			_state_label.text = "Статус: маскировка (%.1f с)" % _fsm.get_node("DisguiseTimer").time_left
 		TankStateMachineScript.State.DISGUISE_COOLDOWN:

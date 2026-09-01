@@ -4,7 +4,15 @@ extends Node
 ## `TeamArenaMap.tscn` (обе — шаблоны игровых режимов, см. корневой CLAUDE.md "Map inventory"),
 ## `team_spawner.gd` включает `enabled=true` при спавне. Ранее в проекте существовал отдельный,
 ## более простой продакшен-ИИ с тем же именем файла (включая свой Patrol/Disguise-цикл) — удалён
-## целиком, не переиспользован (см. git log); см. Дев-план ниже про орфанную маскировку.
+## целиком, не переиспользован (см. git log).
+##
+## Маскировка: бот её НЕ активирует (точка входа только у игрока, см. disguise_controller.gd) и
+## НЕ ищет. _can_see() возвращает false на замаскированного противника при ПЕРВИЧНОМ обнаружении
+## (_scan_for_target()) — новую замаскированную цель бот не берёт. НО цель, включившую маскировку
+## уже будучи под прицелом (бот в DEFEND по ней), бот НЕ теряет — _can_see(target, ignore_disguise=
+## true) в _think() держит её, бот продолжает огонь по «имитации». Гейт снимается мгновенно на
+## сбросе маскировки. GameConfig.ai_can_see_disguised_tanks=true отключает гейт целиком.
+## Детали правил маскировки/сброса — Tank_Prop_Hunt_Disguise.md в vault.
 ##
 ## Модель обзора (v2, по прямому запросу — "как в других играх"): бот ВСЕГДА видит то, что перед
 ## корпусом, ПЛЮС то, куда сейчас физически повёрнута башня. Два независимых конуса, оба нужны
@@ -195,6 +203,8 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## оттуда напрямую (снаряд ещё не существует до момента выстрела, инстанцировать только ради
 ## константы — лишняя возня), дублируем с явной привязкой здесь же в комментарии.
 const _PROJECTILE_GRAVITY := 9.8
+## Для чтения состояния маскировки чужого танка в _can_see() (см. _enemy_is_disguised()).
+const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
 ## [ДОБАВЛЕНО, по прямому запросу — "два набора ботов, тестовый и продакшен, это путаница, боты
 ## должны быть одной универсальной системой, деплоящейся на любую карту"] Раньше этот компонент
@@ -631,10 +641,11 @@ var _brain_debug_label: Label
 ## В РАНТАЙМЕ кнопкой (_setup_reaction_toggle_button()), а не настройкой инстанса при старте.
 ## ВЫКЛ означает: бот продолжает домашнее поведение роли (патруль/ожидание), не сканирует и не
 ## реагирует на попадания (см. гейты в _think()/_on_damaged()) — но физически всё ещё считает
-## противника препятствием: _check_emergency_brake() смотрит на collision_mask 1|2|4 (tanks
-## входит) и вообще не завязан на _think()/_current_target, так что тормозит перед игроком
-## независимо от этого флага — ровно то разделение "игнорирует как цель, но объезжает как объект",
-## которое просили.
+## противника препятствием: _check_emergency_brake() смотрит на слои environment+tanks и вообще не
+## завязан на _think()/_current_target, так что тормозит перед игроком независимо от этого флага —
+## ровно то разделение "игнорирует как цель, но объезжает как объект", которое просили. Габарит
+## объекта имитации замаскированного танка (слой disguise_obstacle) учитывает _scan_gap() при
+## выборе объезда — см. _cast_ray_dist()/_check_emergency_brake().
 var enemy_reaction_enabled: bool = true
 var _reaction_toggle_button: Button
 
@@ -1035,7 +1046,10 @@ func _think() -> void:
 		return
 
 	var visible_target: Node = null
-	if state == State.DEFEND and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target):
+	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из DEFEND не
+	# выпадает — бот продолжает огонь по «имитации» (см. _can_see()). Первичное обнаружение ниже
+	# (_scan_for_target) маскировку по-прежнему уважает — новую замаскированную цель бот не берёт.
+	if state == State.DEFEND and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target, true):
 		visible_target = _current_target
 	else:
 		visible_target = _scan_for_target()
@@ -1271,6 +1285,14 @@ func _scan_for_target() -> Node:
 			return other
 	return null
 
+## Замаскирован ли этот вражеский танк под объект-препятствие прямо сейчас (см. disguise_controller.gd).
+## GameConfig.ai_can_see_disguised_tanks=true — гейт отключён, всегда false.
+func _enemy_is_disguised(t: Node) -> bool:
+	if GameConfig.ai_can_see_disguised_tanks:
+		return false
+	var sm: Node = t.get_node_or_null("TankStateMachine")
+	return sm != null and sm.state == TankStateMachineScript.State.DISGUISED
+
 ## Триггер обнаружения — попадание в ЛЮБОЙ из двух конусов (v2, см. заголовок файла): ГЛАВНЫЙ
 ## (look_cone_deg, жёстко на направлении корпуса — "видит перед собой" безусловно) ИЛИ
 ## ПРИЦЕЛЬНЫЙ (secondary_cone_deg вокруг РЕАЛЬНОГО угла башни _turret.rotation.y — "или в
@@ -1284,8 +1306,22 @@ func _scan_for_target() -> Node:
 ## коллайдером — обычно ничего не находит по пути (result.is_empty()==true трактуется как "цель НЕ
 ## заслонена"), так что _can_see() продолжала бы возвращать true на труп. DEFEND не выходил бы
 ## никогда — стрелял бы в неподвижную точку до respawn'а цели. Дешёвая проверка, до всех остальных.
-func _can_see(target: Node3D) -> bool:
+## ignore_disguise=true — гейт маскировки НЕ применяется: используется ТОЛЬКО для удержания уже
+## захваченной цели в DEFEND (см. _think()). Смысл: если танк включил маскировку, УЖЕ будучи чьей-то
+## целью, — «его дурят раскрыто», бот продолжает вести огонь, зная, что коробка это имитация. Для
+## первичного обнаружения (_scan_for_target()) и реакции на обстрел (_on_damaged()) маскировка
+## по-прежнему действует (ignore_disguise=false по умолчанию).
+func _can_see(target: Node3D, ignore_disguise: bool = false) -> bool:
 	if not target.visible:
+		return false
+	# Маскировка (disguise_controller.gd): пока вражеский танк замаскирован под объект-препятствие,
+	# бот его НЕ видит — ни в главном конусе, ни в прицельном, ни как killer при обстреле — ЕСЛИ бот
+	# не держал его целью до маскировки (ignore_disguise=false). Сброс маскировки (по любой причине,
+	# в т.ч. правилам приближения из disguise_controller.gd) снимает этот гейт мгновенно: со
+	# следующего think-тика _can_see() снова true и обычный приоритет «вижу цель → DEFEND»
+	# срабатывает. GameConfig.ai_can_see_disguised_tanks=true отключает гейт целиком («читерский»
+	# режим для отладки/калибровки).
+	if not ignore_disguise and _enemy_is_disguised(target):
 		return false
 	var to_target: Vector3 = target.global_position - _turret.global_position
 	var dist: float = to_target.length()
@@ -1733,24 +1769,38 @@ func _get_lookahead_point(target_pos: Vector3) -> Vector3:
 ## отдельную, широкую попытку добавить сюда ещё пару лучей и её откат. ЛЮБОЙ хит ближе
 ## emergency_brake_range считается тормозом; сторона/направление здесь не выбирается, только да/нет
 ## (сторону/угол объезда решает _scan_gap()).
+## Битовые значения слоёв (Godot: слой N = 1<<(N-1)). environment=1, tanks=2, projectiles=4,
+## disguise_obstacle=8 (см. project.godot/[layer_names]).
+const _LAYER_ENVIRONMENT := 1
+const _LAYER_TANKS := 2
+const _LAYER_PROJECTILES := 4
+const _LAYER_DISGUISE_OBSTACLE := 8
+
+## Аварийный тормоз кастует по прежнему набору (environment+tanks+projectiles) БЕЗ нового слоя
+## disguise_obstacle: тормозим только от того, во что реально врежемся. Замаскированный танк, стоящий
+## прямо на уже построенном маршруте, из-за этого не «отталкивает» бота на краю габарита коробки —
+## бот доезжает до его корпуса, ловит контакт и маскировка спадает (см. disguise_controller.gd /
+## collision_detector.gd). Габарит коробки участвует только в _scan_gap() ниже — при выборе стороны
+## объезда, не при экстренной остановке.
 func _check_emergency_brake() -> bool:
 	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
-		if _cast_ray(offset_deg, emergency_brake_range):
+		if _cast_ray(offset_deg, emergency_brake_range, _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES):
 			return true
 	return false
 
 ## Один луч от корпуса (высота +0.4, тот же принцип, что у аварийного тормоза), возвращает
 ## РАССТОЯНИЕ до хита (или range, если ничего не поймал) — не просто bool, нужно для _scan_gap()
 ## (сравнение с порогом клиренса), для bool-использования (_check_emergency_brake()) достаточно
-## сравнить результат с range.
-func _cast_ray_dist(offset_deg: float, range: float) -> float:
+## сравнить результат с range. mask по умолчанию — environment+tanks+disguise_obstacle: _scan_gap()
+## огибает и габарит объекта имитации замаскированного танка; тормоз передаёт свой mask (см. выше).
+func _cast_ray_dist(offset_deg: float, range: float, mask: int = _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES | _LAYER_DISGUISE_OBSTACLE) -> float:
 	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
 	var ray_yaw: float = _body.rotation.y + deg_to_rad(offset_deg)
 	var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
 	var space_state := _body.get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * range)
 	query.exclude = [_body]
-	query.collision_mask = 1 | 2 | 4
+	query.collision_mask = mask
 	query.collide_with_areas = true
 	var result: Dictionary = space_state.intersect_ray(query)
 	if result.is_empty():
@@ -1759,8 +1809,8 @@ func _cast_ray_dist(offset_deg: float, range: float) -> float:
 
 ## bool-обёртка над _cast_ray_dist() — true, если что-то есть БЛИЖЕ range (используется тормозом,
 ## где нужен только да/нет, не расстояние).
-func _cast_ray(offset_deg: float, range: float) -> bool:
-	return _cast_ray_dist(offset_deg, range) < range
+func _cast_ray(offset_deg: float, range: float, mask: int = _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES | _LAYER_DISGUISE_OBSTACLE) -> bool:
+	return _cast_ray_dist(offset_deg, range, mask) < range
 
 ## Скан веером (см. @export-блок про stuck_detour_scan_*) — ищет РЕАЛЬНО открытый проём вместо
 ## гадания по двум фиксированным углам (см. её историю в @export-блоке). Кастует лучи от
