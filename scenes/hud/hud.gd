@@ -1,12 +1,14 @@
 extends CanvasLayer
 ## HUD — минимальный HUD игрока (ТЗ §10): за какую команду игрок в этом раунде (пост-ревью),
-## боезапас, статус танка с таймерами, прогресс objective, финальная стадия, экран результата.
-## Плюс общий блок матча (верх-центр, одинаков на всех картах): строка 1 — «Раунд N/M | MM:SS»,
-## строка 2 — общий счёт, зависит от MatchState.match_mode (TARGET_OBJECTIVE — серия раундов;
-## TEAM_ARENA — убийства команд в раунде + серия), строка 3 — обратный отсчёт до респауна игрока
-## (видна только пока идёт). Подписка на сигналы вместо поллинга — кроме
-## отображения "сколько осталось" у Timer-нод и блока матча (читается из MatchState каждый кадр:
-## его источники резолвятся лениво, см. _resolve_*).
+## боезапас, статус танка с таймерами, финальная стадия, экран результата.
+## Плюс общий блок матча (верх-центр, одинаков на всех картах):
+##   строка 1 — «Раунд N/M | MM:SS»;
+##   строка 2 — общий счёт по MatchState.match_mode (TARGET_OBJECTIVE — серия раундов;
+##             TEAM_ARENA — убийства команд в раунде + серия);
+##   строка 3 — «Цель: N/M попаданий», здоровье objective-цели (только TARGET_OBJECTIVE);
+##   строка 4 — «Респаун через N с», обратный отсчёт до респауна игрока (видна только пока идёт).
+## Подписка на сигналы вместо поллинга — кроме отображения "сколько осталось" у Timer-нод и
+## блока матча (читается из MatchState/узлов каждый кадр: источники резолвятся лениво, см. _resolve_*).
 ## RestartButton (пост-ревью) — появляется вместе с ResultLabel по round_ended, снимает
 ## захват мыши (иначе по кнопке нечем кликнуть), рестартует сцену. Смену сторон (инверсию
 ## MatchState.player_team) делает только в режимах с team_spawner (TARGET_OBJECTIVE) — на арене
@@ -32,6 +34,7 @@ var _ammo: Node
 var _respawn: Node  # RespawnController танка игрока — для строки обратного отсчёта до респауна
 var _match_manager: Node
 var _score_manager: Node
+var _objective_health: Node  # HealthComponent objective-цели (режим TARGET_OBJECTIVE), резолвится лениво
 var _round_timer: Timer
 var _barrel: Node3D
 var _camera: Camera3D
@@ -55,15 +58,11 @@ func _ready() -> void:
 		_barrel = tank.get_node("Turret/Barrel")
 		_camera = tank.get_node("CameraRig/Camera3D")
 
-	# MatchManager/ScoreManager/RoundTimer резолвятся лениво (см. _resolve_*): бот-арены заводят
-	# их из кода уже ПОСЛЕ этого _ready(). Продакшен подключится тут же (узлы статические).
+	# MatchManager/ScoreManager/RoundTimer/objective резолвятся лениво (см. _resolve_*) и
+	# поллятся: бот-арены заводят эти узлы из кода уже ПОСЛЕ этого _ready(), а objective
+	# может освободиться при уничтожении. Продакшен подключится к MatchManager тут же (узел статический).
 	_resolve_match_manager()
 	_score_manager = get_tree().current_scene.get_node_or_null("ScoreManager")
-
-	var objective_health: Node = get_tree().current_scene.get_node_or_null("Map/DestructibleObjective/HealthComponent")
-	if objective_health != null:
-		objective_health.damaged.connect(_on_objective_damaged)
-		_on_objective_damaged(0, GameConfig.objective_hits_required)
 
 	_final_stage_label.visible = false
 	_restart_button.visible = false
@@ -74,6 +73,7 @@ func _process(_delta: float) -> void:
 		_update_state_label()
 	_update_round_line()
 	_update_match_score_line()
+	_update_objective_line()
 	_update_respawn_line()
 	var mm := _resolve_match_manager()
 	if mm != null and mm._final_stage_active:
@@ -149,7 +149,6 @@ func _update_round_line() -> void:
 ## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — только серия раундов; TEAM_ARENA —
 ## убийства команд в текущем раунде И через разделитель серия раундов.
 func _update_match_score_line() -> void:
-	_objective_label.visible = MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE
 	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
 		var sm := _resolve_score_manager()
 		var atk: int = sm.attack_kills if sm != null else 0
@@ -162,8 +161,36 @@ func _update_match_score_line() -> void:
 		_score_label.text = "По раундам — Ты %d : %d Противник" % \
 			[MatchState.series_wins_you, MatchState.series_wins_enemy]
 
-## Строка 3 (верх-центр, под счётом): обратный отсчёт до респауна игрока. Видна ТОЛЬКО пока
-## RespawnController.time_until_respawn() > 0 (танк мёртв, таймер идёт) — иначе скрыта.
+## HealthComponent objective-цели: продакшен — Map/DestructibleObjective, арена —
+## NavigationRegion3D/Objective; ищем оба по имени. is_instance_valid: цель освобождается при
+## уничтожении (free_on_destroy=true), после чего ссылка висячая.
+func _resolve_objective_health() -> Node:
+	if _objective_health != null and is_instance_valid(_objective_health):
+		return _objective_health
+	_objective_health = null
+	var scene := get_tree().current_scene
+	if scene == null:
+		return null
+	var obj := scene.find_child("DestructibleObjective", true, false)
+	if obj == null:
+		obj = scene.find_child("Objective", true, false)
+	if obj != null:
+		_objective_health = obj.get_node_or_null("HealthComponent")
+	return _objective_health
+
+## Строка 3 (верх-центр, под счётом раундов): здоровье objective-цели. ТОЛЬКО режим
+## TARGET_OBJECTIVE. Имя режима в тексте НЕ пишем — режим задан в настройках карты
+## (bot_arena.gd @export match_mode / продакшен match_manager.gd), в HUD ему не место.
+func _update_objective_line() -> void:
+	var hc := _resolve_objective_health()
+	if MatchState.match_mode != MatchState.Mode.TARGET_OBJECTIVE or hc == null:
+		_objective_label.visible = false
+		return
+	_objective_label.visible = true
+	_objective_label.text = "Цель: %d/%d попаданий" % [hc.current_hits, hc.max_hits]
+
+## Строка 4 (верх-центр, под здоровьем цели): обратный отсчёт до респауна игрока. Видна ТОЛЬКО
+## пока RespawnController.time_until_respawn() > 0 (танк мёртв, таймер идёт) — иначе скрыта.
 func _update_respawn_line() -> void:
 	var t: float = _respawn.time_until_respawn() if _respawn != null else 0.0
 	if t <= 0.0:
@@ -171,9 +198,6 @@ func _update_respawn_line() -> void:
 		return
 	_respawn_label.visible = true
 	_respawn_label.text = "Респаун через %d с" % int(ceil(t))
-
-func _on_objective_damaged(current_hits: int, max_hits: int, _killer: Node = null) -> void:
-	_objective_label.text = "Objective: %d/%d попаданий" % [current_hits, max_hits]
 
 func _on_round_ended(winner: String) -> void:
 	# record_round_result() (в MatchManager/arena_match) уже отработал до этого сигнала — серия актуальна.
@@ -188,8 +212,7 @@ func _on_round_ended(winner: String) -> void:
 	else:
 		_result_label.text = "Раунд %d/%d — %s" % \
 			[MatchState.rounds_played(), MatchState.total_rounds, head]
-		var swap_note := "" if MatchState.match_mode == MatchState.Mode.TEAM_ARENA else " (смена сторон)"
-		_restart_button.text = "Следующий раунд" + swap_note
+		_restart_button.text = "Следующий раунд" + (" (смена сторон)" if _has_side_swap() else "")
 	_result_label.visible = true
 	_restart_button.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE  # иначе кнопку нечем кликнуть — мышь захвачена CameraRig
@@ -209,13 +232,17 @@ func _round_result_head(winner: String) -> String:
 		foe = sm.defense_kills if MatchState.player_team == 0 else sm.attack_kills
 	return "%s (убийства %d : %d)" % ["Ты победил" if player_won else "Противник победил", you, foe]
 
+## Смена сторон между раундами делается ТОЛЬКО там, где спавном рулит TeamSpawner (продакшен
+## Main.tscn — танки инстанцируются под роль каждый раунд). На бот-аренах (обоих режимов) танки
+## статические, инверсия player_team рассинхронила бы HUD (TeamLabel/«Ты») с реальным полем.
+func _has_side_swap() -> bool:
+	var scene := get_tree().current_scene
+	return scene != null and scene.get_node_or_null("TeamSpawner") != null
+
 func _on_restart_pressed() -> void:
 	if MatchState.series_complete():
 		MatchState.reset_series()  # серия доиграна — кнопка запускает новый матч с нуля
-	# Смена сторон — только там, где спавном рулит team_spawner (TARGET_OBJECTIVE). На арене
-	# TEAM_ARENA танки — статические инстансы с фиксированной командой, инверсия рассинхронила
-	# бы HUD (TeamLabel/«Ты») с реальным полем.
-	if MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE:
+	if _has_side_swap():
 		MatchState.player_team = 1 - MatchState.player_team
 	get_tree().reload_current_scene()
 

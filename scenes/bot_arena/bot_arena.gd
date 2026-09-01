@@ -6,33 +6,24 @@ extends Node3D
 ## - Бессмертие игрока — тумблер «Игрок: бессмертие ON/OFF» (низ-справа), ПО УМОЛЧАНИЮ ВКЛ:
 ##   обкатываем ИИ бота, respawn/смерть игрока обычно мешают, но иногда нужно проверить и их.
 ##   Тот же паттерн дебаг-кнопки, что Objective On/Off и bot reaction (см. _setup_*_toggle_button).
+## - Режим карты — @export match_mode на корне (задан в .tscn: BotArena = TARGET_OBJECTIVE,
+##   KillerArena = TEAM_ARENA), НЕ детект по наличию узла Objective. Это «настройка карты».
 ## - Продакшен-MatchManager/ScoreManager у арены нет (танки — статичные инстансы, не через
-##   team_spawner.gd). _setup_match_context() заводит из кода: ScoreManager всегда; в режиме
-##   TEAM_ARENA (KillerArena) — ещё и узел "MatchManager" со скриптом arena_match.gd
-##   (постраундовый цикл: таймер → победитель по убийствам → серия). BotArena (TARGET_OBJECTIVE) —
-##   только голый RoundTimer в корне для строки HUD, без постраундового цикла.
+##   team_spawner.gd). _setup_match_context() заводит из кода ScoreManager + узел "MatchManager"
+##   со скриптом arena_match.gd на ОБЕИХ аренах — полноценный постраундовый цикл: TARGET_OBJECTIVE —
+##   цель уничтожена → победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель
+##   по убийствам. HUD находит "MatchManager"/RoundTimer теми же лукапами, что на продакшене.
 ## - [УБРАНО, по прямому запросу — "убери оверрайд в 1 сек перезарядки для тестовой сцены, должно
 ##   быть всегда 3 сек"] Раньше здесь стоял `GameConfig.reload_duration_sec = 1.0`, ускоряющий
 ##   перезарядку только на этой сцене. Теперь арена использует общий дефолт (3.0, см.
 ##   autoload/game_config.gd) без переопределения — единое правило кулдауна везде, без исключений.
 ##
-## - [ДОБАВЛЕНО, по прямому запросу — "задай тестовой карте с ботами ачиверами явный тип
-##   OBJECTIVE: TARGET; сделай тестовую кнопку Objective On/Off, делающую цель бессмертной"]
-##   HUD.tscn — общий prefab для всех трёх карт, его hud.gd ищет objective ПО ЖЁСТКОМУ ПУТИ
-##   "Map/DestructibleObjective/HealthComponent" (продакшен-специфично — Map.tscn инстанс живёт
-##   под "Map", у этой арены такого узла вообще нет, Objective лежит прямо под
-##   "NavigationRegion3D"). Из-за этого ObjectiveLabel молча застревал на дефолтном тексте
-##   "Objective: --" из .tscn (не баг hud.gd как такового — работает верно на Main.tscn, просто
-##   не универсален). Не трогаем hud.gd/HUD.tscn (общий для продакшена, риск лишний) — вместо
-##   этого здесь, зная структуру именно этой арены, находим Objective сами (та же
-##   find_child("Objective", true, false), что уже использует bot_sentry_controller.gd для
-##   ATTACK_OBJECTIVE) и перезаписываем ObjectiveLabel явным текстом "OBJECTIVE: TARGET — X/Y
-##   попаданий" — заодно называя ТИП objective-режима (сейчас единственный, но раньше существовал
-##   другой — Capture Zone, см. CLAUDE.md/vault — явное имя не будет путать при появлении второго).
-##   Кнопка "Objective On/Off" — тот же паттерн, что кнопки-тумблеры bot_sentry_controller.gd
-##   (_setup_reaction_toggle_button) — переключает HealthComponent.invincible на цели; текст
-##   кнопки отражает текущее состояние. ТОЛЬКО тестовая фича — не появляется на Main.tscn, там
-##   этого кода вообще нет.
+## - Кнопка "Objective On/OFF" (только тестовые арены, не Main.tscn) — тот же паттерн, что
+##   кнопки-тумблеры bot_sentry_controller.gd (_setup_reaction_toggle_button): переключает
+##   HealthComponent.invincible на цели, текст отражает состояние. Здоровье цели В HUD теперь
+##   рисует сам hud.gd (строка под счётом раундов, только режим TARGET_OBJECTIVE) — раньше это
+##   делалось здесь с текстом "OBJECTIVE: TARGET — X/Y", но имя режима в HUD не место (режим —
+##   настройка карты, см. match_mode выше).
 ##
 ## - Переключение камер (1/2/3) — чтобы наблюдать объезд препятствий ботом, не гоняясь за ним
 ##   на танке от 3-го лица. "1" — обычная камера игрока (CameraRig, свободный обзор мышью,
@@ -48,13 +39,18 @@ const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const ArenaMatchScript := preload("res://scenes/bot_arena/arena_match.gd")
 
+## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: BotArena.tscn = 0, KillerArena.tscn = 1),
+## не детектится по наличию узла Objective. Значения совпадают с MatchState.Mode
+## (0 = TARGET_OBJECTIVE, 1 = TEAM_ARENA). Это и есть «настройка карты» — режим часть сцены,
+## а не строка в HUD.
+@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA") var match_mode: int = 0
+
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
 @onready var _player_health: Node = $PlayerTank/HealthComponent
 @onready var _objective_camera: Camera3D = $ObjectiveCamera
 @onready var _overview_camera: Camera3D = $OverviewCamera
 @onready var _attack_zone: Node3D = $AttackSpawnZone
 @onready var _defense_zone: Node3D = $DefenseSpawnZone
-@onready var _objective_label: Label = $HUD/ObjectiveLabel
 ## ObjectiveAlertZone теперь дочерний узел самого Objective (часть его «префаба») — рекурсивный
 ## find_child, а не $ObjectiveAlertZone: на KillerArena (TEAM_ARENA, Objective удалён) его нет
 ## вовсе → null, enemy_in_alert_zone() это переваривает.
@@ -63,7 +59,6 @@ const ArenaMatchScript := preload("res://scenes/bot_arena/arena_match.gd")
 var _objective_health: Node = null
 var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
-var _round_timer: Timer
 
 ## [ДОБАВЛЕНО, по прямому запросу — "ОБЩИЙ ALERT стейт — у уже существующих на карте И у новых
 ## спавнящихся"] Раньше каждый BotSentryController хранил СВОЙ personal-таймер тревоги
@@ -101,13 +96,12 @@ func _ready() -> void:
 	_setup_objective_ui()
 
 ## Общий контекст матча для тестовых арен: у них нет Main.tscn-овских MatchManager/ScoreManager,
-## но общий HUD (верх-центр: «Раунд N/M | MM:SS» + строка счёта) ждёт те же источники — заводим
-## их из кода. Режим — по наличию узла Objective (BotArena — есть → TARGET_OBJECTIVE; KillerArena —
-## нет → TEAM_ARENA). Серию НЕ сбрасываем (как и main.gd): она копится через reload_current_scene()
-## между раундами; сброс — только из меню (main_menu.gd) и кнопкой «Новый матч» (hud.gd).
+## но общий HUD ждёт те же узлы — заводим их из кода. Режим берётся из @export match_mode (задан
+## в .tscn — «настройка карты»). Серию НЕ сбрасываем (как и main.gd): она копится через
+## reload_current_scene() между раундами; сброс — только из меню (main_menu.gd) и кнопкой
+## «Новый матч» (hud.gd).
 func _setup_match_context() -> void:
-	var has_objective := get_tree().current_scene.find_child("Objective", true, false) != null
-	MatchState.match_mode = MatchState.Mode.TARGET_OBJECTIVE if has_objective else MatchState.Mode.TEAM_ARENA
+	MatchState.match_mode = match_mode
 
 	var score_manager := Node.new()
 	score_manager.name = "ScoreManager"
@@ -115,23 +109,19 @@ func _setup_match_context() -> void:
 	add_child(score_manager)
 	score_manager.begin_match()  # статичные Tank-инстансы уже в группе "tanks" к моменту _ready() корня
 
-	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
-		# Полноценный постраундовый цикл (таймер → победитель по убийствам → серия). Узел зовётся
-		# "MatchManager" — HUD находит его и дочерний RoundTimer теми же лукапами, что на продакшене.
-		var arena_match := Node.new()
-		arena_match.name = "MatchManager"
-		arena_match.set_script(ArenaMatchScript)
-		add_child(arena_match)
-		arena_match.setup(GameConfig.team_arena_round_sec, score_manager)
-	else:
-		# BotArena (ачивер-песочница, TARGET_OBJECTIVE): постраундового цикла нет, RoundTimer в
-		# корне только тикает для строки HUD «Раунд N/M | MM:SS».
-		_round_timer = Timer.new()
-		_round_timer.name = "RoundTimer"
-		_round_timer.one_shot = true
-		_round_timer.wait_time = GameConfig.round_timer_sec
-		add_child(_round_timer)
-		_round_timer.start()
+	var objective := get_tree().current_scene.find_child("Objective", true, false)
+	var objective_health: Node = objective.get_node_or_null("HealthComponent") if objective != null else null
+	var round_sec: float = GameConfig.team_arena_round_sec if match_mode == MatchState.Mode.TEAM_ARENA else GameConfig.round_timer_sec
+
+	# Полноценный постраундовый цикл на ОБЕИХ аренах (см. arena_match.gd): TARGET_OBJECTIVE —
+	# уничтожение цели → победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель
+	# по убийствам. Узел зовётся "MatchManager" — HUD находит его и дочерний RoundTimer теми же
+	# лукапами, что на продакшене.
+	var arena_match := Node.new()
+	arena_match.name = "MatchManager"
+	arena_match.set_script(ArenaMatchScript)
+	add_child(arena_match)
+	arena_match.setup(match_mode, round_sec, score_manager, objective_health)
 
 ## Бессмертие игрока на тестовой арене (чтобы смерть/respawn игрока не мешали обкатывать ИИ) —
 ## теперь тумблер, как Objective On/Off и bot reaction (bot_sentry_controller.gd), а не хардкод в
@@ -193,8 +183,9 @@ func enemy_in_alert_zone() -> bool:
 			return true
 	return false
 
-## См. doc-comment в шапке файла. find_child, не get_node("Map/...") — эта арена не имеет узла
-## "Map", Objective лежит прямо под NavigationRegion3D.
+## Здоровье цели в HUD рисует сам hud.gd (строка под счётом раундов, только TARGET_OBJECTIVE) —
+## здесь остаётся только тестовый тумблер бессмертия цели + подписка на damaged для сброса
+## ALERT-таймера. find_child, не get_node("Map/..."): у арены нет узла "Map".
 func _setup_objective_ui() -> void:
 	var objective: Node = get_tree().current_scene.find_child("Objective", true, false)
 	if objective == null:
@@ -203,15 +194,10 @@ func _setup_objective_ui() -> void:
 	if _objective_health == null:
 		return
 	_objective_health.damaged.connect(_on_objective_damaged)
-	_update_objective_label(_objective_health.current_hits, _objective_health.max_hits)
 	_setup_objective_toggle_button()
 
-func _on_objective_damaged(current_hits: int, max_hits: int, _killer: Node = null) -> void:
-	_update_objective_label(current_hits, max_hits)
+func _on_objective_damaged(_current_hits: int, _max_hits: int, _killer: Node = null) -> void:
 	_time_since_objective_hit = 0.0  # см. doc-comment у переменной — сбрасывается на КАЖДЫЙ удар
-
-func _update_objective_label(current_hits: int, max_hits: int) -> void:
-	_objective_label.text = "OBJECTIVE: TARGET — %d/%d попаданий" % [current_hits, max_hits]
 
 ## Тот же паттерн, что кнопки-тумблеры bot_sentry_controller.gd (_setup_reaction_toggle_button) —
 ## отдельный CanvasLayer, не трогаем разметку HUD.tscn. Правый низ — левый низ уже занят

@@ -126,11 +126,12 @@ runs after `CameraRig`'s).
 `GameConfig` (balance knobs shared project-wide) and `MatchState` (survives
 `get_tree().reload_current_scene()`, where ordinary `@export` fields on scene nodes don't).
 `MatchState` now holds: `player_team: int` (the player's *side* this round, flipped by the HUD
-restart button); `match_mode: Mode {TARGET_OBJECTIVE, TEAM_ARENA}` — set explicitly by each map's
-root `_ready()` (`main.gd` → always `TARGET_OBJECTIVE`; `bot_arena.gd` → by presence of an
-`Objective` node, so `KillerArena.tscn` = `TEAM_ARENA`), read *lazily* by the HUD since its own
-`_ready()` precedes the root's; and a round-series score (`series_wins_you`/`series_wins_enemy`,
-`total_rounds = 3`) tracked by *persistent* team (your team vs. the bots), not by side.
+restart button only when the scene has a `TeamSpawner`); `match_mode: Mode {TARGET_OBJECTIVE,
+TEAM_ARENA}` — a **per-map setting**, not runtime detection: `main.gd` sets `TARGET_OBJECTIVE`;
+`bot_arena.gd` has `@export_enum var match_mode` set in each scene file (`BotArena.tscn` = 0,
+`KillerArena.tscn` = 1); the HUD reads it *lazily* since its own `_ready()` precedes the root's;
+and a round-series score (`series_wins_you`/`series_wins_enemy`, `total_rounds = 3`) tracked by
+*persistent* team (your team vs. the bots), not by side.
 `MatchManager._end_round()` calls `MatchState.record_round_result(winner)` before emitting
 `round_ended`; the series accumulates across `reload_current_scene()` and is reset only from the
 main menu (`main_menu.gd`) or the "Новый матч" button after `series_complete()`. `config/player_tank_config.json` and
@@ -213,33 +214,37 @@ handler must match the emitted arity exactly, or it's a runtime error, not a war
 
 Two modes, keyed off `MatchState.match_mode` (see Autoloads above). **TARGET_OBJECTIVE**
 ("Destroy Target", `Main.tscn` + `BotArena.tscn`): a `DestructibleObjective` static body with a
-`HealthComponent` (`attackers_only = true`) sits on the map; attackers win by destroying it,
-defenders win if the round timer expires first. An earlier "Capture Zone" mode (continuous-presence
-timer) was replaced and its code deleted — if that mechanic is ever needed again, it has to be
-reimplemented from the vault dev-plan's description, not recovered from history-lite refactoring.
-The `ObjectiveAlertZone` (the ground circle the sentry AI uses for `State.ALERT`) is now a **child
-of the objective node** on every map (local `y = -1` so the circle sits on the ground), so it is
-freed together with the objective and simply doesn't exist on maps without one (`KillerArena`).
-Every reader of `_alert_zone` uses `is_instance_valid()`, not `== null` — after the objective is
-destroyed the reference dangles.
-**TEAM_ARENA** (`KillerArena.tscn`, no objective node at all): 3-round team deathmatch, 3 min/round
-(`GameConfig.team_arena_round_sec`), round winner by kill count (ties by `defense_wins_ties`), match
-winner by rounds won. Full round loop: `bot_arena.gd._setup_match_context()` synthesizes a node
-named `MatchManager` running `scenes/bot_arena/arena_match.gd` (RoundTimer expiry → winner by kills
-→ `MatchState.record_round_result` → `round_ended`) — the production `match_manager.gd` can't be
-reused (it's bound to `Map`/objective/ammo-crate). `BotArena.tscn` (TARGET_OBJECTIVE, ACHIEVER
-sandbox) gets **no** MatchManager — just a bare root `RoundTimer` for the HUD line. Side-swap
-between rounds (`hud.gd._on_restart_pressed`) only happens in TARGET_OBJECTIVE (team_spawner drives
-spawns); TEAM_ARENA arena tanks are static instances with fixed teams, so its restart button just
-reloads.
+`HealthComponent` (`attackers_only = true`) sits on the map; **objective destroyed → round ends
+with an attack win; round timer expires with it intact → defense win**. Round timer for this mode
+is `GameConfig.round_timer_sec` = **150 s (2:30)**. An earlier "Capture Zone" mode
+(continuous-presence timer) was replaced and its code deleted — reimplement from the vault dev-plan
+if ever needed. The `ObjectiveAlertZone` (the ground circle the sentry AI uses for `State.ALERT`)
+is a **child of the objective node** on every map (local `y = -1` so the circle sits on the
+ground), freed together with the objective and simply absent on maps without one (`KillerArena`);
+every reader of `_alert_zone` uses `is_instance_valid()`, not `== null`.
+**TEAM_ARENA** (`KillerArena.tscn`, no objective node): 3-round team deathmatch,
+`GameConfig.team_arena_round_sec` = 180 s / round, round winner by kill count (ties by
+`defense_wins_ties`), match winner by rounds won.
+
+Both bot arenas run the **same synthesized round loop**: `bot_arena.gd._setup_match_context()`
+creates a node named `MatchManager` running `scenes/bot_arena/arena_match.gd`, which picks its
+end-of-round condition from `match_mode` (objective `destroyed` → attack / timeout → defense, vs.
+timeout → winner-by-kills) then `MatchState.record_round_result` → `round_ended`. Production
+`match_manager.gd` (bound to `Map`/ammo-crate/final-stage) already does the objective-mode
+conditions itself and is left alone. Side-swap between rounds (`hud.gd._on_restart_pressed`,
+`_has_side_swap()`) happens only when the scene has a `TeamSpawner` (production only) — arena tanks
+are static instances with fixed teams, so their restart button just reloads.
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`, line 2 the
 mode-dependent overall score (series only for TARGET_OBJECTIVE; round kills + series for
-TEAM_ARENA), line 3 the player respawn countdown (`Респаун через N с`) — `RespawnLabel`, shown only
-while `PlayerTank/RespawnController.time_until_respawn() > 0`. The HUD resolves `MatchManager` /
-`RoundTimer` / `ScoreManager` **lazily** (and polls the timer/score), because the bot arenas
-synthesize those nodes in code *after* the HUD's own `_ready()` — so `MatchManager/RoundTimer` and
-`ScoreManager` resolve by the same names everywhere.
+TEAM_ARENA), line 3 `Цель: N/M попаданий` — objective health, TARGET_OBJECTIVE only, resolved
+lazily via `find_child("DestructibleObjective")`/`"Objective"` (no `OBJECTIVE: TARGET` prefix — the
+mode name lives in the map settings, not the HUD), line 4 the player respawn countdown
+(`Респаун через N с`, `RespawnLabel`) shown only while
+`PlayerTank/RespawnController.time_until_respawn() > 0`. The HUD resolves `MatchManager` /
+`RoundTimer` / `ScoreManager` / objective **lazily** and polls them, because the bot arenas
+synthesize those nodes in code *after* the HUD's own `_ready()` — so everything resolves by the
+same node names everywhere.
 
 Player invincibility on the bot arenas is now a debug toggle button (`Игрок: бессмертие ON/OFF`,
 bottom-right, **default ON**), same pattern as `Objective: ON/OFF` / bot reaction toggles — not the
