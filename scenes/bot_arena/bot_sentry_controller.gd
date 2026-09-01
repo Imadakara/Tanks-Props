@@ -728,7 +728,9 @@ func _find_objective() -> void:
 	_objective_node = get_tree().current_scene.find_child("Objective", true, false)
 
 ## См. @export-блок про ALERT выше. Тот же рекурсивный find_child, что и у Objective/Ground —
-## ObjectiveAlertZone лежит в корне на тестовых аренах, под "Map" на продакшене.
+## ObjectiveAlertZone теперь дочерний узел самого Objective (часть его «префаба»), рекурсивный
+## поиск находит его там; null на картах без objective (KillerArena, TEAM_ARENA). Освобождается
+## вместе с Objective — все дальнейшие проверки через is_instance_valid(), не == null.
 func _find_alert_zone() -> void:
 	_alert_zone = get_tree().current_scene.find_child("ObjectiveAlertZone", true, false)
 
@@ -877,7 +879,10 @@ func _think() -> void:
 ## единственное существующее в проекте понятие "окружность objective", симметрично реакции
 ## защитников на тот же круг с противоположной стороны.
 func _is_within_objective_circle() -> bool:
-	if _alert_zone == null:
+	# is_instance_valid: ObjectiveAlertZone — дочерний узел Objective, освобождается вместе с ним
+	# (после уничтожения ссылка висячая, != null). Обычно сюда не доходит (вызывается под guard
+	# objective_alive в _ensure_home_state), но проверка дешевле, чем гонка на кадре разрушения.
+	if not is_instance_valid(_alert_zone):
 		return false
 	var radius: float = float(_alert_zone.get("radius"))
 	var zone_pos: Vector3 = _alert_zone.global_position
@@ -918,7 +923,7 @@ func _ensure_home_state() -> void:
 	var time_since_hit: float = _arena.time_since_objective_hit() if _arena != null else INF
 	var enemy_nearby: bool = _arena.enemy_in_alert_zone() if _arena != null else false
 	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
-	if not _body.is_attacker() and objective_alive and _alert_zone != null and (time_since_hit < alert_timeout_sec or enemy_nearby):
+	if not _body.is_attacker() and objective_alive and is_instance_valid(_alert_zone) and (time_since_hit < alert_timeout_sec or enemy_nearby):
 		desired = State.ALERT  # см. @export-блок про ALERT — перебивает обычное PATROL/HUNT/IDLE
 	# [ДОБАВЛЕНО, по прямому запросу — "если атакующий бот в пределах окружности objective и у него
 	# нет иной цели — нужно включать стейт атаки objective, а не патруль/откат к вейпоинтам"] Без
@@ -1311,7 +1316,7 @@ func _drive_to_hunt_point(delta: float) -> void:
 ## заведомо маленький круг (1.5× радиуса SpawnZone, см. doc-comment у ObjectiveAlertZone-узла на
 ## карте), недостижимых точек внутри неё не ожидается так же остро, как на всю HUNT-зону карты.
 func _drive_to_alert_point(delta: float) -> void:
-	if _alert_zone == null:
+	if not is_instance_valid(_alert_zone):  # см. _is_within_objective_circle() — зона гибнет с Objective
 		_movement.ai_move_input = 0.0
 		_movement.ai_turn_input = 0.0
 		return

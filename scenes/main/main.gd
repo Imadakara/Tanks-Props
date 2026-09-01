@@ -8,6 +8,10 @@ extends Node3D
 ## менеджера по отдельности.
 
 func _ready() -> void:
+	# Режим карты — явно на каждом входе в сцену: autoload MatchState.match_mode мог остаться
+	# в TEAM_ARENA от прошлой сессии бот-арены (см. bot_arena.gd). Серию НЕ трогаем — она
+	# накапливается через reload_current_scene() между раундами; сброс — только из меню.
+	MatchState.match_mode = MatchState.Mode.TARGET_OBJECTIVE
 	$TeamSpawner.spawn_team()
 	$MatchManager.begin_match()
 	$ScoreManager.begin_match()

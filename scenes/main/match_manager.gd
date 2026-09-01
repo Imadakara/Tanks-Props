@@ -148,4 +148,5 @@ func _end_round(winner: String) -> void:
 	_round_timer.stop()
 	_final_stage_timer.stop()
 	_crate_spawn_timer.stop()
+	MatchState.record_round_result(winner)  # засчитываем раунд в серию ДО того, как HUD её прочитает
 	round_ended.emit(winner)

@@ -3,7 +3,14 @@ extends Node3D
 ## что main.gd в основном режиме: маленький явный orchestration-скрипт в корне вместо
 ## разбрасывания правок по чужим _ready().
 ##
-## - Танк игрока НЕУБИВАЕМ: обкатываем ИИ бота, respawn/смерть игрока только мешали бы.
+## - Бессмертие игрока — тумблер «Игрок: бессмертие ON/OFF» (низ-справа), ПО УМОЛЧАНИЮ ВКЛ:
+##   обкатываем ИИ бота, respawn/смерть игрока обычно мешают, но иногда нужно проверить и их.
+##   Тот же паттерн дебаг-кнопки, что Objective On/Off и bot reaction (см. _setup_*_toggle_button).
+## - Продакшен-MatchManager/ScoreManager у арены нет (танки — статичные инстансы, не через
+##   team_spawner.gd). _setup_match_context() заводит из кода: ScoreManager всегда; в режиме
+##   TEAM_ARENA (KillerArena) — ещё и узел "MatchManager" со скриптом arena_match.gd
+##   (постраундовый цикл: таймер → победитель по убийствам → серия). BotArena (TARGET_OBJECTIVE) —
+##   только голый RoundTimer в корне для строки HUD, без постраундового цикла.
 ## - [УБРАНО, по прямому запросу — "убери оверрайд в 1 сек перезарядки для тестовой сцены, должно
 ##   быть всегда 3 сек"] Раньше здесь стоял `GameConfig.reload_duration_sec = 1.0`, ускоряющий
 ##   перезарядку только на этой сцене. Теперь арена использует общий дефолт (3.0, см.
@@ -38,17 +45,25 @@ extends Node3D
 ##   как три вектора-столбца (см. кросс-проектную Godot knowledge base, п.1).
 
 const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
+const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
+const ArenaMatchScript := preload("res://scenes/bot_arena/arena_match.gd")
 
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
+@onready var _player_health: Node = $PlayerTank/HealthComponent
 @onready var _objective_camera: Camera3D = $ObjectiveCamera
 @onready var _overview_camera: Camera3D = $OverviewCamera
 @onready var _attack_zone: Node3D = $AttackSpawnZone
 @onready var _defense_zone: Node3D = $DefenseSpawnZone
 @onready var _objective_label: Label = $HUD/ObjectiveLabel
-@onready var _alert_zone: Node3D = $ObjectiveAlertZone
+## ObjectiveAlertZone теперь дочерний узел самого Objective (часть его «префаба») — рекурсивный
+## find_child, а не $ObjectiveAlertZone: на KillerArena (TEAM_ARENA, Objective удалён) его нет
+## вовсе → null, enemy_in_alert_zone() это переваривает.
+@onready var _alert_zone: Node3D = find_child("ObjectiveAlertZone", true, false)
 
 var _objective_health: Node = null
 var _objective_toggle_button: Button
+var _invincibility_toggle_button: Button
+var _round_timer: Timer
 
 ## [ДОБАВЛЕНО, по прямому запросу — "ОБЩИЙ ALERT стейт — у уже существующих на карте И у новых
 ## спавнящихся"] Раньше каждый BotSentryController хранил СВОЙ personal-таймер тревоги
@@ -79,10 +94,73 @@ var _time_since_objective_hit: float = INF
 const _spawn_clearance := Vector3(0, 0.3, 0)
 
 func _ready() -> void:
-	$PlayerTank/HealthComponent.invincible = true
+	_setup_invincibility_toggle_button()
+	_setup_match_context()
 	_objective_camera.look_at(Vector3(0, 1, -21), Vector3.UP)
 	_spawn_from_zones()
 	_setup_objective_ui()
+
+## Общий контекст матча для тестовых арен: у них нет Main.tscn-овских MatchManager/ScoreManager,
+## но общий HUD (верх-центр: «Раунд N/M | MM:SS» + строка счёта) ждёт те же источники — заводим
+## их из кода. Режим — по наличию узла Objective (BotArena — есть → TARGET_OBJECTIVE; KillerArena —
+## нет → TEAM_ARENA). Серию НЕ сбрасываем (как и main.gd): она копится через reload_current_scene()
+## между раундами; сброс — только из меню (main_menu.gd) и кнопкой «Новый матч» (hud.gd).
+func _setup_match_context() -> void:
+	var has_objective := get_tree().current_scene.find_child("Objective", true, false) != null
+	MatchState.match_mode = MatchState.Mode.TARGET_OBJECTIVE if has_objective else MatchState.Mode.TEAM_ARENA
+
+	var score_manager := Node.new()
+	score_manager.name = "ScoreManager"
+	score_manager.set_script(ScoreManagerScript)
+	add_child(score_manager)
+	score_manager.begin_match()  # статичные Tank-инстансы уже в группе "tanks" к моменту _ready() корня
+
+	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+		# Полноценный постраундовый цикл (таймер → победитель по убийствам → серия). Узел зовётся
+		# "MatchManager" — HUD находит его и дочерний RoundTimer теми же лукапами, что на продакшене.
+		var arena_match := Node.new()
+		arena_match.name = "MatchManager"
+		arena_match.set_script(ArenaMatchScript)
+		add_child(arena_match)
+		arena_match.setup(GameConfig.team_arena_round_sec, score_manager)
+	else:
+		# BotArena (ачивер-песочница, TARGET_OBJECTIVE): постраундового цикла нет, RoundTimer в
+		# корне только тикает для строки HUD «Раунд N/M | MM:SS».
+		_round_timer = Timer.new()
+		_round_timer.name = "RoundTimer"
+		_round_timer.one_shot = true
+		_round_timer.wait_time = GameConfig.round_timer_sec
+		add_child(_round_timer)
+		_round_timer.start()
+
+## Бессмертие игрока на тестовой арене (чтобы смерть/respawn игрока не мешали обкатывать ИИ) —
+## теперь тумблер, как Objective On/Off и bot reaction (bot_sentry_controller.gd), а не хардкод в
+## _ready(). ПО УМОЛЧАНИЮ ВКЛ. Низ-справа, на слот выше кнопки Objective On/Off (та на самом низу).
+func _setup_invincibility_toggle_button() -> void:
+	_player_health.invincible = true
+	var layer := CanvasLayer.new()
+	layer.name = "PlayerInvincibilityToggleLayer"
+	var button := Button.new()
+	button.name = "PlayerInvincibilityToggleButton"
+	button.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	button.offset_left = -236.0
+	button.offset_top = -104.0
+	button.offset_right = -16.0
+	button.offset_bottom = -64.0
+	button.pressed.connect(_on_invincibility_toggle_pressed)
+	layer.add_child(button)
+	_invincibility_toggle_button = button
+	# Без call_deferred — этот скрипт на корне сцены, его _ready() идёт последним, дерево готово
+	# (та же логика, что у _setup_objective_toggle_button).
+	add_child(layer)
+	_update_invincibility_toggle_button()
+
+func _on_invincibility_toggle_pressed() -> void:
+	_player_health.invincible = not _player_health.invincible
+	_update_invincibility_toggle_button()
+
+func _update_invincibility_toggle_button() -> void:
+	_invincibility_toggle_button.text = "Игрок: бессмертие %s" % ("ON" if _player_health.invincible else "OFF")
 
 func _physics_process(delta: float) -> void:
 	_time_since_objective_hit += delta
@@ -100,7 +178,10 @@ func time_since_objective_hit() -> float:
 ## target.visible-фильтр — тот же паттерн, что и в _can_see() (см. bot_sentry_controller.gd) —
 ## убитый, ждущий respawn танк (visible=false) не считается "противником в круге".
 func enemy_in_alert_zone() -> bool:
-	if _alert_zone == null:
+	# is_instance_valid, не == null: ObjectiveAlertZone теперь дочерний узел Objective и
+	# освобождается ВМЕСТЕ с ним при уничтожении (free_on_destroy=true) — после этого _alert_zone
+	# висячая ссылка, != null, но обращаться к ней уже нельзя.
+	if not is_instance_valid(_alert_zone):
 		return false
 	var radius: float = float(_alert_zone.get("radius"))
 	var zone_pos: Vector3 = _alert_zone.global_position
