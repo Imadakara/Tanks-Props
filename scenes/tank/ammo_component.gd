@@ -1,6 +1,7 @@
 extends Node
-## AmmoComponent — боезапас танка: расход при выстреле, пополнение от ammo crate
-## на финальной стадии (ТЗ §7, §8.4). Максимум берётся из GameConfig.ammo_per_tank.
+## AmmoComponent — боезапас танка: расход при выстреле, пополнение от подобранного ящика
+## боеприпасов (зона сброса AmmoDropZone, см. scenes/ammo_crate/ammo_drop_zone.gd; ТЗ §7, §8.4).
+## Максимум берётся из GameConfig.ammo_per_tank.
 
 signal ammo_changed(current: int, max: int)
 signal ammo_depleted()

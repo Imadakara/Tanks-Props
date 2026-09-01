@@ -5,9 +5,10 @@ extends Node
 ##
 ## - player_team меняется на противоположную при нажатии кнопки рестарта в HUD (см. hud.gd) —
 ##   команды меняются сторонами каждый новый раунд.
-## - match_mode выставляется корневым скриптом каждой карты в её _ready() (main.gd —
-##   TARGET_OBJECTIVE; bot_arena.gd — по наличию узла Objective). HUD читает его ЛЕНИВО (в
-##   _process), т.к. дочерние _ready() (в т.ч. HUD) отрабатывают раньше корневого.
+## - match_mode — НАСТРОЙКА СЦЕНЫ: main.gd ставит TARGET_OBJECTIVE; bot_arena.gd читает
+##   @export_enum var match_mode со своего корня (значение в .tscn: BotArena=0, KillerArena=1).
+##   HUD читает его ЛЕНИВО (в _process), т.к. дочерние _ready() (в т.ч. HUD) раньше корневого.
+##   Полное описание режимов — vault/Tank_Prop_Hunt_Game_Modes.md.
 ## - Счёт серии (series_wins_*) НАКАПЛИВАЕТСЯ через reload_current_scene() — сбрасывается только
 ##   из главного меню (main_menu.gd) и по кнопке «Новый матч» после конца серии (hud.gd).
 ##   "Твоя команда" — устойчивая сущность: игрок меняет сторону каждый раунд, но series_wins_you

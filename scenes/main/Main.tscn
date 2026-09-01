@@ -27,7 +27,5 @@ script = ExtResource("4")
 
 [node name="FinalStageTimer" type="Timer" parent="MatchManager"]
 
-[node name="CrateSpawnTimer" type="Timer" parent="MatchManager"]
-
 [node name="ScoreManager" type="Node" parent="."]
 script = ExtResource("5")

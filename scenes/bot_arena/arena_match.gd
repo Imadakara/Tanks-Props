@@ -1,6 +1,6 @@
 extends Node
 ## ArenaMatch — постраундовый цикл для тестовых арен (BotArena / KillerArena). У арен нет
-## продакшен-MatchManager (тот завязан на Map/ammo-crate/финальную стадию), поэтому
+## продакшен-MatchManager (тот завязан на Map/objective/финальную стадию), поэтому
 ## bot_arena.gd._setup_match_context() заводит ЭТОТ узел из кода под именем "MatchManager".
 ## HUD находит его и его дочерний RoundTimer теми же get_node_or_null("MatchManager") /
 ## ("MatchManager/RoundTimer"), что и на продакшене — hud.gd под арену не меняется.

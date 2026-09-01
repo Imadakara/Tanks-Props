@@ -7,12 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Tank Prop Hunt — a team tactical shooter with prop-hunt elements (disguise mechanic), Godot 4.7
 (GDScript), 3D, Jolt physics. Local prototype vs bots, no networking.
 
-Full design docs (concept, spec/ТЗ, dev plan with per-stage implementation history and gotchas,
-and the bot-AI-sandbox doc for the `Bot` branch) live outside this repo, in
-`C:\Users\PC\Documents\Personal Vault\Tank Props Docs\`. Code comments frequently say "see vault" —
-that's this folder, not anything inside the repo. Read the relevant vault doc before doing
-non-trivial work on a system it covers (game modes, AI, dev history) — it records *why*, not just
+Full design docs live outside this repo, in `C:\Users\PC\Documents\Personal Vault\Tank Props Docs\`.
+Code comments frequently say "see vault" — that's this folder, not anything inside the repo. Read
+the relevant doc before doing non-trivial work on a system it covers — they record *why*, not just
 what the code does, including reasoning behind changes that were tried and reverted.
+
+- `Tank_Prop_Hunt_Gameplay_Concept.md` — design concept.
+- `Tank_Prop_Hunt_TZ_MVP_Godot.md` — spec / ТЗ.
+- `Tank_Prop_Hunt_MVP_Dev_Plan.md` — dev plan with per-stage implementation history and gotchas.
+- `Tank_Prop_Hunt_Game_Modes.md` — **current-state reference for the game modes**
+  (TARGET_OBJECTIVE / TEAM_ARENA): rules, round/series flow, HUD block, round-loop code, full map
+  list. The "Game modes" section below is a summary; that doc is the detail.
+- `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — bot-AI sandbox (`Bot` branch), states/driving stack/params.
+- `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
+  prefab (circle + high dummy) placed in every map's empty corners, its drop/pickup/anti-overlap
+  rules, per-map placement, `GameConfig` defaults.
 
 ## Running / testing
 
@@ -212,6 +221,8 @@ handler must match the emitted arity exactly, or it's a runtime error, not a war
 
 ### Game modes
 
+Full reference: `Tank_Prop_Hunt_Game_Modes.md` in the vault. Summary below.
+
 Two modes, keyed off `MatchState.match_mode` (see Autoloads above). **TARGET_OBJECTIVE**
 ("Destroy Target", `Main.tscn` + `BotArena.tscn`): a `DestructibleObjective` static body with a
 `HealthComponent` (`attackers_only = true`) sits on the map; **objective destroyed → round ends
@@ -230,10 +241,24 @@ Both bot arenas run the **same synthesized round loop**: `bot_arena.gd._setup_ma
 creates a node named `MatchManager` running `scenes/bot_arena/arena_match.gd`, which picks its
 end-of-round condition from `match_mode` (objective `destroyed` → attack / timeout → defense, vs.
 timeout → winner-by-kills) then `MatchState.record_round_result` → `round_ended`. Production
-`match_manager.gd` (bound to `Map`/ammo-crate/final-stage) already does the objective-mode
+`match_manager.gd` (bound to `Map`/objective/final-stage) already does the objective-mode
 conditions itself and is left alone. Side-swap between rounds (`hud.gd._on_restart_pressed`,
 `_has_side_swap()`) happens only when the scene has a `TeamSpawner` (production only) — arena tanks
 are static instances with fixed teams, so their restart button just reloads.
+
+**Ammo drops** (all maps): a self-contained prefab `scenes/ammo_crate/AmmoDropZone.tscn` — a
+spawn-sized ground circle (`DropArea`, reuses `spawn_zone.gd`) plus a high dummy `Marker3D`
+(`DropOrigin`, script `ammo_crate/ammo_drop_zone.gd`) — sits in each map's two empty corners
+(the diagonal opposite the spawn zones). Cadence is **map-level, not per-zone**: the drop zones
+join group `ammo_drop_zones`, the lowest-`get_path()` one is the leader and owns the sole
+`DropTimer`; every `drop_interval_sec` (30 s) the leader drops **one** `AmmoCrate` at a **random**
+zone (`shuffle` + first that accepts) — not one per zone. The crate falls kinematically to a
+random clear point in that zone's circle, never overlapping a still-unpicked crate
+(`min_crate_separation`, per-zone cap `max_pending_crates` → `GameConfig.ammo_crate_count`; these
+three stay per-zone, only the interval + round-end stop are centralized on the leader). Pickup is
+`Area3D.body_entered` → `AmmoComponent.add_ammo` (player and bots alike; bots don't path to
+crates). The old field-wide `match_manager.gd` crate spawner (`CrateSpawnTimer`) was removed.
+Full detail: `Tank_Prop_Hunt_Ammo_Drops.md`.
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`, line 2 the
 mode-dependent overall score (series only for TARGET_OBJECTIVE; round kills + series for

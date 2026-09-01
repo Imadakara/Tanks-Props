@@ -18,6 +18,11 @@ extends Node3D
 ## её жёлтой (ветка else), что и требовалось. pick_spawn_position() у этого узла не используется —
 ## ALERT-логика берёт точки сама (_pick_new_alert_target(), круговая выборка), но радиус/окружность
 ## общие, дублировать эту механику под другим именем скрипта не было смысла.
+##
+## [ПЕРЕИСПОЛЬЗУЕТСЯ] Ещё один потребитель — узел "DropArea" в префабе AmmoDropZone.tscn (зона
+## сброса ящиков боеприпасов, см. scenes/ammo_crate/ammo_drop_zone.gd): круг тем же
+## _draw_debug_circle() (жёлтый — имя не Attack/Defense) + pick_spawn_position() как источник
+## случайной точки на реальной земле для падающего ящика.
 ## [ИЗМЕНЕНО, по прямому запросу — "окружность должна быть частью префаба с target-objective"]
 ## ObjectiveAlertZone теперь ДОЧЕРНИЙ узел самого объекта-цели (Map/DestructibleObjective на
 ## продакшене, NavigationRegion3D/Objective на BotArena) с локальным y=-1, чтобы круг лёг на землю.
