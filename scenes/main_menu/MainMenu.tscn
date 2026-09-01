@@ -32,9 +32,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -190.0
-offset_top = -104.0
+offset_top = -66.0
 offset_right = 190.0
-offset_bottom = 104.0
+offset_bottom = 66.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 20
@@ -42,14 +42,9 @@ theme_override_constants/separation = 20
 [node name="AchieverButton" type="Button" parent="VBoxContainer" unique_id=109292456]
 custom_minimum_size = Vector2(380, 56)
 layout_mode = 2
-text = "Тестовая арена — ACHIEVER"
+text = "Уничтожить цель (TARGET_OBJECTIVE)"
 
 [node name="KillerButton" type="Button" parent="VBoxContainer" unique_id=1190121093]
 custom_minimum_size = Vector2(380, 56)
 layout_mode = 2
-text = "Тестовая арена — KILLER"
-
-[node name="MainButton" type="Button" parent="VBoxContainer" unique_id=2078981241]
-custom_minimum_size = Vector2(380, 56)
-layout_mode = 2
-text = "Основная карта (5×5)"
+text = "Командный бой (TEAM_ARENA)"

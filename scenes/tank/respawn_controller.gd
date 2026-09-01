@@ -8,7 +8,7 @@ extends Node
 ## отключаются, чтобы труп не блокировал выстрелы/движение остальных. По истечении
 ## кулдауна — телепорт на случайную точку спавна СВОЕЙ команды, полный сброс здоровья/
 ## боезапаса/состояния/подсветки подранка, снятие заморозки.
-## DestructibleObjective (та же HealthComponent, другие настройки) респаун не задействует —
+## Objective (та же HealthComponent, другие настройки) респаун не задействует —
 ## free_on_destroy там остался true, сцена по-прежнему теряет объект при разрушении.
 
 const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
@@ -63,7 +63,7 @@ func _on_respawn_timeout() -> void:
 
 ## [ДОБАВЛЕНО, по прямому запросу — "добавь ботам стейт DEAD, отражать в дебаг-логах на экране,
 ## плюс время до респавна"] "TankAIController" — третье исключение из заморозки, наравне с
-## HealthComponent. Без него бот-песочница (bot_arena.gd), потеряв танк, тоже получал бы
+## HealthComponent. Без него бот, потеряв танк, тоже получал бы
 ## process_mode=DISABLED на свой TankAIController — его _physics_process() перестал бы
 ## вызываться движком вообще, а вместе с ним и обновление дебаг-лейбла: текст застревал бы на
 ## последнем стейте ДО смерти (например, "state: DEFEND") вместо живого "DEAD" с тикающим
@@ -98,8 +98,8 @@ func time_until_respawn() -> float:
 	return _respawn_timer.time_left
 
 ## Зона спавна СВОЕЙ команды (не противника) — та же `SpawnZone` (см. spawn_zone.gd), что и у
-## TeamSpawner при старте матча. Рекурсивный find_child по всей сцене (не get_node("Map")) —
-## работает и на продакшене (зона под "Map"), и на тестовых аренах (зона в корне, узла "Map" нет).
+## TeamSpawner при старте матча. Рекурсивный find_child по всей сцене, не завязан на конкретную
+## структуру дерева конкретной карты.
 func _pick_spawn_zone() -> Node3D:
 	var zone_name: String = "AttackSpawnZone" if _tank.is_attacker() else "DefenseSpawnZone"
 	return get_tree().current_scene.find_child(zone_name, true, false)

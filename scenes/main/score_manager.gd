@@ -8,7 +8,7 @@ signal score_changed(attack_kills: int, defense_kills: int)
 var attack_kills: int = 0
 var defense_kills: int = 0
 
-## Вызывается из Main._ready() (см. main.gd), ПОСЛЕ TeamSpawner.spawn_team().
+## Вызывается из корневого _ready() карты (см. map_scene.gd), ПОСЛЕ TeamSpawner.spawn_team().
 func begin_match() -> void:
 	for tank in get_tree().get_nodes_in_group("tanks"):
 		var health: Node = tank.get_node_or_null("HealthComponent")

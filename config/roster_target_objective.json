@@ -1,0 +1,19 @@
+[
+  {
+    "team": 1,
+    "count": 1,
+    "waypoint_name_prefix": "Waypoint",
+    "hunt_area_center": [0, -0.25, 0],
+    "hunt_area_half_extents": [36, 36]
+  },
+  {
+    "team": 0,
+    "count": 1,
+    "waypoint_name_prefix": "AttackWaypoint",
+    "waypoints_one_way": true,
+    "forward_look_bias": 0.8,
+    "debug_ui_slot": 1,
+    "hunt_area_center": [0, -0.25, 0],
+    "hunt_area_half_extents": [36, 36]
+  }
+]

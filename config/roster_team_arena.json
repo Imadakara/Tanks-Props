@@ -1,0 +1,9 @@
+[
+  {
+    "team": 1,
+    "count": 1,
+    "role": "KILLER",
+    "hunt_area_center": [0, -0.25, 0],
+    "hunt_area_half_extents": [36, 36]
+  }
+]

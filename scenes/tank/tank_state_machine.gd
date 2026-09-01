@@ -23,10 +23,11 @@ func _ready() -> void:
 	_disguise_timer.wait_time = GameConfig.disguise_duration_sec
 	_cooldown_timer.wait_time = GameConfig.disguise_cooldown_sec
 	# reload_timer.wait_time НЕ кэшируется здесь — читается заново в request_fire() при каждом
-	# выстреле (см. ниже). Кэш в _ready() дал бы устаревшее значение там, где GameConfig
-	# переопределяется точечно уже ПОСЛЕ готовности этого узла (см. scenes/bot_arena/bot_arena.gd —
-	# кулдаун=1с для тестовой сцены, выставляется из корневого _ready(), а корневой _ready()
-	# срабатывает ПОСЛЕДНИМ, когда все танки уже готовы).
+	# выстреле (см. ниже). Кэш в _ready() дал бы устаревшее значение, если бы какая-то карта
+	# переопределяла GameConfig.reload_duration_sec точечно из своего корневого _ready() (тот
+	# срабатывает ПОСЛЕДНИМ, когда все танки уже готовы) — сейчас ни одна карта так не делает
+	# (единый дефолт 3с везде, см. autoload/game_config.gd), но чтение "по требованию" остаётся
+	# правильным на случай, если такое переопределение понадобится снова.
 	_disguise_timer.timeout.connect(_on_disguise_timeout)
 	_cooldown_timer.timeout.connect(_on_cooldown_timeout)
 	_reload_timer.timeout.connect(_on_reload_timeout)

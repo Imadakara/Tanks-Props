@@ -1,16 +1,12 @@
 extends Node3D
-## SpawnZone — круглая зона спавна команды (по прямому запросу — единый механизм спавна на ВСЕХ
-## картах: продакшен Main.tscn/Map.tscn и тестовые песочницы BotArena.tscn/KillerArena.tscn).
-## Заменяет собой два РАЗНЫХ прежних подхода: точечные маркеры AttackSpawnPoint*/DefenseSpawnPoint*
-## (продакшен, team_spawner.gd/respawn_controller.gd — по одной ОТДЕЛЬНОЙ точке на каждого танка)
-## и хардкод `transform` у PlayerTank/BotTank прямо в .tscn (тестовые арены) — теперь ОДНА зона на
-## команду, случайная точка внутри неё на каждый спавн/респавн.
+## SpawnZone — круглая зона спавна команды, единый механизм на ЛЮБОЙ карте
+## (`TargetObjectiveMap.tscn`/`TeamArenaMap.tscn`).
 ##
 ## Команда кодируется ПРЕФИКСОМ ИМЕНИ узла, не отдельным @export полем — тот же паттерн, что уже
-## используется в проекте для Waypoint/AttackWaypoint (tank_ai_controller.gd) и
-## AttackSpawnPoint/DefenseSpawnPoint (team_spawner.gd): "AttackSpawnZone" / "DefenseSpawnZone".
-## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей —
-## продакшен-карта держит её под "Map", тестовые арены — прямо в корне (нет отдельного Map-узла).
+## используется в проекте для Waypoint/AttackWaypoint (tank_ai_controller.gd): "AttackSpawnZone" /
+## "DefenseSpawnZone". Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди
+## прямых детей — ни одна карта не заворачивает геометрию в промежуточный узел сейчас, но
+## рекурсивный поиск не завязывается на это для любой будущей карты.
 ##
 ## [ПЕРЕИСПОЛЬЗУЕТСЯ, по прямому запросу] Тот же скрипт стоит и на узле "ObjectiveAlertZone" —
 ## круглая зона тревоги вокруг уничтожаемого objective (tank_ai_controller.gd, State.ALERT, см.
@@ -23,12 +19,10 @@ extends Node3D
 ## сброса ящиков боеприпасов, см. scenes/ammo_crate/ammo_drop_zone.gd): круг тем же
 ## _draw_debug_circle() (жёлтый — имя не Attack/Defense) + pick_spawn_position() как источник
 ## случайной точки на реальной земле для падающего ящика.
-## [ИЗМЕНЕНО, по прямому запросу — "окружность должна быть частью префаба с target-objective"]
-## ObjectiveAlertZone теперь ДОЧЕРНИЙ узел самого объекта-цели (Map/DestructibleObjective на
-## продакшене, NavigationRegion3D/Objective на BotArena) с локальным y=-1, чтобы круг лёг на землю.
-## Освобождается ВМЕСТЕ с целью (free_on_destroy=true) — на картах без objective (KillerArena,
-## режим TEAM_ARENA) его нет вовсе. Все читатели ссылки перешли на is_instance_valid() — после
-## разрушения цели ссылка висячая, != null.
+## ObjectiveAlertZone — ДОЧЕРНИЙ узел самого объекта-цели (`NavigationRegion3D/Objective`), с
+## локальным y=-1, чтобы круг лёг на землю. Освобождается ВМЕСТЕ с целью (free_on_destroy=true) —
+## на картах без objective (`TeamArenaMap.tscn`, режим TEAM_ARENA) его нет вовсе. Все читатели
+## ссылки используют is_instance_valid() — после разрушения цели ссылка висячая, != null.
 
 @export var radius: float = 6.0
 ## Сколько раз пробовать случайную точку, прежде чем сдаться. Страховка от вырожденного случая
@@ -70,10 +64,9 @@ func pick_spawn_position() -> Vector3:
 			return result["position"]
 	return global_position
 
-## [ДОБАВЛЕНО, по прямому запросу — "танк спавнился передом в направлении центра карты"] Все три
-## карты (Main/Map.tscn 60×60, BotArena/KillerArena.tscn 72×72) имеют Ground, центрированный в
-## мировом (0,0) — центр карты ВСЕГДА мировой XZ-origin, отдельно вычислять его для конкретной
-## карты не нужно. Разворот только по Y (курс/yaw) — pitch/roll должны остаться нулевыми на плоской
+## Обе карты (72×72) имеют Ground, центрированный в мировом (0,0) — центр карты ВСЕГДА мировой
+## XZ-origin, отдельно вычислять его для конкретной карты не нужно. Разворот только по Y
+## (курс/yaw) — pitch/roll должны остаться нулевыми на плоской
 ## земле, поэтому цель look_at() берётся на ТОЙ ЖЕ высоте, что и сам танк (иначе look_at честно
 ## наклонил бы корпус по вертикали на разницу высот). forward танка — это -basis.z (см.
 ## tank_movement.gd _physics_process(), forward = -_body.global_transform.basis.z) — ТО ЖЕ самое
@@ -85,8 +78,8 @@ func pick_spawn_position() -> Vector3:
 ## Статик, не завязан на конкретный инстанс зоны — вызывается как SpawnZoneScript.face_center(tank)
 ## (через preload этого файла, см. вызывающие скрипты — НЕ class_name: headless run_project не
 ## подхватывает свежедобавленный class_name без пересканирования редактором, см. CLAUDE.md/vault,
-## тот же класс граблей, что и с новыми файлами вообще) из всех трёх мест спавна
-## (team_spawner.gd/respawn_controller.gd/bot_arena.gd), а не дублируется трижды.
+## тот же класс граблей, что и с новыми файлами вообще) из обоих мест спавна
+## (team_spawner.gd/respawn_controller.gd), а не дублируется дважды.
 static func face_center(tank: Node3D) -> void:
 	var pos: Vector3 = tank.global_position
 	if Vector2(pos.x, pos.z).length() < 0.01:

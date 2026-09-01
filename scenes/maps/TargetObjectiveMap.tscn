@@ -1,13 +1,14 @@
 [gd_scene format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_b63ln"]
-[ext_resource type="Script" path="res://scenes/bot_arena/bot_arena.gd" id="1_execi"]
+[ext_resource type="Script" path="res://scenes/maps/map_scene.gd" id="1_execi"]
 [ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="2_2uusy"]
 [ext_resource type="Script" path="res://scenes/tank/tank.gd" id="2_7eip8"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
 [ext_resource type="Script" path="res://scenes/hud/hud.gd" id="5_j8k2e"]
 [ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="8_execi"]
 [ext_resource type="PackedScene" path="res://scenes/ammo_crate/AmmoDropZone.tscn" id="9_drop"]
+[ext_resource type="Script" path="res://scenes/main/team_spawner.gd" id="10_spawn"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_2uusy"]
 vertices = PackedVector3Array(-10.75, 0.5, -23, -8.25, 0.5, -23.25, -7.75, 0.5, -24.5, -6, 0.5, -34.75, -6, 0.5, -24.75, -34.75, 0.5, -19.75, -11.25, 0.5, -19.75, -11.25, 0.5, -22.25, -34.75, 0.5, -34.75, -3.5, 0.5, -21.5, -2.25, 0.5, -21, -1.25, 0.5, -22.25, -3.75, 0.5, -24.25, 1.5, 0.5, -22.25, 2.5, 0.5, -21, 3.75, 0.5, -21.5, -4.5, 0.5, -24.75, 4, 0.5, -24.25, 4.75, 0.5, -24.75, 6.25, 0.5, -34.75, 6.25, 0.5, -24.75, 8.25, 0.5, -15.25, 8.5, 0.5, -14.25, 11, 0.5, -14, 7.5, 0.5, -15.75, 8.5, 0.5, -21.25, 7.5, 0.5, -20.25, 8.5, 0.5, -23.75, 11.5, 0.5, -12, 34.75, 0.5, -12, 34.75, 0.5, -34.75, 7.5, 0.5, -24.75, 4, 0.5, -20.5, -4.25, 0.5, -20.25, -2.25, 0.5, -18.5, 2.5, 0.5, -18.75, 4.75, 0.5, -20, 4, 0.5, -11.75, -3.5, 0.5, -12.25, -5, 0.5, -11, -3, 0.5, -1.5, 2.75, 0.5, -1.5, -1.25, 0.5, -17.5, -4.5, 0.5, -15.75, -3.75, 0.5, -15.25, -7.25, 0.5, -18.75, -8, 0.5, -18.5, -7.5, 0.5, -15.5, -6.5, 0.5, -20, 1.75, 0.5, -17.75, 4.75, 0.5, -15.75, 4, 0.5, -15.25, -3.75, 0.5, -0.75, -8.25, 0.5, -14.75, -10.25, 0.5, -18.5, -7.25, 0.5, -11, -8, 0.5, -11.5, -3.75, 0.5, 1.25, -34.75, 0.5, 1.25, 7.5, 0.5, -9.75, 3.75, 0.5, -0.75, 4, 0.5, 0.75, 10.75, 0.5, -9.75, 3.5, 0.5, 1.5, 1, 0.5, 1.75, 1, 0.5, 34.75, 11.5, 0.5, -10.75, 34.75, 0.5, 34.75, 6.75, 0.5, -11, 4.75, 0.5, -11, -3, 0.5, 1.75, -34.75, 0.5, 34.75, -1, 0.5, 34.75, -1, 0.5, 1.75)
@@ -88,7 +89,7 @@ albedo_color = Color(0.95, 0.15, 0.05, 0.55)
 [sub_resource type="BoxMesh" id="BoxMesh_evrla"]
 size = Vector3(2, 1.25, 2)
 
-[node name="BotArena" type="Node3D" unique_id=281684750]
+[node name="TargetObjectiveMap" type="Node3D" unique_id=281684750]
 script = ExtResource("1_execi")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=2025781862]
@@ -101,20 +102,9 @@ collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
 
-[node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
-transform = Transform3D(-0.647432, 0, -0.7620762, 0, 1, 0, 0.7620762, 0, -0.647432, 5.150537, 0.0009311265, -1.5863966)
-collision_layer = 2
-collision_mask = 3
-script = ExtResource("2_7eip8")
-team = 1
-
-[node name="CameraRig" parent="BotTank"]
-is_active = false
-
-[node name="TankAIController" parent="BotTank"]
-enabled = true
-hunt_area_center = Vector3(0, -0.25, 0)
-hunt_area_half_extents = Vector2(36, 36)
+[node name="TeamSpawner" type="Node" parent="." unique_id=2075500001]
+script = ExtResource("10_spawn")
+roster_config_path = "res://config/roster_target_objective.json"
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
 script = ExtResource("5_j8k2e")
@@ -251,24 +241,6 @@ shape = SubResource("BoxShape3D_0prsi")
 [node name="Mesh" type="MeshInstance3D" parent="NavigationRegion3D/HazardZone1" unique_id=600668854]
 material_override = SubResource("StandardMaterial3D_j8k2e")
 mesh = SubResource("BoxMesh_evrla")
-
-[node name="AttackBotTank" type="CharacterBody3D" parent="." unique_id=413402161 instance=ExtResource("1_b63ln")]
-transform = Transform3D(0.64429754, 0, 0.7647714, 0, 1, 0, -0.7647714, 0, 0.64429754, 9.917022, 0.00093117054, 2.5419564)
-collision_layer = 2
-collision_mask = 3
-script = ExtResource("2_7eip8")
-
-[node name="CameraRig" parent="AttackBotTank"]
-is_active = false
-
-[node name="TankAIController" parent="AttackBotTank"]
-enabled = true
-forward_look_bias = 0.8
-waypoint_name_prefix = "AttackWaypoint"
-waypoints_one_way = true
-hunt_area_center = Vector3(0, -0.25, 0)
-hunt_area_half_extents = Vector2(36, 36)
-debug_ui_slot = 1
 
 [node name="AttackWaypoint1" type="Node3D" parent="." unique_id=1592442195]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, 16)

@@ -59,8 +59,8 @@ func _ready() -> void:
 		_camera = tank.get_node("CameraRig/Camera3D")
 
 	# MatchManager/ScoreManager/RoundTimer/objective резолвятся лениво (см. _resolve_*) и
-	# поллятся: бот-арены заводят эти узлы из кода уже ПОСЛЕ этого _ready(), а objective
-	# может освободиться при уничтожении. Продакшен подключится к MatchManager тут же (узел статический).
+	# поллятся: карта заводит эти узлы из кода уже ПОСЛЕ этого _ready(), а objective может
+	# освободиться при уничтожении.
 	_resolve_match_manager()
 	_score_manager = get_tree().current_scene.get_node_or_null("ScoreManager")
 
@@ -98,10 +98,9 @@ func _update_final_stage_label() -> void:
 	var t: float = _match_manager.get_node("FinalStageTimer").time_left
 	_final_stage_label.text = "ФИНАЛЬНАЯ СТАДИЯ: %.0f с" % t
 
-## MatchManager резолвится лениво: продакшен — статический узел (есть к _ready() HUD); арена
-## TEAM_ARENA заводит его из кода ПОЗЖЕ (bot_arena.gd, узел зовётся "MatchManager"). Сигналы
-## подключаются один раз, при первом появлении узла. На BotArena (нет постраундового цикла)
-## узла нет вообще — вернёт null, HUD просто не покажет экран результата.
+## MatchManager резолвится лениво — map_scene.gd заводит его из кода в _ready() корня сцены,
+## которая идёт ПОСЛЕ _ready() HUD (см. корневой CLAUDE.md, "Scene bring-up ordering"). Сигналы
+## подключаются один раз, при первом появлении узла.
 func _resolve_match_manager() -> Node:
 	if _match_manager != null and is_instance_valid(_match_manager):
 		return _match_manager
@@ -114,9 +113,9 @@ func _resolve_match_manager() -> Node:
 		_match_manager.final_stage_started.connect(_on_final_stage_started)
 	return _match_manager
 
-## Источник таймера раунда ищется лениво: продакшен и арена TEAM_ARENA — MatchManager/RoundTimer;
-## BotArena заводит RoundTimer прямо в корне сцены из кода (bot_arena.gd), уже ПОСЛЕ _ready() HUD.
-## `as Timer` — null, если узла нет или это не Timer (тогда строка показывает --:--).
+## Источник таймера раунда ищется лениво — MatchManager/RoundTimer заводится map_scene.gd из кода,
+## уже ПОСЛЕ _ready() HUD. `as Timer` — null, если узла нет или это не Timer (тогда строка
+## показывает --:--).
 func _resolve_round_timer() -> Timer:
 	if _round_timer != null and is_instance_valid(_round_timer):
 		return _round_timer
@@ -161,26 +160,19 @@ func _update_match_score_line() -> void:
 		_score_label.text = "По раундам — Ты %d : %d Противник" % \
 			[MatchState.series_wins_you, MatchState.series_wins_enemy]
 
-## HealthComponent objective-цели: продакшен — Map/DestructibleObjective, арена —
-## NavigationRegion3D/Objective; ищем оба по имени. is_instance_valid: цель освобождается при
-## уничтожении (free_on_destroy=true), после чего ссылка висячая.
+## Группа "objective_health" — та же, что map_scene.gd регистрирует и TankAIController читает
+## (см. tank_ai_controller.gd._find_objective()) — не по имени узла, работает для любой карты без
+## правки этого файла. is_instance_valid: цель освобождается при уничтожении (free_on_destroy=true),
+## после чего ссылка висячая.
 func _resolve_objective_health() -> Node:
 	if _objective_health != null and is_instance_valid(_objective_health):
 		return _objective_health
-	_objective_health = null
-	var scene := get_tree().current_scene
-	if scene == null:
-		return null
-	var obj := scene.find_child("DestructibleObjective", true, false)
-	if obj == null:
-		obj = scene.find_child("Objective", true, false)
-	if obj != null:
-		_objective_health = obj.get_node_or_null("HealthComponent")
+	_objective_health = get_tree().get_first_node_in_group("objective_health")
 	return _objective_health
 
 ## Строка 3 (верх-центр, под счётом раундов): здоровье objective-цели. ТОЛЬКО режим
 ## TARGET_OBJECTIVE. Имя режима в тексте НЕ пишем — режим задан в настройках карты
-## (bot_arena.gd @export match_mode / продакшен match_manager.gd), в HUD ему не место.
+## (map_scene.gd @export match_mode), в HUD ему не место.
 func _update_objective_line() -> void:
 	var hc := _resolve_objective_health()
 	if MatchState.match_mode != MatchState.Mode.TARGET_OBJECTIVE or hc == null:
@@ -200,7 +192,7 @@ func _update_respawn_line() -> void:
 	_respawn_label.text = "Респаун через %d с" % int(ceil(t))
 
 func _on_round_ended(winner: String) -> void:
-	# record_round_result() (в MatchManager/arena_match) уже отработал до этого сигнала — серия актуальна.
+	# record_round_result() (в MatchManager) уже отработал до этого сигнала — серия актуальна.
 	var head := _round_result_head(winner)
 	if MatchState.series_complete():
 		var verdict: String = {
@@ -232,9 +224,9 @@ func _round_result_head(winner: String) -> String:
 		foe = sm.defense_kills if MatchState.player_team == 0 else sm.attack_kills
 	return "%s (убийства %d : %d)" % ["Ты победил" if player_won else "Противник победил", you, foe]
 
-## Смена сторон между раундами делается ТОЛЬКО там, где спавном рулит TeamSpawner (продакшен
-## Main.tscn — танки инстанцируются под роль каждый раунд). На бот-аренах (обоих режимов) танки
-## статические, инверсия player_team рассинхронила бы HUD (TeamLabel/«Ты») с реальным полем.
+## Смена сторон между раундами делается структурной проверкой — есть ли на карте TeamSpawner (см.
+## scenes/main/team_spawner.gd), который инстанцирует танки под роль на каждый спавн. Он есть на
+## любой карте, так что side-swap работает везде одинаково.
 func _has_side_swap() -> bool:
 	var scene := get_tree().current_scene
 	return scene != null and scene.get_node_or_null("TeamSpawner") != null
