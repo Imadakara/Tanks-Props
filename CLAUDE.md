@@ -348,6 +348,151 @@ reflects state (`"Objective: ON"` vulnerable / `"Objective: OFF"` invincible). L
 `bot_arena.gd` — `Main.tscn` runs `main.gd` instead, so this cheat button structurally cannot appear
 in a real match.
 
+**`State.ALERT` — automatic defense-team alarm on first hit to the objective (by request).**
+`ObjectiveAlertZone` reuses `spawn_zone.gd` verbatim (its name matches neither the `"Attack"` nor
+`"Defense"` prefix, so `_draw_debug_circle()` colors it yellow automatically) — radius =
+`DefenseSpawnZone.radius × 1.5`, centered on the objective's XZ position, present on all three maps
+(geometry-only on `Main.tscn`, same as the `Attack/DefenseWaypointN` markers — `tank_ai_controller.gd`
+still untouched). Every defense-team bot (`not is_attacker()`) subscribes in `_ready()` to
+`Objective/HealthComponent.damaged`; the very first hit — from anyone — flips `_alert_triggered =
+true` for good (no request for it to ever turn back off). `_ensure_home_state()` checks that flag
+FIRST, ahead of the usual PATROL(ACHIEVER)/HUNT(KILLER)/IDLE pick, routing the bot into
+`State.ALERT` — the same `_drive_to_point()` driving stack as HUNT/PATROL, but sampling uniformly
+inside the CIRCLE (`sqrt(randf())`, not HUNT's rectangle). DEFEND (an actually-visible enemy) still
+outranks it, same priority ladder as always — "searching for attackers" needs no bespoke logic since
+target-scanning already runs every think-tick regardless of the current home state. `_has_alert_target`
+gets the same `_on_target_lost()` staleness-reset treatment already applied twice to
+`_has_waypoint_target`/`_has_hunt_target` (§ above) — DEFEND's approach logic can repoint
+`_nav_agent.target_position` mid-alert, so the flag has to be cleared or the bot would spin in place
+on return. `vision_range` — one field driving BOTH cones' range (`_can_see()` checks distance before
+ever splitting into hull/turret cones) — bumped ×1.5 across all three difficulty tiers (MEDIUM
+10→15, EASY 6→9, HARD 14→21), not just MEDIUM.
+
+**ALERT is temporary, timer-driven, and the timer is CENTRALIZED (by request, three revisions).**
+First cut used a geometric "enemy physically inside the circle" check — too strict in practice: the
+defense bot already patrols right next to the objective, `vision_range` (15) comfortably covers the
+whole alert circle, so an attacker entering it was almost always ALREADY visible directly,
+triggering DEFEND (higher priority) before ALERT ever got a chance to show. Second cut replaced it
+with a per-bot timer (`_time_since_objective_hit`, reset to 0 on every `Objective/HealthComponent.
+damaged`) — but that timer lived in `BotSentryController._physics_process()`, which stops running
+entirely while the bot is frozen for respawn (`process_mode = DISABLED`, see
+`respawn_controller.gd`): a bot that died mid-alert came back with a stale timer, either missing an
+active alarm or wrongly re-triggering one. Final cut moves the timer to `bot_arena.gd` (the scene
+root orchestrator, never frozen) — `_time_since_objective_hit` (starts at `INF`) accumulates every
+physics frame there, resets to 0 in the same `_on_objective_damaged()` that already updates the HUD
+label; `BotSentryController` no longer stores or subscribes to anything, it just caches `_arena =
+get_tree().current_scene` in `_ready()` and calls `_arena.time_since_objective_hit()` (a public
+getter, not `.get()` on a private var) inside `_ensure_home_state()` each time. Every defense bot —
+the one that's been alive since scene load and one that respawned two seconds ago — reads the exact
+same clock, so "alarm on, existing AND newly-spawned defenders both see it" falls out for free.
+Confirmed live: kill mid-alert, let the (never-frozen) arena timer run past the freeze while the
+bot's own `_physics_process()` is provably not running, respawn, and the very next think-tick puts
+the bot straight into `State.ALERT` — no fresh hit needed, matching whatever time is actually left
+on the shared clock. Since transitions between home states became two-way (not just DEFEND→home
+anymore), `_ensure_home_state()` clears all three driving-target flags (`_has_waypoint_target`/
+`_has_hunt_target`/`_has_alert_target`) on every state change, not just the one pair that bit before
+(§ above) — cheaper than reasoning about which one is stale this time.
+
+**Respawn doesn't reset AI state on its own (by request — "a killed attacker comes back already
+mid-fight with the objective").** `RespawnController` resets the tank's physical state
+(position/health/ammo/`TankStateMachine`) but knows nothing about `BotSentryController.state` —
+different layers, deliberately not coupled. A bot that died in `State.ATTACK_OBJECTIVE` used to come
+back with that SAME state — and `ATTACK_OBJECTIVE` is never re-evaluated by `_ensure_home_state()`
+(it's in that function's exception-guard, waiting to resolve on its own), so a bot teleported back to
+its own spawn would immediately try to drive/shoot at the objective directly, skipping the whole
+`AttackWaypointN` route. Fixed with a new `RespawnController.respawned` signal (emitted at the end of
+`_on_respawn_timeout()`, after unfreezing) that `BotSentryController` subscribes to itself — the
+decoupling stays intact, `RespawnController` doesn't need to know the subscriber exists.
+`_on_respawned()` resets to a neutral `State.IDLE`, clears the current target and all three
+driving-target flags, but leaves `_waypoint_index` alone (route progress isn't the same thing as
+combat state, same reasoning already used in `_advance_waypoint()`) — the next think-tick picks a
+fresh home state through the normal priority machinery, as if the bot just spawned.
+
+**ALERT re-verified live — the mechanism works, its visible window is just narrow.** A live (not
+forced) fight timeline: `DEFEND` while the attacker is alive and visible (outranks ALERT, expected);
+flips to `ALERT` the instant the attacker dies and goes invisible while the objective-hit clock is
+still under `alert_timeout_sec`; back to `DEFEND` once the attacker respawns and is visible again;
+falls to `PATROL` once the clock runs out. Screenshotted the debug panel mid-ALERT to confirm it
+renders (`"state: ALERT — expires in 5.1s unless objective hit again"`). The reason it's easy to
+miss on screen: the defense bot patrols right next to the objective and `vision_range` (15) covers
+almost the whole `ObjectiveAlertZone` (radius 12), so a live attacker inside the circle is almost
+always ALREADY visible — DEFEND wins the priority race before ALERT gets a real chance to show; the
+actual window is the few seconds between an attacker's death and its respawn.
+
+**ALERT re-verified a second time, three fully-live respawns in a row — didn't reproduce.** Killed
+`BotTank` once to force a respawn window, then let everything else run un-forced (real
+`RespawnTimer`, real `AttackBotTank` fire, no manual `take_hit()`): each time it came back while
+`_arena.time_since_objective_hit() < alert_timeout_sec`, `state` was `ALERT`, matching the debug
+panel text (`"state: ALERT — expires in Xs..."`) screenshotted directly. One respawn landed during a
+genuine lull (both bots waiting on their own respawn timers, nobody firing for >10s) and correctly
+got `PATROL` — not a bug, exactly what "≤10s since the last hit" means. Found and closed one real
+gap while re-checking: ALERT's condition didn't check that the objective still exists — it
+`queue_free()`s on the 10th hit, but the arena clock (last hit was right before that) keeps
+ticking, so a defender would keep "searching" around a target that's already gone for up to
+`alert_timeout_sec` more seconds. Added an `is_instance_valid(_objective_node)` check, same pattern
+already used by the `ATTACK_OBJECTIVE` branch elsewhere in this file.
+
+**Respawn also didn't reset the one-way route progress (by request — "attacking bots must always
+spawn following their waypoints").** `_on_respawned()` (§ above) correctly resets `state`, but
+deliberately left `_waypoint_index` alone — same reasoning as `_advance_waypoint()` ("if a bot
+somehow returns to PATROL, keep the last waypoint, don't roll back to the first"), which is right
+for a bot that stayed put and got distracted, but wrong for respawn: the bot gets teleported back to
+its own spawn, far from where it died. If it died having already reached the last `AttackWaypoint`
+(right at the objective), `_waypoint_index` stayed on that last index — respawn drove it straight
+back to that SAME last waypoint (not the first), it reached it almost immediately, and
+`_advance_waypoint()` dropped it right back into `ATTACK_OBJECTIVE` — technically `PATROL` per
+§ above, but with no visible march through the route. Fix: `_on_respawned()` now also does `if
+waypoints_one_way: _waypoint_index = 0` — only for the one-way (attacker) route; the looping
+defense patrol (`waypoints_one_way=false`) has no "route completed" concept and is untouched.
+Confirmed live, unforced: killed `AttackBotTank` at the objective, let the real 10s `RespawnTimer`
+fire, and it came back in `PATROL` at `waypoint_idx=1` (already past the first leg), driving through
+the route rather than sitting back at the objective.
+
+**ALERT trigger is now an OR of two independent conditions (by request — user caught a live case
+where a defender spawned mid-bombardment and stayed in `PATROL`, but the timer mechanism itself
+could not be reproduced technically despite 25+ forced and live checks in the same session).** The
+timer alone has a gap: it only starts once the objective has actually been HIT — an attacker who
+has walked into `ObjectiveAlertZone` but hasn't fired yet leaves the timer at `INF`, so a bot
+spawning in that window still saw `PATROL`. Brought back the original geometric check (an attacker
+physically inside the circle, retired earlier in this doc for being too strict AS THE ONLY
+condition) as a second, independent path — same centralized orchestrator pattern as the timer, not
+per-bot: `bot_arena.gd.enemy_in_alert_zone()` loops `get_tree().get_nodes_in_group("tanks")`,
+filters `is_attacker() and tank.visible` (same dead-tank-exclusion pattern as `_can_see()` — a
+respawn-frozen corpse must not count), and does a flat `Vector2` XZ-distance check against the
+zone's own `radius` (`_alert_zone.get("radius")`, no `class_name` — same reflection pattern already
+used elsewhere for this script). `_ensure_home_state()`'s condition is now `objective_alive and
+(time_since_hit < alert_timeout_sec or enemy_in_zone)` — each half covers what the other misses: the
+timer keeps ALERT alive for `alert_timeout_sec` after the attacker leaves the circle (e.g. retreats
+after firing); the geo check catches an attacker already inside who hasn't fired yet. `DEFEND` (an
+actually-visible target) still outranks ALERT either way, same priority ladder as always — this
+brought back exactly the interaction that made the pure-geo version look broken originally (an
+attacker just inside the circle is usually already visible too, so `DEFEND` wins the race first);
+that's expected, not a regression — the geo check's real job is the case NPC vision doesn't cover
+(behind an obstacle, or before the querying bot's own think-tick catches up).
+
+The original user-reported case — timer-only ALERT missing on a fresh spawn — was never
+technically reproduced (systematic forced + live retries across most of this session's diagnostics
+all showed the timer firing correctly); the OR-fallback is a deliberate defensive measure requested
+regardless of whether the exact root cause was ever pinned down, not a fix confirmed against a
+reproduced failure.
+
+Confirmed live via `run_script`, isolating each half of the OR independently (`BotArena.tscn`,
+forced `_ensure_home_state()` calls, bypassing `_think()`'s own DEFEND check so the geo/timer
+condition itself — not the priority race — is what's being tested): attacker teleported into the
+zone with the timer already expired (`999s` stale) → `ALERT` (geo-only); timer forced fresh
+(`0.0s`) with the attacker teleported far outside the zone → `ALERT` (timer-only); both false
+(stale timer, attacker outside) → `PATROL`, confirming the OR doesn't misfire when neither
+condition holds. Also smoke-tested `enemy_in_alert_zone()` on `KillerArena.tscn` (same shared code,
+`ObjectiveAlertZone` present there too) — zone found, method callable, correctly `false` at each
+tank's own spawn corner and `true` once `PlayerTank` was teleported into the zone.
+
+The debug label (`_update_brain_debug_label()`, `State.ALERT` case) now branches three ways instead
+of unconditionally showing the timer countdown — a stale/expired timer value while the geo check
+alone holds ALERT open used to render a meaningless negative number (`"expires in -991.9s"`,
+screenshotted before the fix): `"enemy in zone, timer Xs left"` when both conditions are live,
+`"enemy in zone (timer expired)"` when only geo holds it, and the original `"expires in Xs..."` text
+when only the timer holds it.
+
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
 request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the
 scene file itself (not the runtime default), it has 6 extra `ObstacleN` static bodies spread across

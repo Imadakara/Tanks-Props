@@ -149,7 +149,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -165,7 +165,12 @@ const _PROJECTILE_GRAVITY := 9.8
 ## Радиус обзора (общий для обоих конусов) и полуширина ГЛАВНОГО конуса — жёстко на направлении
 ## корпуса, всегда активен, независимо от башни/блуждания (см. _can_see() и заголовок файла).
 ## Шире, чем в v1 (была движущаяся "камера") — по прямому запросу, "как в других играх".
-@export var vision_range: float = 10.0
+## [ИЗМЕНЕНО, по прямому запросу — "увеличь дальность сектора обзора у корпуса и башни ботов в
+## полтора раза"] Было 10.0 (EASY 6.0, HARD 14.0, см. _DIFFICULTY_PRESETS) — ОБЩИЙ радиус для ОБОИХ
+## конусов (главного/корпуса и прицельного/башни, см. _can_see() — dist>vision_range отсекается ДО
+## разделения на конусы), поэтому одно число покрывает "и корпуса, и башни" сразу. Ширина секторов
+## (look_cone_deg/secondary_cone_deg) не менялась — просили именно ДАЛЬНОСТЬ, не угол.
+@export var vision_range: float = 15.0
 @export var look_cone_deg: float = 100.0  # полный угол конуса вокруг направления корпуса
 @export var fire_range: float = 8.0
 @export var fire_aim_tolerance_deg: float = 5.0
@@ -401,7 +406,7 @@ const _PROJECTILE_GRAVITY := 9.8
 ## wander_min_turn_deg — общий для всех уровней, сложность его не меняет.
 const _DIFFICULTY_PRESETS := {
 	Difficulty.EASY: {
-		"vision_range": 6.0,
+		"vision_range": 9.0,  # было 6.0, ×1.5 — см. @export vision_range выше
 		"look_cone_deg": 75.0,
 		"fire_range": 5.0,
 		"fire_aim_tolerance_deg": 9.0,
@@ -411,7 +416,7 @@ const _DIFFICULTY_PRESETS := {
 		"turret_turn_speed": 0.8,
 	},
 	Difficulty.HARD: {
-		"vision_range": 14.0,
+		"vision_range": 21.0,  # было 14.0, ×1.5 — см. @export vision_range выше
 		"look_cone_deg": 130.0,
 		"fire_range": 11.0,
 		"fire_aim_tolerance_deg": 3.0,
@@ -423,6 +428,11 @@ const _DIFFICULTY_PRESETS := {
 	},
 }
 
+## ALERT — сколько секунд с последнего попадания по objective держит тревогу активной (таймер сам —
+## bot_arena.gd, см. _ensure_home_state()). Общий для всех уровней сложности — не тюнинг
+## конкретного difficulty-пресета, а правило самого механизма тревоги.
+@export var alert_timeout_sec: float = 10.0
+
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
@@ -430,6 +440,7 @@ const _DIFFICULTY_PRESETS := {
 @onready var _weapon: Node = get_parent().get_node("WeaponController")
 @onready var _disguise: Node = get_parent().get_node("DisguiseController")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
+@onready var _respawn_controller: Node = get_parent().get_node("RespawnController")
 
 var state: State = State.IDLE
 ## Мировой угол, куда сейчас должна повернуться БАШНЯ (v2 — только башня, на главный конус
@@ -472,6 +483,33 @@ var _has_hunt_target: bool = false
 var _objective_node: Node3D = null
 var _objective_mission_complete: bool = false
 var _hunt_target_timer: float = 0.0
+
+## ALERT [ДОБАВЛЕНО, по прямому запросу — "тревога защищающимся ботам objective, включается
+## автоматически при первом попадании по objective-цели, следовать в область круга и искать там
+## атакующих"; дважды ИСПРАВЛЕНО следующими прямыми запросами — сначала "стейт не должен быть
+## включён всегда по умолчанию, должен выключаться, если в пределах окружности нет танков
+## противника" (гео-проверка, см. историю правок), затем "измени условие выхода — не если нет
+## танков в окружности, а если objective не получает урон 10 сек с момента последнего выстрела"
+## (таймер, ЗАМЕНИЛ гео-проверку целиком), и в третий раз — "ALERT не срабатывает у уже имеющегося
+## танка, у нового заспавненного тоже должен быть по дефолту, если objective под атакой; тревога
+## ОБЩАЯ — у уже существующих на карте И у новых спавнящихся"].
+## _alert_zone — найденный в _ready() узел "ObjectiveAlertZone" (см. _find_alert_zone()), null,
+## если на карте такого нет (тогда тревога просто не сработает — тот же defensive-паттерн, что и у
+## _hunt_area_valid/_objective_node). Таймер "секунд с последнего попадания" теперь НЕ хранится
+## здесь персонально — читается через _arena.time_since_objective_hit() (см. _ready(), bot_arena.gd)
+## КАЖДЫЙ раз в _ensure_home_state(). Раньше личный _time_since_objective_hit копился в СОБСТВЕННОМ
+## _physics_process() этого бота — но пока бот "заморожен" на респавне (process_mode=DISABLED, см.
+## respawn_controller.gd), его _physics_process() вообще не вызывается, и таймер застревал на
+## значении из момента смерти вместо реально прошедшего времени — respawn-нутый бот либо не видел
+## актуальную тревогу, либо видел устаревшую. Централизованный таймер в bot_arena.gd (корень сцены,
+## никогда не замораживается) решает это раз и навсегда — "уже существующий" и "только что
+## заспавнившийся" бот читают ОДНО И ТО ЖЕ значение. Точка внутри круга — та же механика, что у
+## SpawnZone/pick_spawn_position() (равномерно по площади, sqrt(randf())), не HUNT-подобный
+## прямоугольник: alert-зона круглая.
+var _alert_zone: Node3D = null
+var _arena: Node = null
+var _alert_target_pos: Vector3 = Vector3.ZERO
+var _has_alert_target: bool = false
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
 ## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
@@ -570,9 +608,21 @@ func _ready() -> void:
 	_movement.move_speed *= move_speed_multiplier
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
+	# [ДОБАВЛЕНО, по прямому запросу — "уничтоженный атакующий появляется сразу в стейте боя с
+	# целью на objective"] См. doc-comment у respawn_controller.gd/signal respawned — сбрасываем
+	# СВОЁ AI-состояние сами, а не полагаемся на RespawnController (который физическое состояние
+	# танка сбрасывает, но ничего не знает про BotSentryController.state).
+	_respawn_controller.respawned.connect(_on_respawned)
 	_collect_waypoints()
 	_detect_hunt_area()
 	_find_objective()
+	_find_alert_zone()
+	# [ИЗМЕНЕНО, по прямому запросу — "ALERT не срабатывает у уже имеющегося танка, тревога должна
+	# быть ОБЩЕЙ у уже существующих на карте И у новых спавнящихся"] Раньше здесь подписывался НА
+	# СИГНАЛ Objective/HealthComponent.damaged НАПРЯМУЮ, храня СВОЙ personal-таймер — теперь таймер
+	# живёт централизованно в bot_arena.gd (корень сцены, никогда не замораживается на респавне),
+	# просто кэшируем ссылку на него, читаем через time_since_objective_hit() в _ensure_home_state().
+	_arena = get_tree().current_scene
 
 	# CameraRig этого танка на статичной сцене нельзя выключить оверрайдом в .tscn (нет
 	# редактируемых детей у инстанса) — гасим камеру здесь. BotSentryController стоит
@@ -660,6 +710,11 @@ func _detect_hunt_area() -> void:
 func _find_objective() -> void:
 	_objective_node = get_tree().current_scene.find_child("Objective", true, false)
 
+## См. @export-блок про ALERT выше. Тот же рекурсивный find_child, что и у Objective/Ground —
+## ObjectiveAlertZone лежит в корне на тестовых аренах, под "Map" на продакшене.
+func _find_alert_zone() -> void:
+	_alert_zone = get_tree().current_scene.find_child("ObjectiveAlertZone", true, false)
+
 func _physics_process(delta: float) -> void:
 	_total_time_sec += delta
 	_think_timer -= delta
@@ -689,6 +744,15 @@ func _physics_process(delta: float) -> void:
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.HUNT:
 			_drive_to_hunt_point(delta)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.ALERT:
+			# Симметрично HUNT/PATROL — та же связка "доехать до случайной точки в зоне, оглядеться,
+			# выбрать следующую" (см. _drive_to_alert_point()); "искать атакующих" не требует особой
+			# логики сверху — сканирование цели уже идёт КАЖДЫЙ think-тик независимо от текущего
+			# состояния (см. _think(), приоритет "видит цель → DEFEND" срабатывает поверх ЛЮБОГО
+			# домашнего стейта, включая этот).
+			_drive_to_alert_point(delta)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.PURSUE:
@@ -775,7 +839,39 @@ func _ensure_home_state() -> void:
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE:
 		return
 	var desired: State
-	if role == Role.ACHIEVER and _objective_mission_complete:
+	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
+	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
+	# версия (гео-проверка "враг физически в круге") оказалась СЛИШКОМ строгой КАК ЕДИНСТВЕННОЕ
+	# условие: defense-бот патрулирует прямо рядом с objective, vision_range(15) достаточно велик
+	# относительно радиуса круга — как только атакующий попадал в круг, его почти всегда СРАЗУ же
+	# УЖЕ было видно напрямую (приоритет "вижу цель → DEFEND" срабатывал раньше), ALERT почти
+	# никогда не успевал активироваться заметно. Таймер по факту попаданий заменил её как основное
+	# условие — надёжнее и ближе к первоначальному запросу ("держим тревогу, пока objective реально
+	# под обстрелом").
+	# [ИСПРАВЛЕНО, по прямому запросу — "ALERT не срабатывает у уже имеющегося танка защитника,
+	# тревога должна быть общей у уже существующих на карте и у новых спавнящихся"] Таймер читается
+	# из _arena (bot_arena.gd), не хранится персонально — см. doc-comment у _arena выше.
+	# [ДОБАВЛЕНО, найдено попутно при перепроверке ALERT] Objective живёт свои последние
+	# alert_timeout_sec секунд ПОСЛЕ фактического уничтожения — _objective_node.queue_free()'ится
+	# на 10-м попадании, но arena-таймер (последнее попадание ПЕРЕД уничтожением) продолжает
+	# тикать как ни в чём не бывало, раз новых попаданий физически больше быть не может. Без этой
+	# проверки бот ещё несколько секунд "искал бы атакующих" вокруг уже не существующей цели —
+	# семантически бессмысленно, защищать больше нечего.
+	# [ДОБАВЛЕНО, по прямому запросу — "вернём обратно условие сброса глобального ALERT — когда в
+	# пределах окружности objective нет танков противника, иначе глобальный ALERT"] Гео-проверка
+	# (`_arena.enemy_in_alert_zone()`, тот же централизованный orchestrator-паттерн, что и таймер)
+	# вернулась НЕ взамен таймера, а ЧЕРЕЗ ИЛИ с ним — каждое условие независимо ловит случай,
+	# который другое может пропустить: таймер держит тревогу ещё alert_timeout_sec секунд ПОСЛЕ
+	# последнего попадания даже если атакующий уже физически покинул круг (например, отступил); гео-
+	# проверка ловит атакующего, который УЖЕ вошёл в круг, но ЕЩЁ НИ РАЗУ не выстрелил (таймер сам
+	# по себе тогда молчал бы, пока не будет фактического попадания). DEFEND (видит цель напрямую)
+	# по-прежнему приоритетнее обоих — так же, как раньше не давал чистой гео-проверке проявиться.
+	var time_since_hit: float = _arena.time_since_objective_hit() if _arena != null else INF
+	var enemy_nearby: bool = _arena.enemy_in_alert_zone() if _arena != null else false
+	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
+	if not _body.is_attacker() and objective_alive and _alert_zone != null and (time_since_hit < alert_timeout_sec or enemy_nearby):
+		desired = State.ALERT  # см. @export-блок про ALERT — перебивает обычное PATROL/HUNT/IDLE
+	elif role == Role.ACHIEVER and _objective_mission_complete:
 		desired = State.IDLE  # objective уже уничтожен (waypoints_one_way) — см. _objective_mission_complete
 	elif role == Role.ACHIEVER and not _waypoints.is_empty():
 		desired = State.PATROL
@@ -787,6 +883,16 @@ func _ensure_home_state() -> void:
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
+		# [ИСПРАВЛЕНО] Все ТРИ driving-флага сразу, не точечно под конкретный переход — тот же
+		# класс бага, что уже дважды всплывал у _has_hunt_target/_has_waypoint_target (см.
+		# _on_target_lost()): ALERT/PATROL/HUNT каждый по-своему переписывают
+		# _nav_agent.target_position, и теперь переходы возможны МЕЖДУ ЛЮБОЙ парой домашних
+		# состояний (не только через DEFEND), не только в фиксированном направлении — надёжнее
+		# считать протухшими все три сразу при КАЖДОЙ смене домашнего state, чем гадать, какой
+		# конкретно нужно сбросить в этот раз.
+		_has_waypoint_target = false
+		_has_hunt_target = false
+		_has_alert_target = false
 
 ## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
 ## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в
@@ -807,6 +913,45 @@ func _ensure_home_state() -> void:
 ## `_nav_agent.target_position` разъезжались на 30+м после возврата в HUNT. Заодно сбрасываем
 ## reverse/detour-таймеры — DEFEND останавливает движение полностью, любое "в процессе" застревание
 ## с прошлого сегмента пути физически неактуально к моменту возобновления движения.
+## [ДОБАВЛЕНО, по прямому запросу — "если атакующий objective-цель танк уничтожается, то появляется
+## сразу в стейте боя с целью на objective, такого быть не должно"] RespawnController телепортирует
+## танк физически на его СПАВН (далеко от того места, где он умер), но НЕ трогает
+## BotSentryController.state вообще (не его слой, см. doc-comment у signal respawned) — бот,
+## погибший будучи в ATTACK_OBJECTIVE (или DEFEND, PURSUE, SEARCH — что угодно), воскресал бы С ТЕМ
+## ЖЕ state. ATTACK_OBJECTIVE особенно проблемна: она НЕ пересчитывается через обычный
+## _ensure_home_state() (в её exception-guard, "ждёт, пока сам не разрешится") — бот, телепортированный
+## на спавн, но всё ещё формально в ATTACK_OBJECTIVE, начинал бы сразу ехать/стрелять по objective
+## НАПРЯМУЮ от спавна, целиком пропуская маршрут AttackWaypointN. Сброс к IDLE — нейтральная точка,
+## следующий think-тик пересчитает домашнее состояние (PATROL/HUNT/ALERT) с нуля через обычный
+## приоритетный механизм, как будто бот только что появился.
+##
+## [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот погибает при стрельбе по objective — не
+## сбрасывается стейт, спавнится уже нацеленным на objective и едет прямо к нему; атакующие боты
+## должны ВСЕГДА спавниться в стейте следования по вейпоинтам"] Раньше `_waypoint_index` НЕ
+## трогался здесь — по аналогии с `_advance_waypoint()` ("если бот как-то вернётся в PATROL, пусть
+## это будет тот же последний вейпоинт, не откат на первый"). Но тот принцип относится к боту,
+## физически ОСТАВШЕМУСЯ на месте (например, отвлёкся на DEFEND рядом с последним вейпоинтом) — а
+## респавн ТЕЛЕПОРТИРУЕТ бота на спавн, ДАЛЕКО от того места, где он умер. Живьём подтверждено
+## (run_script): если атакующий умирал, уже дойдя до последнего AttackWaypoint (рядом с objective),
+## `_waypoint_index` оставался на последнем — воскреснув на своём дальнем спавне, PATROL СРАЗУ вёл
+## его к ЭТОМУ ЖЕ последнему вейпоинту (не к первому), он его быстро достигал, и
+## `_advance_waypoint()` почти сразу возвращал в ATTACK_OBJECTIVE — визуально выглядело так, будто
+## бот "спавнится уже настроенным на objective", целиком пропуская видимый марш через весь
+## маршрут. `waypoints_one_way` — единственный признак, отличающий одноразовый (атакующий) маршрут
+## от обычного зацикленного патруля защиты (тот и не должен рестартоваться с первой точки — у него
+## нет понятия "маршрут пройден", он крутит вейпоинты вечно).
+func _on_respawned() -> void:
+	state = State.IDLE
+	_current_target = null
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
+	_stuck_reverse_timer = 0.0
+	_detour_timer = 0.0
+	_stuck_check_timer = 0.0
+	if waypoints_one_way:
+		_waypoint_index = 0
+
 func _on_target_lost() -> void:
 	if role == Role.KILLER:
 		_pursue_target_pos = _last_known_target_pos
@@ -821,8 +966,10 @@ func _on_target_lost() -> void:
 	# _drive_to_waypoint() видит "точка уже выбрана" и НЕ переустанавливает target_position при
 	# возврате в PATROL; агент продолжает "ехать" к nav-пути, ведущему к уже мёртвой/спрятанной
 	# цели, _get_lookahead_point() вырождается в текущую позицию бота — бот крутится на месте.
-	# Безусловно (не только для KILLER) — ACHIEVER/PATROL страдает от той же причины.
+	# Безусловно (не только для KILLER) — ACHIEVER/PATROL страдает от той же причины. То же самое
+	# для ALERT (_has_alert_target) — тот же класс бага, тот же фикс.
 	_has_waypoint_target = false
+	_has_alert_target = false
 	_stuck_reverse_timer = 0.0
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
@@ -1073,6 +1220,21 @@ func _drive_to_hunt_point(delta: float) -> void:
 	if _drive_to_point(delta, _hunt_target_pos, waypoint_reach_dist) or _hunt_target_timer >= hunt_target_timeout_sec:
 		_has_hunt_target = false
 
+## ALERT — та же обёртка, что и HUNT/PATROL: доехать до случайной точки внутри _alert_zone, затем
+## выбрать новую (см. _pick_new_alert_target()). Без hunt_target_timeout_sec-аналога — alert-зона
+## заведомо маленький круг (1.5× радиуса SpawnZone, см. doc-comment у ObjectiveAlertZone-узла на
+## карте), недостижимых точек внутри неё не ожидается так же остро, как на всю HUNT-зону карты.
+func _drive_to_alert_point(delta: float) -> void:
+	if _alert_zone == null:
+		_movement.ai_move_input = 0.0
+		_movement.ai_turn_input = 0.0
+		return
+	if not _has_alert_target:
+		_pick_new_alert_target()
+		_nav_agent.target_position = _alert_target_pos
+	if _drive_to_point(delta, _alert_target_pos, waypoint_reach_dist):
+		_has_alert_target = false
+
 ## Общий driving-стек для ЛЮБОЙ точки-цели (PATROL/HUNT/PURSUE зовут её с разным target_pos) —
 ## NavigationAgent3D/NavMesh для маршрута, pure pursuit для следования (см. _get_lookahead_point()),
 ## короткий луч-тормоз (emergency_brake_range), антизастрял по чистому смещению за окно, и, если
@@ -1191,6 +1353,8 @@ func _current_drive_target() -> Vector3:
 			return _waypoint_target_pos
 		State.HUNT:
 			return _hunt_target_pos
+		State.ALERT:
+			return _alert_target_pos if _has_alert_target else _body.global_position
 		State.PURSUE:
 			return _pursue_target_pos
 		State.SEARCH:
@@ -1386,6 +1550,15 @@ func _pick_new_hunt_target() -> void:
 	_hunt_target_pos = hunt_area_center + Vector3(x, 0.0, z)
 	_has_hunt_target = true
 
+## Равномерно по площади КРУГА (sqrt(randf()), не randf() напрямую — та же техника, что
+## SpawnZone.pick_spawn_position()/_pick_random_point_near() — круглая alert-зона, не
+## прямоугольная HUNT-зона, отсюда другая формула, чем у _pick_new_hunt_target() выше).
+func _pick_new_alert_target() -> void:
+	var angle: float = randf() * TAU
+	var dist: float = sqrt(randf()) * float(_alert_zone.get("radius"))
+	_alert_target_pos = _alert_zone.global_position + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	_has_alert_target = true
+
 ## Точка входа в SEARCH (см. заголовок файла) — вызывается РОВНО ОДИН РАЗ, когда PURSUE доезжает
 ## до последней видимой позиции цели. Фиксирует anchor и делает ОДНОКРАТНЫЕ броски вероятности
 ## "будет ли возврат на anchor в этом заходе" и "после какого числа поездок" (см. @export-блок про
@@ -1539,6 +1712,8 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(0.95, 0.25, 0.55, 0.26)  # розовый — между PURSUE и HUNT, свой цвет
 		State.ATTACK_OBJECTIVE:
 			fill_color = Color(1.0, 0.1, 0.05, 0.3)  # насыщенный красный — активно стреляет, как DEFEND
+		State.ALERT:
+			fill_color = Color(0.95, 0.85, 0.15, 0.24)  # жёлтый — тот же цвет, что у ObjectiveAlertZone
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
@@ -1771,6 +1946,22 @@ func _update_brain_debug_label() -> void:
 		State.HUNT:
 			if _has_hunt_target:
 				lines.append("to point: %.1fm" % _body.global_position.distance_to(_hunt_target_pos))
+			_append_nav_debug_lines(lines)
+		State.ALERT:
+			var arena_time: float = _arena.time_since_objective_hit() if _arena != null else INF
+			var enemy_in_zone: bool = _arena.enemy_in_alert_zone() if _arena != null else false
+			var timer_active: bool = arena_time < alert_timeout_sec
+			# Раздельный текст на случай, когда только ОДНО из двух OR-условий держит ALERT — иначе
+			# "истекающий" таймер, который на самом деле УЖЕ истёк (а держит ALERT только гео-проверка),
+			# показывал бы бессмысленное отрицательное число секунд.
+			if enemy_in_zone and timer_active:
+				lines.append("ALERT — enemy in zone, timer %.1fs left" % (alert_timeout_sec - arena_time))
+			elif enemy_in_zone:
+				lines.append("ALERT — enemy in zone (timer expired)")
+			else:
+				lines.append("ALERT — expires in %.1fs unless objective hit again" % (alert_timeout_sec - arena_time))
+			if _has_alert_target:
+				lines.append("to point: %.1fm" % _body.global_position.distance_to(_alert_target_pos))
 			_append_nav_debug_lines(lines)
 		State.PURSUE:
 			lines.append("last seen at: %.1fm" % _body.global_position.distance_to(_pursue_target_pos))

@@ -13,6 +13,20 @@ extends Node
 
 const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 
+## [ДОБАВЛЕНО, по прямому запросу — "если атакующий objective-цель танк уничтожается, то она
+## появляется сразу в стейте боя с целью на objective, такого быть не должно"] RespawnController
+## сбрасывает физическое состояние танка (позиция/здоровье/боезапас/TankStateMachine), но НИЧЕГО
+## не знает о AI-стейте (BotSentryController.state живёт в СОВЕРШЕННО ДРУГОМ, тестовом-песочницы
+## компоненте — RespawnController общий, используется и игроком, и production TankAIController, не
+## должен знать про BotSentryController напрямую, это нарушило бы разделение слоёв). Танк,
+## погибший будучи в ATTACK_OBJECTIVE/DEFEND, воскресал бы С ТЕМ ЖЕ state — а ATTACK_OBJECTIVE
+## вообще не пересчитывается через обычный _ensure_home_state() (в её exception-guard, ждёт, пока
+## сам не разрешится) — так что бот, реально телепортированный на СВОЙ спавн (далеко от objective),
+## пытался ехать/стрелять по objective НАПРЯМУЮ, минуя весь маршрут AttackWaypointN. Сигнал —
+## развязка между слоями: кто угодно (BotSentryController) подписывается сам, RespawnController не
+## обязан знать о его существовании.
+signal respawned
+
 @onready var _tank: CharacterBody3D = get_parent()
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
@@ -44,6 +58,7 @@ func _on_respawn_timeout() -> void:
 	_state_machine.force_reset()
 	_tank.clear_damage_paint()
 	_set_frozen(false)
+	respawned.emit()
 
 func _set_frozen(frozen: bool) -> void:
 	_tank.visible = not frozen

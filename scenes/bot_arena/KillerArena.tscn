@@ -150,16 +150,16 @@ transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49
 light_energy = 1.2
 
 [node name="PlayerTank" type="CharacterBody3D" parent="." unique_id=677005994 instance=ExtResource("1_b63ln")]
-transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 28, 0, 28)
+transform = Transform3D(0.59450376, 0, 0.8040928, 0, 1, 0, -0.8040928, 0, 0.59450376, 34.94561, 0.00013023149, 25.836939)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
 
 [node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
-transform = Transform3D(0.57946247, 0, -0.8149917, 0, 1, 0, 0.8149917, 0, 0.57946247, 16.728718, 0, -2.9137056)
+transform = Transform3D(-0.8766012, 0, -0.48120168, 0, 1, 0, 0.48120168, 0, -0.8766012, -6.099569, 0.00093119073, -3.2802484)
 collision_layer = 2
 collision_mask = 3
-velocity = Vector3(3.6674628, 0, -2.6075811)
+velocity = Vector3(2.1654077, 0, 3.9447055)
 script = ExtResource("2_7eip8")
 team = 1
 
@@ -393,3 +393,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, -24)
 
 [node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=485153190]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -22)
+
+[node name="ObjectiveAlertZone" type="Node3D" parent="." unique_id=898111163]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -20)
+script = ExtResource("8_h4vpl")
+radius = 12.0

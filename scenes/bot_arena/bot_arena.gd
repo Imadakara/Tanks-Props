@@ -45,9 +45,33 @@ const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 @onready var _attack_zone: Node3D = $AttackSpawnZone
 @onready var _defense_zone: Node3D = $DefenseSpawnZone
 @onready var _objective_label: Label = $HUD/ObjectiveLabel
+@onready var _alert_zone: Node3D = $ObjectiveAlertZone
 
 var _objective_health: Node = null
 var _objective_toggle_button: Button
+
+## [ДОБАВЛЕНО, по прямому запросу — "ОБЩИЙ ALERT стейт — у уже существующих на карте И у новых
+## спавнящихся"] Раньше каждый BotSentryController хранил СВОЙ personal-таймер тревоги
+## (_time_since_objective_hit), копившийся в его СОБСТВЕННОМ _physics_process() — но пока бот
+## "заморожен" на респавне (process_mode=DISABLED, см. respawn_controller.gd), его
+## _physics_process() вообще не вызывается: таймер застревал на значении из момента смерти, не
+## отражая реально прошедшее время. Результат — рассинхронизация: у respawn-нутого бота ALERT мог
+## не сработать (или сработать неверно) независимо от того, что реально происходило с objective,
+## пока он был мёртв. Централизованный таймер живёт ЗДЕСЬ — BotArena (корень сцены) никогда не
+## замораживается, копится РОВНО ОДИН РАЗ на всех, не дублируется по ботам. Каждый
+## BotSentryController теперь ЧИТАЕТ его через time_since_objective_hit() (см. ниже), а не хранит
+## свою копию — "уже существующий" и "только что заспавнившийся" бот видят ОДНО И ТО ЖЕ значение.
+## Стартует с INF ("удара никогда не было") — 0.0 читалось бы как "только что попали".
+##
+## [ДОБАВЛЕНО, по прямому запросу — "верни условие сброса ALERT — когда в пределах окружности
+## objective нет танков противника, иначе глобальный ALERT"] Таймер остаётся ОСНОВНЫМ, надёжно
+## подтверждённым живьём условием — это ДОПОЛНИТЕЛЬНЫЙ, независимый путь включения тревоги (см.
+## enemy_in_alert_zone() ниже и её использование в bot_sentry_controller.gd/_ensure_home_state(),
+## объединены через ИЛИ) — если враг физически внутри ObjectiveAlertZone ПРЯМО СЕЙЧАС, ALERT
+## активен, даже если формальный таймер почему-то ещё не сработал/уже истёк. Централизовано здесь
+## (не per-bot, как было в самой первой версии геопроверки) по той же причине, что и таймер —
+## "ГЛОБАЛЬНЫЙ ALERT" по формулировке запроса, один расчёт, общий для всех защитников.
+var _time_since_objective_hit: float = INF
 
 ## Тот же зазор, что и team_spawner.gd/respawn_controller.gd — спавн ровно НА поверхности (y
 ## из raycast SpawnZone.pick_spawn_position()) даёт вырожденный контакт с полом, на котором
@@ -59,6 +83,34 @@ func _ready() -> void:
 	_objective_camera.look_at(Vector3(0, 1, -21), Vector3.UP)
 	_spawn_from_zones()
 	_setup_objective_ui()
+
+func _physics_process(delta: float) -> void:
+	_time_since_objective_hit += delta
+
+## Публичный геттер (не .get() на приватной var с другого скрипта) — вызывается КАЖДЫМ
+## BotSentryController из _ensure_home_state() вместо хранения собственной копии таймера (см.
+## doc-comment у _time_since_objective_hit выше).
+func time_since_objective_hit() -> float:
+	return _time_since_objective_hit
+
+## Геометрическая проверка (дистанция до центра зоны, НЕ vision/_can_see()) — тревога должна ИСКАТЬ
+## противника рядом с objective сама по себе, не только по факту прошлого попадания. "Противник" —
+## любой танк с is_attacker()==true (защитники "чужие" ТОЛЬКО для атакующей команды, симметрично
+## тому, что использует _ensure_home_state() для определения, кто вообще подписан на тревогу).
+## target.visible-фильтр — тот же паттерн, что и в _can_see() (см. bot_sentry_controller.gd) —
+## убитый, ждущий respawn танк (visible=false) не считается "противником в круге".
+func enemy_in_alert_zone() -> bool:
+	if _alert_zone == null:
+		return false
+	var radius: float = float(_alert_zone.get("radius"))
+	var zone_pos: Vector3 = _alert_zone.global_position
+	for tank in get_tree().get_nodes_in_group("tanks"):
+		if not is_instance_valid(tank) or not tank.is_attacker() or not tank.visible:
+			continue
+		var dist: float = Vector2(tank.global_position.x - zone_pos.x, tank.global_position.z - zone_pos.z).length()
+		if dist <= radius:
+			return true
+	return false
 
 ## См. doc-comment в шапке файла. find_child, не get_node("Map/...") — эта арена не имеет узла
 ## "Map", Objective лежит прямо под NavigationRegion3D.
@@ -75,6 +127,7 @@ func _setup_objective_ui() -> void:
 
 func _on_objective_damaged(current_hits: int, max_hits: int, _killer: Node = null) -> void:
 	_update_objective_label(current_hits, max_hits)
+	_time_since_objective_hit = 0.0  # см. doc-comment у переменной — сбрасывается на КАЖДЫЙ удар
 
 func _update_objective_label(current_hits: int, max_hits: int) -> void:
 	_objective_label.text = "OBJECTIVE: TARGET — %d/%d попаданий" % [current_hits, max_hits]

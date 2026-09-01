@@ -96,13 +96,13 @@ transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49
 light_energy = 1.2
 
 [node name="PlayerTank" type="CharacterBody3D" parent="." unique_id=677005994 instance=ExtResource("1_b63ln")]
-transform = Transform3D(0.7721764, 0, 0.6354082, 0, 1, 0, -0.6354082, 0, 0.7721764, 28.129662, 0.00013023149, 34.184418)
+transform = Transform3D(0.72427344, 0, 0.68951285, 0, 1, 0, -0.68951285, 0, 0.72427344, 27.250923, 0.00013023149, 28.624733)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
 
 [node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
-transform = Transform3D(-0.02299781, 0, -0.9996999, 0, 1, 0, 0.9996999, 0, -0.02299781, -1.8652984, 0.0009311639, -3.1035502)
+transform = Transform3D(-0.647432, 0, -0.7620762, 0, 1, 0, 0.7620762, 0, -0.647432, 5.150537, 0.0009311265, -1.5863966)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
@@ -245,7 +245,7 @@ material_override = SubResource("StandardMaterial3D_j8k2e")
 mesh = SubResource("BoxMesh_evrla")
 
 [node name="AttackBotTank" type="CharacterBody3D" parent="." unique_id=413402161 instance=ExtResource("1_b63ln")]
-transform = Transform3D(0.39700255, 0, 0.9178157, 0, 1, 0, -0.9178157, 0, 0.39700255, 4.2593365, 0.0009311844, -1.459807)
+transform = Transform3D(0.64429754, 0, 0.7647714, 0, 1, 0, -0.7647714, 0, 0.64429754, 9.917022, 0.00093117054, 2.5419564)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("2_7eip8")
@@ -286,3 +286,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, -24)
 
 [node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=1517443530]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -22)
+
+[node name="ObjectiveAlertZone" type="Node3D" parent="." unique_id=1340384586]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -20)
+script = ExtResource("8_execi")
+radius = 12.0
