@@ -62,6 +62,9 @@ func spawn_team() -> void:
 	# только счёт отряда разный: TargetObjectiveMap.tscn генерирует полные команды по
 	# GameConfig.team_size, TeamArenaMap.tscn явно перечисляет 1-2 конкретных бота. "Минус один
 	# слот на стороне игрока" — JSON-поле squad'а (reserve_for_player), не ветка кода.
+	# Счётчик по команде (не по отряду) — сквозной, чтобы имена не повторялись, даже если у одной
+	# команды несколько отрядов с разными ролями (сейчас так не бывает, но не завязываемся на это).
+	var team_bot_counts := {}
 	for squad in _load_roster(roster_config_path):
 		var team: int = int(squad.get("team", 0))
 		var zone: Node3D = attack_zone if team == 0 else defense_zone
@@ -71,7 +74,8 @@ func spawn_team() -> void:
 		if bool(squad.get("reserve_for_player", false)) and team == player_team:
 			count -= 1  # игрок сам занимает один слот этого отряда в этом раунде
 		for i in range(count):
-			_spawn_bot(team, zone, bot_config, squad)
+			team_bot_counts[team] = team_bot_counts.get(team, 0) + 1
+			_spawn_bot(team, zone, bot_config, squad, team_bot_counts[team])
 
 ## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей корня —
 ## тот же обобщённый приём, что respawn_controller.gd/tank_ai_controller.gd используют для
@@ -80,8 +84,13 @@ func spawn_team() -> void:
 func _find_spawn_zone(node_name: String) -> Node3D:
 	return get_tree().current_scene.find_child(node_name, true, false)
 
-func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary) -> void:
+func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, index: int) -> void:
 	var bot: CharacterBody3D = BotTankScene.instantiate()
+	# Дефолтное имя инстанса Tank.tscn при instantiate() — движковое "@CharacterBody3D@N" (root
+	# без явно заданного unique-имени в самой сцене) — нечитаемо в дебаг-виджетах бота (кнопка
+	# reaction-тумблера, "BOT BRAIN"-панель, обе используют _body.name, см. tank_ai_controller.gd).
+	# Явное имя по команде+порядку — до add_child(), чтобы дебаг-узлы бота уже создавались под ним.
+	bot.name = "%sBot%d" % ["Attack" if team == 0 else "Defense", index]
 	# CameraRig.is_active гасит Camera3D.current уже В СВОЁМ _ready() — тот срабатывает
 	# синхронно ВНУТРИ add_child() (нода уже в активном дереве), раньше следующей строки.
 	# Выставляем is_active=false ДО add_child(), пока бот ещё orphan (это safe — свойства

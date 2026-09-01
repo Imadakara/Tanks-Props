@@ -236,9 +236,9 @@ this mode is `GameConfig.round_timer_sec` = **150 s (2:30)**. The `ObjectiveAler
 circle the AI uses for `State.ALERT`) is a **child of the objective node** (local `y = -1` so the
 circle sits on the ground), freed together with the objective and simply absent on maps without one
 (`TeamArenaMap.tscn`); every reader of `_alert_zone` uses `is_instance_valid()`, not `== null`.
-**TEAM_ARENA** (`TeamArenaMap.tscn`, no objective node): 3-round team deathmatch,
+**TEAM_ARENA** (`TeamArenaMap.tscn`, no objective node): team deathmatch,
 `GameConfig.team_arena_round_sec` = 180 s / round, round winner by kill count (ties by
-`defense_wins_ties`), match winner by rounds won. Sides here are **fixed colour teams** — **Красные**
+`defense_wins_ties`). Sides here are **fixed colour teams** — **Красные**
 (team 0) and **Синие** (team 1) — never "attack"/"defense"; the HUD `TeamLabel`, score line and
 result screen all say Красные/Синие in this mode (in TARGET_OBJECTIVE they say Атака/Оборона).
 
@@ -259,11 +259,16 @@ early. Side-swap between rounds (`hud.gd._on_restart_pressed`, `_has_side_swap()
 TARGET_OBJECTIVE** (where attack/defense roles genuinely alternate); TEAM_ARENA colour teams are
 fixed for the whole match, so its restart button just reloads.
 
+A match is **best-of-3, decided by majority**: `series_complete()` is true as soon as one side
+reaches `rounds_to_win()` (`total_rounds / 2 + 1` = 2), so a 2-0 ends the match after round 2 —
+round 3 (the decider) is only played on a 1-1. Same `series_complete()` for both modes.
+`series_winner()` = whoever has more round wins.
+
 The **round counter** is `MatchState.current_round_num`, a real stored field — **incremented by
 `advance_round()` when the *next* round starts** (`_on_restart_pressed`), never when the current
 one ends. So the result screen still reads "Раунд 1/3" for round 1's outcome; the top line only
-becomes "Раунд 2/3" after the reload. `rounds_played()` (sum of series wins) is separate and used
-for `series_complete()`. `reset_series()` also zeroes `current_round_num` and `player_team`.
+becomes "Раунд 2/3" after the reload. `reset_series()` also zeroes `current_round_num` and
+`player_team`.
 
 **Ammo drops** (all maps): a self-contained prefab `scenes/ammo_crate/AmmoDropZone.tscn` — a
 spawn-sized ground circle (`DropArea`, reuses `spawn_zone.gd`) plus a high dummy `Marker3D`

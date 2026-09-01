@@ -2338,6 +2338,7 @@ func _update_brain_debug_label() -> void:
 			"session: -   record leg: -",
 			"role: -   difficulty: -",
 			"state: DEAD   reaction: -",
+			"ammo: %d/%d" % [_ammo.current_ammo, _ammo.max_ammo],
 			"respawn in: %.1fs" % respawn_left,
 			"look: -",
 		])
@@ -2347,6 +2348,7 @@ func _update_brain_debug_label() -> void:
 	lines.append("session: %.1f min   record leg: %.1fs" % [_total_time_sec / 60.0, _max_leg_time_sec])
 	lines.append("role: %s   difficulty: %s" % [Role.keys()[role], Difficulty.keys()[difficulty]])
 	lines.append("state: %s   reaction: %s" % [State.keys()[state], "ON" if enemy_reaction_enabled else "OFF"])
+	lines.append("ammo: %d/%d" % [_ammo.current_ammo, _ammo.max_ammo])
 	match state:
 		State.DEFEND:
 			if _current_target != null and is_instance_valid(_current_target):

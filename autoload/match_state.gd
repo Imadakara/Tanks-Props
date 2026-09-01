@@ -15,6 +15,9 @@ extends Node
 ## - Счёт серии (series_wins_*) НАКАПЛИВАЕТСЯ через reload_current_scene() — сбрасывается только
 ##   из главного меню (main_menu.gd) и по кнопке «Новый матч» после конца серии (hud.gd).
 ##   "Твоя команда" — устойчивая сущность: series_wins_you всегда про команду человека.
+## - Матч — best-of-3: заканчивается, как только одна команда взяла БОЛЬШИНСТВО (2 раунда), см.
+##   series_complete()/rounds_to_win(). Победа 2:0 после второго раунда — матч сразу окончен,
+##   третий (решающий) играется только при 1:1. Обе игровые режима идут через один series_complete().
 
 enum Mode { TARGET_OBJECTIVE, TEAM_ARENA }
 
@@ -43,8 +46,16 @@ func rounds_played() -> int:
 func current_round() -> int:
 	return current_round_num
 
+## Сколько раундов нужно для победы в матче (best-of-N, большинство): для total_rounds = 3 → 2.
+func rounds_to_win() -> int:
+	return total_rounds / 2 + 1
+
+## Матч окончен, как только ОДНА команда набрала большинство раундов. Для best-of-3: победа
+## 2:0 (после второго раунда) заканчивает матч сразу — третий, решающий, играется ТОЛЬКО при
+## счёте 1:1. (rounds_played() >= total_rounds отдельно не нужен: после трёх раундов у кого-то
+## уже минимум 2 победы.)
 func series_complete() -> bool:
-	return rounds_played() >= total_rounds
+	return series_wins_you >= rounds_to_win() or series_wins_enemy >= rounds_to_win()
 
 ## winner_side — "attack" | "defense", как эмитит MatchManager.round_ended. player_team = сторона
 ## игрока в ЭТОМ раунде (инвертируется рестартом уже ПОСЛЕ вызова), поэтому здесь она ещё
