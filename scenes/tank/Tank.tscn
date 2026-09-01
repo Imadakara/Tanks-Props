@@ -5,14 +5,14 @@
 [ext_resource type="Script" path="res://scenes/tank/tank_movement.gd" id="2_ejt3n"]
 [ext_resource type="Script" path="res://scenes/tank/turret_controller.gd" id="3_bfi3s"]
 [ext_resource type="Script" path="res://scenes/tank/weapon_controller.gd" id="5_4jgmv"]
-[ext_resource type="Script" path="res://scenes/tank/tank_state_machine.gd" id="5_i6w10"]
 [ext_resource type="Script" path="res://scenes/tank/barrel_controller.gd" id="5_oswvf"]
+[ext_resource type="Script" path="res://scenes/tank/tank_state_machine.gd" id="6_v2yb2"]
 [ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="7_bx3sg"]
-[ext_resource type="Script" path="res://scenes/tank/ammo_component.gd" id="7_srjgo"]
 [ext_resource type="Script" path="res://scenes/tank/disguise_controller.gd" id="8_bx3sg"]
+[ext_resource type="Script" path="res://scenes/tank/ammo_component.gd" id="8_rxl27"]
 [ext_resource type="Script" path="res://scenes/tank/collision_detector.gd" id="9_i6w10"]
-[ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="11_srjgo"]
-[ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_rsp0n"]
+[ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="10_i6w10"]
+[ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_n5ru5"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_bfi3s"]
 size = Vector3(1.2, 0.6, 1.8)
@@ -50,6 +50,8 @@ spring_length = 6.0
 script = ExtResource("1_ncjaw")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=888496267]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6)
+current = true
 
 [node name="TankMovement" type="Node" parent="." unique_id=144656680]
 script = ExtResource("2_ejt3n")
@@ -71,7 +73,7 @@ transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0
 mesh = SubResource("CylinderMesh_v2yb2")
 
 [node name="TankStateMachine" type="Node" parent="." unique_id=1996132899]
-script = ExtResource("5_i6w10")
+script = ExtResource("6_v2yb2")
 
 [node name="DisguiseTimer" type="Timer" parent="TankStateMachine" unique_id=1320364162]
 
@@ -83,7 +85,7 @@ script = ExtResource("5_i6w10")
 script = ExtResource("5_4jgmv")
 
 [node name="AmmoComponent" type="Node" parent="." unique_id=697966439]
-script = ExtResource("7_srjgo")
+script = ExtResource("8_rxl27")
 
 [node name="HealthComponent" type="Node" parent="." unique_id=1987941573]
 script = ExtResource("7_bx3sg")
@@ -101,10 +103,10 @@ script = ExtResource("9_i6w10")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 shape = SubResource("BoxShape3D_srjgo")
 
-[node name="TankAIController" type="Node" parent="." unique_id=929001885]
-script = ExtResource("11_srjgo")
-
 [node name="RespawnController" type="Node" parent="." unique_id=1029384756]
-script = ExtResource("12_rsp0n")
+script = ExtResource("12_n5ru5")
 
 [node name="RespawnTimer" type="Timer" parent="RespawnController" unique_id=1029384757]
+
+[node name="TankAIController" type="Node" parent="." unique_id=199337739]
+script = ExtResource("10_i6w10")

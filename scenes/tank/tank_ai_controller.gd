@@ -1,7 +1,12 @@
 extends Node
-## BotSentryController — тестовый ИИ для песочницы "Bot Arena" (scenes/bot_arena/BotArena.tscn).
-## Отдельно от продакшен-ИИ scenes/tank/tank_ai_controller.gd (ТЗ §9, патруль/маскировка) —
-## тот не трогаем.
+## TankAIController — единственный ИИ проекта (по прямому запросу — "два набора ботов, тестовый и
+## продакшен, это путаница, боты должны быть одной универсальной системой"). Живёт сиблингом на
+## КАЖДОМ Tank.tscn (включая танк игрока, дормантен там), развёртывается на любой карте/режиме —
+## продакшен Main.tscn/Map.tscn (team_spawner.gd) и обе тестовые арены BotArena.tscn/
+## KillerArena.tscn (статичные .tscn-инстансы, enabled=true проставлен прямо в сцене). До этой
+## унификации был отдельный, более простой продакшен-ИИ с тем же именем файла — удалён целиком
+## (включая свой Patrol/Disguise-цикл, см. git log), не переиспользован; см. Дев-план ниже про
+## орфанную маскировку.
 ##
 ## Модель обзора (v2, по прямому запросу — "как в других играх"): бот ВСЕГДА видит то, что перед
 ## корпусом, ПЛЮС то, куда сейчас физически повёрнута башня. Два независимых конуса, оба нужны
@@ -92,9 +97,31 @@ extends Node
 ## в HUNT. Блуждание взгляда продолжается с текущего угла на всех переходах; вейпоинт-прогресс
 ## ACHIEVER (индекс/точка в круге) не сбрасывается.
 ##
-## Патруль по вейпоинтам — маркеры "<waypoint_name_prefix>N" (Node3D, ищутся по имени в корне
-## текущей сцены, сортируются по имени — тот же принцип, что PatrolWaypointN у
-## tank_ai_controller.gd; РАЗНЫЙ префикс на разных ботах одной карты, см. @export-блок —
+## [ДОБАВЛЕНО, по прямому запросу — "боеприпасы кончаются, нужны стейты поиска/подбора/ожидания
+## ящиков"] Три состояния поверх обычного цикла роли, ортогональны роли (у ACHIEVER и KILLER
+## работают одинаково) — управляют своими переходами сами, exception-guard в _ensure_home_state(),
+## как PURSUE/SEARCH/ATTACK_OBJECTIVE:
+## - AMMO_SEEK — едет к случайно выбранной зоне сброса (группа "ammo_drop_zones", та же, что уже
+##   использует ammo_drop_zone.gd), целится в центр зоны. Как только физически заезжает В ПРЕДЕЛЫ
+##   ОКРУЖНОСТИ (не обязательно доехав до центра) — если в зоне уже лежит ящик (группа
+##   "ammo_crates") → AMMO_RETRIEVE; иначе едет в случайную точку внутри той же окружности → по
+##   прибытии AMMO_WAIT.
+## - AMMO_RETRIEVE — едет к конкретному ящику. Подбор — чисто физический (AmmoCrate.body_entered),
+##   само прибытие уже забирает патроны, отдельного действия не требуется. Ящик исчез (кто-то
+##   опередил) — AMMO_WAIT у той же зоны; исчез из-за того, что боезапас САМОГО бота уже не низкий
+##   (значит подобрал он сам) — обычное ролевое поведение (см. _physics_process()).
+## - AMMO_WAIT — стоит у зоны, раз в 7-10 сек переезжает на новую случайную точку внутри той же
+##   окружности (не полная неподвижность), башня блуждает как обычно. Ящик появился в зоне —
+##   немедленно AMMO_RETRIEVE.
+## Условия входа — два независимых: мягкое (1 патрон и нет видимой цели — не перебивает PURSUE/
+## SEARCH/ATTACK_OBJECTIVE, часть обычной _ensure_home_state()'s лестницы, ПЕРЕД ALERT) и жёсткое
+## (боезапас реально ноль — сигнал AmmoComponent.ammo_depleted, перебивает даже DEFEND, гуманно:
+## стрелять всё равно нечем). См. _ensure_home_state()/_on_ammo_depleted() соответственно.
+##
+## Патруль по вейпоинтам — маркеры "<waypoint_name_prefix>N" (Node3D, ищутся рекурсивно по имени во
+## всей текущей сцене — find_children(), не только прямые дети корня, см. _collect_waypoints();
+## нужно продакшену, где AttackWaypointN/DefenseWaypointN лежат на уровень глубже, под Map — и
+## сортируются по имени. РАЗНЫЙ префикс на разных ботах одной карты, см. @export-блок —
 ## разделяет вейпоинты обороны от вейпоинтов атаки). Каждый вейпоинт — не точка, а круглая область
 ## радиуса waypoint_radius: доехав до случайной точки внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает
 ## новую случайную точку в круге СЛЕДУЮЩЕГО и едет дальше. Дефолт (waypoints_one_way=false, оборона)
@@ -146,10 +173,11 @@ extends Node
 ## - Пересчёт положения вейпоинтов относительно objective для произвольной боевой карты (не
 ##   зафиксировано формулой, сейчас три точки подобраны вручную под конкретную геометрию тестовой
 ##   арены).
-## - Продакшен `tank_ai_controller.gd._drive_toward()` использует ту же формулу поворота
-##   (`ai_turn_input = clamp(yaw_diff/0.5, ...)`, БЕЗ инвертированного знака — см. знак ниже, у
-##   `_drive_to_point()`), не проверялось и не правилось на продакшен-карте — возможный эффект:
-##   боты едут к точкам патруля не кратчайшим путём, потенциальный залип на развороте у 180°.
+## - Историческая сноска: до унификации у отдельного продакшен-ИИ (тот же путь файла, другое
+##   содержимое, удалён — см. git log) была та же формула поворота, но БЕЗ инвертированного знака,
+##   что есть здесь у `_drive_to_point()` (см. знак ниже) — подозревался баг (не кратчайший путь,
+##   залип на развороте у 180°). Актуальности не имеет: тот код больше не существует, весь driving
+##   на продакшене теперь идёт через этот файл с уже исправленным знаком.
 ## - Вероятности SEARCH (search_move_chance/search_continue_chance/search_return_to_anchor_chance/
 ##   search_look_turns_min/max) настроены только под MEDIUM, по прямому запросу. EASY/HARD пока
 ##   используют те же значения (не добавлены в _DIFFICULTY_PRESETS вообще) — разумное направление
@@ -162,7 +190,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -171,6 +199,20 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 ## оттуда напрямую (снаряд ещё не существует до момента выстрела, инстанцировать только ради
 ## константы — лишняя возня), дублируем с явной привязкой здесь же в комментарии.
 const _PROJECTILE_GRAVITY := 9.8
+
+## [ДОБАВЛЕНО, по прямому запросу — "два набора ботов, тестовый и продакшен, это путаница, боты
+## должны быть одной универсальной системой, деплоящейся на любую карту"] Раньше этот компонент
+## жил ТОЛЬКО как ручной extra-child на статичных .tscn-инстансах тестовых арен и захватывал
+## управление безусловно в _ready(). Теперь узел присутствует на каждом Tank.tscn — в том числе на
+## танке ИГРОКА — и должен оставаться полностью дормантным, пока кто-то явно не включит его. Тот же
+## ленивый паттерн `enabled`, что был у прежнего отдельного продакшен-ИИ (удалён, см. выше):
+## `_ready()` не делает НИЧЕГО с побочными эффектами, весь захват (флаги
+## is_player_controlled, деактивация камеры, сбор вейпоинтов/зоны, подписки на сигналы) — в
+## _initialize(), вызываемой ЛЕНИВО, первым тиком _physics_process() уже ПОСЛЕ того, как
+## enabled стал true. Причина именно лениво, а не в _ready(): вызывающий код (team_spawner.gd)
+## обычно выставляет enabled=true уже ПОСЛЕ add_child(), когда _ready() с дефолтным enabled=false
+## уже отработал бы вхолостую.
+@export var enabled: bool = false
 
 @export var role: Role = Role.ACHIEVER
 @export var difficulty: Difficulty = Difficulty.MEDIUM
@@ -454,8 +496,10 @@ const _DIFFICULTY_PRESETS := {
 @onready var _disguise: Node = get_parent().get_node("DisguiseController")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 @onready var _respawn_controller: Node = get_parent().get_node("RespawnController")
+@onready var _ammo: Node = get_parent().get_node("AmmoComponent")
 
 var state: State = State.IDLE
+var _initialized: bool = false
 ## Мировой угол, куда сейчас должна повернуться БАШНЯ (v2 — только башня, на главный конус
 ## обзора больше не влияет, см. заголовок файла).
 var _look_yaw: float = 0.0
@@ -523,6 +567,20 @@ var _alert_zone: Node3D = null
 var _arena: Node = null
 var _alert_target_pos: Vector3 = Vector3.ZERO
 var _has_alert_target: bool = false
+
+## AMMO_SEEK/AMMO_RETRIEVE/AMMO_WAIT (см. заголовок файла) — _ammo_zones кэшируется один раз в
+## _initialize() (группа "ammo_drop_zones", как ammo_drop_zone.gd её сама заводит). _ammo_zone —
+## КОНКРЕТНАЯ зона, к которой бот сейчас идёт/у которой ждёт (выбирается в _pick_ammo_zone(), см.
+## её doc-comment). _ammo_target_crate — конкретный ящик в AMMO_RETRIEVE, null в остальных двух.
+## _ammo_wait_target_pos/_has_ammo_wait_target — та же механика "выбранная точка в круге", что у
+## _waypoint_target_pos/_has_waypoint_target, но с интервалом _ammo_wait_timer (7-10с, не "доехал —
+## сразу новая", как у обычного патруля) — см. _process_ammo_wait().
+var _ammo_zones: Array = []
+var _ammo_zone: Node = null
+var _ammo_target_crate: Node = null
+var _ammo_wait_target_pos: Vector3 = Vector3.ZERO
+var _has_ammo_wait_target: bool = false
+var _ammo_wait_timer: float = 0.0
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
 ## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
@@ -592,12 +650,24 @@ var _total_time_sec: float = 0.0
 var _leg_timer: float = 0.0
 var _max_leg_time_sec: float = 0.0
 
+## Дормантен, пока enabled=false (см. её @export doc-comment) — никаких побочных эффектов здесь,
+## только чтение @onready-полей (без сайд-эффектов само по себе). Реальный захват — _initialize().
 func _ready() -> void:
+	pass
+
+## Единственная точка входа "стать активным ботом" — вызывается лениво, один раз, из
+## _physics_process() на первом тике, где enabled уже true (см. её @export doc-comment). Раньше
+## это было безусловным телом _ready() — теперь на общем Tank.tscn (в т.ч. у игрока) выполнять это
+## сразу при входе в дерево было бы катастрофой (игрок мгновенно терял бы Input/камеру).
+func _initialize() -> void:
+	_initialized = true
 	_apply_difficulty_preset()
 
 	# NavigationAgent3D — ребёнок _body (не self, см. заголовок файла: агент берёт текущую позицию
 	# от РОДИТЕЛЯ-Node3D). call_deferred по той же причине, что и у остальных дебаг-узлов ниже —
-	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
+	# сцена уже полностью построена к этому моменту (в отличие от старого _ready()-пути), но
+	# add_child изнутри чужого коллбэка (сигнальный/таймерный контекст вызова _initialize()) может
+	# застать похожую ситуацию — не убирать call_deferred на всякий случай, дёшево.
 	_nav_agent = NavigationAgent3D.new()
 	_nav_agent.name = "NavigationAgent3D"
 	_nav_agent.radius = nav_agent_radius
@@ -622,18 +692,38 @@ func _ready() -> void:
 	_health.damaged.connect(_on_damaged)
 	# [ДОБАВЛЕНО, по прямому запросу — "добавь стейт DEAD"] Момент смерти — единственный надёжный
 	# триггер: RespawnController тоже подписан на этот же сигнал (свой обработчик), но НЕ знает про
-	# BotSentryController.state (та же развязка слоёв, что и у respawned ниже) — состояние себе бот
+	# TankAIController.state (та же развязка слоёв, что и у respawned ниже) — состояние себе бот
 	# выставляет сам.
 	_health.destroyed.connect(_on_destroyed)
 	# [ДОБАВЛЕНО, по прямому запросу — "уничтоженный атакующий появляется сразу в стейте боя с
 	# целью на objective"] См. doc-comment у respawn_controller.gd/signal respawned — сбрасываем
 	# СВОЁ AI-состояние сами, а не полагаемся на RespawnController (который физическое состояние
-	# танка сбрасывает, но ничего не знает про BotSentryController.state).
+	# танка сбрасывает, но ничего не знает про TankAIController.state).
 	_respawn_controller.respawned.connect(_on_respawned)
 	_collect_waypoints()
 	_detect_hunt_area()
 	_find_objective()
+	# [ДОБАВЛЕНО, по прямому запросу — "ачиверы автоматически становятся киллерами, если карта
+	# имеет режим арены без заданного objective"] ACHIEVER целиком построен вокруг objective
+	# (патрулирует вокруг него/атакует его, см. заголовок файла) — на карте, где его физически нет
+	# (TEAM_ARENA-подобный режим), это поведение попросту не на чем строить: без деградации бот
+	# застревал бы в _ensure_home_state()'s ветке "role==ACHIEVER and вейпоинты не пусты → PATROL"
+	# бесцельным кружением по вейпоинтам без единой мысли о бое. Самоадаптация — не завязана на
+	# MatchState.match_mode напрямую (более общий сигнал: САМ ФАКТ отсутствия objective уже
+	# достаточен, не важно, из-за какого именно режима/настройки карты его нет).
+	if role == Role.ACHIEVER and _objective_node == null:
+		role = Role.KILLER
 	_find_alert_zone()
+	# Ammo-стейты (AMMO_SEEK/RETRIEVE/WAIT, см. их doc-comment у enum State) — зоны сброса те же,
+	# что уже использует ammo_drop_zone.gd (группа "ammo_drop_zones"), кэшируем один раз: карта без
+	# зон сброса не должна давать боту вечно спотыкаться об этот механизм (см. проверку в
+	# _enter_ammo_seek()/_think()).
+	_ammo_zones = get_tree().get_nodes_in_group("ammo_drop_zones")
+	# Жёсткий приоритет "боезапас кончился" (см. _think()) — реагирует МГНОВЕННО на сам факт, не
+	# ждёт следующего think-тика опроса has_ammo(), и способен перебить даже DEFEND (см. её место
+	# использования) — не через обычную _ensure_home_state()'s лестницу (та вызывается ТОЛЬКО когда
+	# цель не видна, а тут нужно перебить и видимую тоже).
+	_ammo.ammo_depleted.connect(_on_ammo_depleted)
 	# [ИЗМЕНЕНО, по прямому запросу — "ALERT не срабатывает у уже имеющегося танка, тревога должна
 	# быть ОБЩЕЙ у уже существующих на карте И у новых спавнящихся"] Раньше здесь подписывался НА
 	# СИГНАЛ Objective/HealthComponent.damaged НАПРЯМУЮ, храня СВОЙ personal-таймер — теперь таймер
@@ -641,12 +731,14 @@ func _ready() -> void:
 	# просто кэшируем ссылку на него, читаем через time_since_objective_hit() в _ensure_home_state().
 	_arena = get_tree().current_scene
 
-	# CameraRig этого танка на статичной сцене нельзя выключить оверрайдом в .tscn (нет
-	# редактируемых детей у инстанса) — гасим камеру здесь. BotSentryController стоит
-	# ПОСЛЕДНИМ сиблингом среди детей Tank-инстанса, поэтому его _ready() гарантированно
-	# отрабатывает уже ПОСЛЕ CameraRig._ready() (которая успела выставить Camera3D.current=true
-	# по умолчанию is_active=true) — здесь это откатывается ДО первого кадра рендера, игрок
-	# не видит вспышку смены камеры (тот же класс бага, что описан в team_spawner.gd).
+	# [ИЗМЕНЕНО вместе с переходом на ленивую _initialize()] Раньше это гарантированно отрабатывало
+	# ДО первого кадра рендера (безусловный _ready(), последний сиблинг — после CameraRig._ready()).
+	# Теперь это первый ФИЗ.тик с enabled=true — на статичных .tscn-инстансах (BotArena/KillerArena)
+	# это всё ещё очень рано, но не гарантированно "до первого рендера" — основная защита от вспышки
+	# смены камеры на них теперь per-instance оверрайд `CameraRig.is_active=false` прямо в .tscn (тот
+	# же трюк, что team_spawner.gd делает в рантайме ДО add_child() для продакшен-ботов, см. её
+	# комментарий про "тот же класс бага, что был с TankAIController.enabled"). Присваивание здесь —
+	# защитный дубль, не единственная линия обороны, как раньше.
 	var camera_rig: Node3D = _body.get_node("CameraRig")
 	camera_rig.is_active = false
 	var camera: Camera3D = camera_rig.get_node("Camera3D")
@@ -686,11 +778,18 @@ func _apply_difficulty_preset() -> void:
 ## по "AttackWaypointN", см. заголовок файла и BotArena.tscn), сортировка по имени даёт стабильный
 ## порядок обхода (…Waypoint1 → …Waypoint2 → …Waypoint3 → снова …Waypoint1, если не
 ## waypoints_one_way).
+## [ИСПРАВЛЕНО, по прямому запросу — "боты это универсальная система для любой карты, если есть
+## недоработка в этом ключе — пофиксить"] Раньше — только прямые дети корня сцены
+## (get_children(), не рекурсивно) — работало на sandbox-аренах (вейпоинты лежат в корне), но НЕ
+## на продакшене: AttackWaypointN/DefenseWaypointN на Map.tscn лежат на уровень глубже
+## (Main.tscn → Map → маркеры). Живьём поймано: _waypoints оставался пустым на Main.tscn, боты
+## молча падали в IDLE (ACHIEVER без вейпоинтов). find_children(pattern, "", true, false) —
+## рекурсивный, тот же recursive=true/owned=false, что и везде в этом файле для find_child();
+## паттерн "prefix*" — тот же glob-стиль begins_with, просто через движковый матчер.
 func _collect_waypoints() -> void:
 	_waypoints.clear()
-	for child in get_tree().current_scene.get_children():
-		if String(child.name).begins_with(waypoint_name_prefix):
-			_waypoints.append(child)
+	for child in get_tree().current_scene.find_children(waypoint_name_prefix + "*", "", true, false):
+		_waypoints.append(child)
 	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
 
 ## Зона охоты для KILLER (см. @export-блок выше) — вручную заданный hunt_area_half_extents
@@ -720,12 +819,18 @@ func _detect_hunt_area() -> void:
 	hunt_area_half_extents = Vector2(box.size.x * 0.5, box.size.z * 0.5)
 	_hunt_area_valid = true
 
-## ATTACK_OBJECTIVE — ищет узел "Objective" РЕКУРСИВНО по всей текущей сцене (та же логика, что и
-## "Ground" в _detect_hunt_area() — objective живёt под NavigationRegion3D, не в корне). Дёшево
-## искать всегда, даже если этот конкретный бот не atакующий (waypoints_one_way=false) — просто не
-## используется в таком случае.
+## [ИЗМЕНЕНО, по прямому запросу — "боты это универсальная система для любой карты, если есть
+## недоработка в этом ключе — пофиксить"] Раньше искало узел строго по имени "Objective" — работало
+## на sandbox-аренах, но НЕ на продакшене (там узел называется "DestructibleObjective", см.
+## Map.tscn) — молчаливый разъезд имён одного и того же концепта. Теперь ищет по ГРУППЕ
+## "objective_health" (см. её doc-comment в match_manager.gd/bot_arena.gd — оба регистрируют туда
+## HealthComponent objective РОВНО в момент, когда attackers_only уже точно true) — имя узла
+## больше не имеет значения вообще, работает для любой будущей карты без правки этого файла.
+## Дёшево искать всегда, даже если этот конкретный бот не атакующий (waypoints_one_way=false) —
+## просто не используется в таком случае.
 func _find_objective() -> void:
-	_objective_node = get_tree().current_scene.find_child("Objective", true, false)
+	var health: Node = get_tree().get_first_node_in_group("objective_health")
+	_objective_node = health.get_parent() if health != null else null
 
 ## См. @export-блок про ALERT выше. Тот же рекурсивный find_child, что и у Objective/Ground —
 ## ObjectiveAlertZone теперь дочерний узел самого Objective (часть его «префаба»), рекурсивный
@@ -735,6 +840,16 @@ func _find_alert_zone() -> void:
 	_alert_zone = get_tree().current_scene.find_child("ObjectiveAlertZone", true, false)
 
 func _physics_process(delta: float) -> void:
+	# [ИСПРАВЛЕНО] Сам гейт "дормантен, пока не enabled" — раньше упоминался только в
+	# doc-comment'ах _ready()/_initialize()/@export enabled, но не был реально вписан сюда:
+	# без него _physics_process() безусловно выполнялась бы (в т.ч. на игроке!) с
+	# неинициализированными _fov_debug_mesh/_path_debug_mesh/_nav_agent (setup которых живёт в
+	# _initialize(), которая без этой строки вообще никогда не вызывалась бы). Поймано живьём —
+	# SCRIPT ERROR "Invalid access to property 'mesh' on Nil" сразу на первом же запуске.
+	if not enabled:
+		return
+	if not _initialized:
+		_initialize()
 	_total_time_sec += delta
 	_think_timer -= delta
 	if _think_timer <= 0.0:
@@ -814,11 +929,84 @@ func _physics_process(delta: float) -> void:
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.DEAD:
 			# [ДОБАВЛЕНО, по прямому запросу] Ничего не решаем и никуда не целимся — TankMovement/
-			# TurretController и так заморожены RespawnController'ом (BotSentryController — namedное
+			# TurretController и так заморожены RespawnController'ом (TankAIController — namedное
 			# исключение из заморозки, см. respawn_controller.gd, но остальные сиблинги — нет), эти
 			# присваивания defensive на случай, если что-то извне их разморозит раньше времени.
 			_movement.ai_move_input = 0.0
 			_movement.ai_turn_input = 0.0
+		State.AMMO_SEEK:
+			# [ДОБАВЛЕНО, по прямому запросу — см. заголовок файла] "Заехал в пределы окружности" —
+			# дистанция до ЦЕНТРА зоны ≤ её радиус, не reach_dist до конкретной точки: срабатывает
+			# ЗАДОЛГО до того, как бот успел бы физически доехать до самого центра.
+			if _ammo_zone == null or not is_instance_valid(_ammo_zone):
+				state = State.IDLE  # defensive — не должно случаться, см. _pick_ammo_zone()
+			else:
+				var area: Node3D = _ammo_zone_area(_ammo_zone)
+				var radius: float = float(area.get("radius"))
+				var center: Vector3 = area.global_position
+				var dist_to_center: float = Vector2(_body.global_position.x - center.x, _body.global_position.z - center.z).length()
+				if dist_to_center <= radius:
+					var crate: Node = _find_crate_in_zone(_ammo_zone)
+					if crate != null:
+						_ammo_target_crate = crate
+						state = State.AMMO_RETRIEVE
+						if _nav_agent.is_inside_tree():
+							_nav_agent.target_position = crate.global_position
+					else:
+						if not _has_ammo_wait_target:
+							_ammo_wait_target_pos = _pick_random_point_near(center, radius)
+							_has_ammo_wait_target = true
+							if _nav_agent.is_inside_tree():
+								_nav_agent.target_position = _ammo_wait_target_pos
+						if _drive_to_point(delta, _ammo_wait_target_pos, waypoint_reach_dist):
+							state = State.AMMO_WAIT
+							_has_ammo_wait_target = false  # AMMO_WAIT сама выберет точку+таймер на первом тике
+				else:
+					_drive_to_point(delta, center, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.AMMO_RETRIEVE:
+			# Подбор — чисто физический (AmmoCrate.body_entered, см. ammo_crate.gd), не отдельное
+			# действие бота: доехать вплотную уже достаточно. Ящик пропал — либо подобрал кто-то
+			# другой (наш боезапас всё ещё низкий), либо подобрали МЫ (add_ammo() в ammo_crate.gd
+			# вызывается СИНХРОННО до queue_free(), гонки нет — собственный current_ammo уже отражает
+			# исход к этому кадру).
+			if not is_instance_valid(_ammo_target_crate):
+				if _ammo.current_ammo <= 1:
+					state = State.AMMO_WAIT
+					_has_ammo_wait_target = false
+				else:
+					state = State.IDLE  # подобрали — следующий think-тик выберет обычное ролевое поведение
+				_ammo_target_crate = null
+			else:
+				_drive_to_point(delta, _ammo_target_crate.global_position, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.AMMO_WAIT:
+			# Раз в 7-10с — новая случайная точка внутри той же окружности (не полная неподвижность,
+			# по прямому запросу). Ящик появился в зоне — сразу AMMO_RETRIEVE, не дожидаясь текущей
+			# "прогулочной" точки.
+			if _ammo_zone == null or not is_instance_valid(_ammo_zone):
+				state = State.IDLE
+			else:
+				var crate: Node = _find_crate_in_zone(_ammo_zone)
+				if crate != null:
+					_ammo_target_crate = crate
+					state = State.AMMO_RETRIEVE
+					if _nav_agent.is_inside_tree():
+						_nav_agent.target_position = crate.global_position
+				else:
+					_ammo_wait_timer -= delta
+					if not _has_ammo_wait_target or _ammo_wait_timer <= 0.0:
+						var area: Node3D = _ammo_zone_area(_ammo_zone)
+						_ammo_wait_target_pos = _pick_random_point_near(area.global_position, float(area.get("radius")))
+						_has_ammo_wait_target = true
+						_ammo_wait_timer = randf_range(7.0, 10.0)
+						if _nav_agent.is_inside_tree():
+							_nav_agent.target_position = _ammo_wait_target_pos
+					_drive_to_point(delta, _ammo_wait_target_pos, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 
 	if show_fov_debug:
 		_update_fov_debug_draw()
@@ -835,9 +1023,19 @@ func _think() -> void:
 	# из DEAD). Без этой проверки _scan_for_target() продолжал бы находить врагов и утаскивать труп
 	# обратно в DEFEND ещё ДО того, как RespawnController вообще его заморозил на этот тик (сама
 	# заморозка сиблингов происходит в _on_destroyed() того компонента, синхронно с этим же сигналом
-	# — но BotSentryController теперь НЕ замораживается, см. respawn_controller.gd._set_frozen(), и
+	# — но TankAIController теперь НЕ замораживается, см. respawn_controller.gd._set_frozen(), и
 	# без этой ранней проверки продолжил бы думать как ни в чём не бывало).
 	if state == State.DEAD:
+		return
+	# [ИСПРАВЛЕНО, живьём] Пустой боезапас — драться нечем, ПОЛНОСТЬЮ пропускаем сканирование/
+	# DEFEND, пока не подберём патроны. Не только в момент, когда патроны кончились (см.
+	# _on_ammo_depleted() — тот сигнал даёт мгновенную реакцию РОВНО один раз), а КАЖДЫЙ think-тик,
+	# пока _ammo.has_ammo()==false: без этой проверки здесь обычный приоритет "видит цель → DEFEND"
+	# ниже перезаписал бы AMMO_SEEK/RETRIEVE/WAIT обратно в бой на первом же следующем тике, если
+	# враг всё ещё виден — живьём подтверждён именно этот баг: бот с ammo_depleted всё равно
+	# вступал в DEFEND и погибал безоружным, не успев доехать до зоны сброса.
+	if not _ammo.has_ammo():
+		_enter_ammo_seek()
 		return
 	# Тумблер выключен (см. @export-блок про show_reaction_toggle_button) — не сканируем и не
 	# держим цель вообще, сразу домашнее поведение роли. Если бот был в DEFEND в момент выключения
@@ -890,9 +1088,28 @@ func _is_within_objective_circle() -> bool:
 	return dist <= radius
 
 func _ensure_home_state() -> void:
-	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE:
+	# AMMO_SEEK/AMMO_RETRIEVE/AMMO_WAIT — та же логика исключения, что у PURSUE/SEARCH/
+	# ATTACK_OBJECTIVE: управляют своими переходами САМИ (см. State.AMMO_* в _physics_process()),
+	# не должны молча перезатираться каждый think-тик, пока цель не видна.
+	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE \
+			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT:
 		return
 	var desired: State
+	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
+	# между `if`/`elif` одной цепочки, а ammo-условие ниже теперь встало ПЕРЕД веткой ALERT.
+	var time_since_hit: float = _arena.time_since_objective_hit() if _arena != null else INF
+	var enemy_nearby: bool = _arena.enemy_in_alert_zone() if _arena != null else false
+	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
+	# [ДОБАВЛЕНО, по прямому запросу — "если остался 1 боеприпас и бот не имеет захваченной цели —
+	# должен переходить в стейт поиска боеприпасов"] "Не имеет захваченной цели" уже гарантировано
+	# самим фактом, что мы вообще дошли до этой функции — _think() вызывает _ensure_home_state()
+	# ТОЛЬКО когда visible_target == null (см. её вызывающий код). Проверяется ПЕРВЫМ, выше ALERT —
+	# мягкое условие (в отличие от "патроны кончились совсем", см. _on_ammo_depleted() — та
+	# перебивает даже видимую цель и не проходит через эту лестницу вообще). Пустой список
+	# _ammo_zones (карта без ящиков) — условие никогда не срабатывает, тот же defensive-паттерн,
+	# что и у _hunt_area_valid/_alert_zone.
+	if not _ammo_zones.is_empty() and _ammo.current_ammo == 1:
+		desired = State.AMMO_SEEK
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
 	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
 	# версия (гео-проверка "враг физически в круге") оказалась СЛИШКОМ строгой КАК ЕДИНСТВЕННОЕ
@@ -920,10 +1137,7 @@ func _ensure_home_state() -> void:
 	# проверка ловит атакующего, который УЖЕ вошёл в круг, но ЕЩЁ НИ РАЗУ не выстрелил (таймер сам
 	# по себе тогда молчал бы, пока не будет фактического попадания). DEFEND (видит цель напрямую)
 	# по-прежнему приоритетнее обоих — так же, как раньше не давал чистой гео-проверке проявиться.
-	var time_since_hit: float = _arena.time_since_objective_hit() if _arena != null else INF
-	var enemy_nearby: bool = _arena.enemy_in_alert_zone() if _arena != null else false
-	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
-	if not _body.is_attacker() and objective_alive and is_instance_valid(_alert_zone) and (time_since_hit < alert_timeout_sec or enemy_nearby):
+	elif not _body.is_attacker() and objective_alive and is_instance_valid(_alert_zone) and (time_since_hit < alert_timeout_sec or enemy_nearby):
 		desired = State.ALERT  # см. @export-блок про ALERT — перебивает обычное PATROL/HUNT/IDLE
 	# [ДОБАВЛЕНО, по прямому запросу — "если атакующий бот в пределах окружности objective и у него
 	# нет иной цели — нужно включать стейт атаки objective, а не патруль/откат к вейпоинтам"] Без
@@ -952,6 +1166,7 @@ func _ensure_home_state() -> void:
 		# целиться со старым/нулевым прицельным смещением и ехать на устаревший nav-таргет
 		# (последний вейпоинт, не objective).
 		var entering_attack_objective: bool = desired == State.ATTACK_OBJECTIVE
+		var entering_ammo_seek: bool = desired == State.AMMO_SEEK
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
@@ -969,6 +1184,8 @@ func _ensure_home_state() -> void:
 			_reroll_aim_offset()
 			if _objective_node != null and is_instance_valid(_objective_node) and _nav_agent.is_inside_tree():
 				_nav_agent.target_position = _objective_node.global_position
+		if entering_ammo_seek:
+			_pick_ammo_zone()
 
 ## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
 ## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в
@@ -992,7 +1209,7 @@ func _ensure_home_state() -> void:
 ## [ДОБАВЛЕНО, по прямому запросу — "если атакующий objective-цель танк уничтожается, то появляется
 ## сразу в стейте боя с целью на objective, такого быть не должно"] RespawnController телепортирует
 ## танк физически на его СПАВН (далеко от того места, где он умер), но НЕ трогает
-## BotSentryController.state вообще (не его слой, см. doc-comment у signal respawned) — бот,
+## TankAIController.state вообще (не его слой, см. doc-comment у signal respawned) — бот,
 ## погибший будучи в ATTACK_OBJECTIVE (или DEFEND, PURSUE, SEARCH — что угодно), воскресал бы С ТЕМ
 ## ЖЕ state. ATTACK_OBJECTIVE особенно проблемна: она НЕ пересчитывается через обычный
 ## _ensure_home_state() (в её exception-guard, "ждёт, пока сам не разрешится") — бот, телепортированный
@@ -1027,6 +1244,12 @@ func _on_respawned() -> void:
 	_stuck_check_timer = 0.0
 	if waypoints_one_way:
 		_waypoint_index = 0
+	# Ammo-стейты (см. заголовок файла) — respawn уже полностью восполняет боезапас
+	# (respawn_controller.gd), никакого доп. условия входа сейчас нет; сброс чисто defensive,
+	# симметрично остальным driving-полям выше.
+	_ammo_zone = null
+	_ammo_target_crate = null
+	_has_ammo_wait_target = false
 
 func _on_target_lost() -> void:
 	if role == Role.KILLER:
@@ -1391,10 +1614,10 @@ func _drive_to_point(delta: float, target_pos: Vector3, reach_dist: float) -> bo
 	var yaw_diff: float = wrapf(desired_world_yaw - _body.rotation.y, -PI, PI)
 	# Знак: TankMovement._physics_process() делает _body.rotate_y(-turn_input*turn_speed*delta),
 	# т.е. turn_input>0 УМЕНЬШАЕТ rotation.y, а не увеличивает (проверено живьём покадровым
-	# прогоном — с прямым знаком (turn_input=yaw_diff/0.5, как в этой же формуле у
-	# tank_ai_controller.gd._drive_toward(), см. дев-план в заголовке файла) бот ехал К ЦЕЛИ
-	# ДЛИННЫМ путём и на развороте, близком к 180°, залипал на антиподе цели, до конца не сходясь
-	# — ai_turn_input каждый кадр дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
+	# прогоном — с прямым знаком (turn_input=yaw_diff/0.5, как у прежнего, до унификации удалённого
+	# продакшен-ИИ, см. дев-план в заголовке файла) бот ехал К ЦЕЛИ ДЛИННЫМ путём и на развороте,
+	# близком к 180°, залипал на антиподе цели, до конца не сходясь — ai_turn_input каждый кадр
+	# дёргался -1/+1 без прогресса). Поэтому здесь знак ОБРАТНЫЙ.
 	_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
 
 	# Аварийный тормоз — веер из 3 коротких лучей по КОРПУСУ (не по направлению на next_point —
@@ -1450,6 +1673,12 @@ func _current_drive_target() -> Vector3:
 			return _pursue_target_pos
 		State.SEARCH:
 			return _search_target_pos if _has_search_target else _body.global_position
+		State.AMMO_SEEK:
+			return _ammo_zone_area(_ammo_zone).global_position if _ammo_zone != null and is_instance_valid(_ammo_zone) else _body.global_position
+		State.AMMO_RETRIEVE:
+			return _ammo_target_crate.global_position if is_instance_valid(_ammo_target_crate) else _body.global_position
+		State.AMMO_WAIT:
+			return _ammo_wait_target_pos if _has_ammo_wait_target else _body.global_position
 		_:
 			return _body.global_position
 
@@ -1649,6 +1878,78 @@ func _pick_new_alert_target() -> void:
 	var dist: float = sqrt(randf()) * float(_alert_zone.get("radius"))
 	_alert_target_pos = _alert_zone.global_position + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
 	_has_alert_target = true
+
+## [ИСПРАВЛЕНО, живьём] Группа "ammo_drop_zones" (см. ammo_drop_zone.gd) регистрирует не корень
+## префаба AmmoDropZone, а именно узел DropOrigin (Marker3D) — скрипт ammo_drop_zone.gd висит НА
+## НЁМ, не на его родителе (см. её doc-comment: "DropOrigin — ЭТОТ узел"). DropArea — СИБЛИНГ
+## DropOrigin (оба дети AmmoDropZone), не его ребёнок: `zone.get_node("DropArea")` возвращало бы
+## null. Тот же паттерн, что сама зона использует на себя (`_area =
+## get_parent().get_node("DropArea")`) — но у НАС `zone` уже И ЕСТЬ DropOrigin, значит на один
+## уровень выше. Вынесено в отдельный геттер — используется и для центра/радиуса (AMMO_SEEK/WAIT),
+## и для фильтра "ящик в этой зоне" (_find_crate_in_zone()).
+func _ammo_zone_area(zone: Node) -> Node3D:
+	return zone.get_parent().get_node_or_null("DropArea")
+
+## Ближайший ящик (группа "ammo_crates", та же, что ammo_crate.gd заводит на себя) в пределах
+## РАДИУСА зоны от её центра — не reach_dist, по прямому запросу "заезжает в пределы окружности".
+## Валидный (is_instance_valid) — ящик, который кто-то только что подобрал, ещё "существует" один
+## кадр как невалидная ссылка, если её вообще где-то держали, но из свежего group-запроса уже не
+## вернётся вовсе (queue_free() убирает из группы синхронно). Null — ни одного в радиусе.
+func _find_crate_in_zone(zone: Node) -> Node:
+	var area: Node3D = _ammo_zone_area(zone)
+	if area == null:
+		return null
+	var radius: float = float(area.get("radius"))
+	var center: Vector3 = area.global_position
+	for crate in get_tree().get_nodes_in_group("ammo_crates"):
+		if not is_instance_valid(crate):
+			continue
+		var dist: float = Vector2(crate.global_position.x - center.x, crate.global_position.z - center.z).length()
+		if dist <= radius:
+			return crate
+	return null
+
+## Точка входа в AMMO_SEEK (см. заголовок файла) — вызывается ОДИН раз при переходе в этот стейт
+## (из _ensure_home_state()'s мягкого условия ИЛИ из _on_ammo_depleted()'s жёсткого) — сама НЕ
+## трогает state (оба вызывающих делают это по-своему, см. их код), только выбор зоны и сброс
+## AMMO_RETRIEVE/AMMO_WAIT-специфичных полей с прошлого захода. Едем в ЦЕНТР — сам факт "доехали"
+## проверяется отдельно (дистанция ≤ радиус, см. State.AMMO_SEEK в _physics_process()), не
+## reach_dist до этой точки — можно свернуть в RETRIEVE/WAIT задолго до фактического центра.
+func _pick_ammo_zone() -> void:
+	_ammo_target_crate = null
+	_has_ammo_wait_target = false
+	_ammo_wait_timer = 0.0
+	if _ammo_zones.is_empty():
+		_ammo_zone = null
+		return
+	_ammo_zone = _ammo_zones[randi() % _ammo_zones.size()]
+	var area: Node3D = _ammo_zone_area(_ammo_zone)
+	if area != null and _nav_agent.is_inside_tree():
+		_nav_agent.target_position = area.global_position
+
+## Полный вход в AMMO_SEEK (state + сброс driving-флагов + выбор зоны) — общая точка для ДВУХ
+## вызывающих: _on_ammo_depleted() (сигнал, реагирует мгновенно) и _think() (жёсткий guard,
+## перепроверяется КАЖДЫЙ тик, пока боезапас пуст — см. её комментарий про то, почему одного
+## сигнала недостаточно). Guard по трём ammo-стейтам сразу — не дёргать заново уже идущий
+## AMMO_RETRIEVE/AMMO_WAIT, и не перезапускать AMMO_SEEK на новую случайную зону, если уже едем.
+func _enter_ammo_seek() -> void:
+	if state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT:
+		return
+	if _ammo_zones.is_empty():
+		return  # карта без зон сброса — нечем поживиться, продолжаем как есть (см. doc-comment enum)
+	state = State.AMMO_SEEK
+	_current_target = null
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
+	_pick_ammo_zone()
+
+## Жёсткое условие входа (см. заголовок файла) — боезапас реально ноль, стрелять нечем в принципе.
+## Реагирует МГНОВЕННО на сам сигнал AmmoComponent.ammo_depleted (см. её подписку в _initialize()),
+## не дожидаясь следующего think-тика — но одного этого вызова НЕДОСТАТОЧНО (см. guard в _think(),
+## который держит это условие в силе КАЖДЫЙ последующий тик, пока патронов нет).
+func _on_ammo_depleted() -> void:
+	_enter_ammo_seek()
 
 ## Точка входа в SEARCH (см. заголовок файла) — вызывается РОВНО ОДИН РАЗ, когда PURSUE доезжает
 ## до последней видимой позиции цели. Фиксирует anchor и делает ОДНОКРАТНЫЕ броски вероятности
@@ -2020,7 +2321,7 @@ func _update_brain_debug_label() -> void:
 	# плюс время до респавна"] Отдельная, короткая ветка — не проваливаемся в обычный путь ниже
 	# (там session/role/reaction и т.п. показали бы настоящие живые числа, что и просили заменить
 	# прочерком). Время до респавна — RespawnController.time_until_respawn() (публичный геттер, не
-	# завязан на BotSentryController — см. её doc-comment), не собственный таймер: единый источник
+	# завязан на TankAIController — см. её doc-comment), не собственный таймер: единый источник
 	# истины, тот же принцип, что уже применён к централизованному ALERT-таймеру в bot_arena.gd.
 	if state == State.DEAD:
 		var respawn_left: float = _respawn_controller.time_until_respawn() if _respawn_controller != null else 0.0
@@ -2090,6 +2391,19 @@ func _update_brain_debug_label() -> void:
 				lines.append("target: Objective (%.1fm)" % dist)
 			else:
 				lines.append("target: Objective (destroyed)")
+		State.AMMO_SEEK:
+			if _ammo_zone != null and is_instance_valid(_ammo_zone):
+				var area: Node3D = _ammo_zone_area(_ammo_zone)
+				# _ammo_zone сам — DropOrigin (см. _ammo_zone_area()), имя родителя ("AmmoDropZone"/
+				# "AmmoDropZone2") понятнее в дебаг-панели, чем техническое "DropOrigin".
+				lines.append("zone: %s (%.1fm)" % [String(_ammo_zone.get_parent().name), _body.global_position.distance_to(area.global_position)])
+			_append_nav_debug_lines(lines)
+		State.AMMO_RETRIEVE:
+			if is_instance_valid(_ammo_target_crate):
+				lines.append("crate: %.1fm" % _body.global_position.distance_to(_ammo_target_crate.global_position))
+			_append_nav_debug_lines(lines)
+		State.AMMO_WAIT:
+			lines.append("waiting for crate (%.1fs to next move)" % _ammo_wait_timer)
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

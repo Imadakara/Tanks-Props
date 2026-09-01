@@ -1,8 +1,8 @@
 extends Node
 ## TankMovement — гусеничное движение танка: вперёд/назад + поворот корпуса (ТЗ §4).
 ## Источник ввода зависит от is_player_controlled: игрок — Input Actions, бот —
-## ai_move_input/ai_turn_input, которые пишет TankAIController (Этап 8), не дублируя
-## эту ноду отдельным путём движения.
+## ai_move_input/ai_turn_input, которые пишет TankAIController (единственный ИИ проекта, см.
+## scenes/tank/tank_ai_controller.gd), не дублируя эту ноду отдельным путём движения.
 
 @export var move_speed: float = 6.0
 @export var acceleration: float = 12.0  # м/с² — разгон/торможение линейной скорости (не мгновенное применение)

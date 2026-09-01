@@ -64,7 +64,7 @@ func spawn_team() -> void:
 		_spawn_bot(opposite_team, opposite_zone, bot_config)
 
 ## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей "Map" —
-## тот же обобщённый приём, что respawn_controller.gd/bot_sentry_controller.gd используют для
+## тот же обобщённый приём, что respawn_controller.gd/tank_ai_controller.gd используют для
 ## поиска Ground/Objective, работает одинаково на продакшен-карте (зона под "Map") и на тестовых
 ## аренах, у которых отдельного узла "Map" вообще нет.
 func _find_spawn_zone(node_name: String) -> Node3D:
@@ -84,9 +84,25 @@ func _spawn_bot(team: int, zone: Node3D, config: Dictionary) -> void:
 	if zone != null:
 		bot.global_position = zone.pick_spawn_position() + _spawn_clearance
 		SpawnZoneScript.face_center(bot)
-	var ai := bot.get_node("TankAIController")
-	ai.enabled = true
-	ai.patrol_enabled = false  # временно: боты стоят на месте, не бегают по вейпоинтам (см. дев-план)
+	# [ИЗМЕНЕНО, по прямому запросу — "два набора ботов, тестовый и продакшен — путаница, должна
+	# быть одна универсальная система"] Раньше здесь включался TankAIController (production-
+	# эксклюзивный, минимальный ИИ без объезда препятствий) — теперь тот же TankAIController,
+	# что и на тестовых аренах Bot AI (тот же узел теперь на каждом Tank.tscn, см. её @export
+	# enabled doc-comment). waypoint_name_prefix/waypoints_one_way — та же связка, что уже
+	# используют AttackWaypointN/DefenseWaypointN на Map.tscn (готовые маркеры от более ранней
+	# работы над SpawnZone, просто раньше ни к какому AI не подключённые): атака идёт К objective
+	# один раз, оборона патрулирует бесконечным кругом рядом со своим спавном.
+	var brain := bot.get_node("TankAIController")
+	brain.waypoint_name_prefix = "AttackWaypoint" if team == 0 else "DefenseWaypoint"
+	brain.waypoints_one_way = team == 0
+	# 9+ ботов с полным дебаг-виджетом (по умолчанию скрипта — true, нужно тестовым аренам как
+	# есть) на продакшен-карте — нечитаемая каша поверх HUD; гасим точечно, не трогая дефолт
+	# скрипта.
+	brain.show_fov_debug = false
+	brain.show_path_debug = false
+	brain.show_brain_debug = false
+	brain.show_reaction_toggle_button = false
+	brain.enabled = true
 	_apply_tank_config(bot, config)
 
 ## Читает JSON-конфиг характеристик танка. Отсутствующий файл/битый JSON — не критическая

@@ -19,7 +19,7 @@ extends Node3D
 ##   autoload/game_config.gd) без переопределения — единое правило кулдауна везде, без исключений.
 ##
 ## - Кнопка "Objective On/OFF" (только тестовые арены, не Main.tscn) — тот же паттерн, что
-##   кнопки-тумблеры bot_sentry_controller.gd (_setup_reaction_toggle_button): переключает
+##   кнопки-тумблеры tank_ai_controller.gd (_setup_reaction_toggle_button): переключает
 ##   HealthComponent.invincible на цели, текст отражает состояние. Здоровье цели В HUD теперь
 ##   рисует сам hud.gd (строка под счётом раундов, только режим TARGET_OBJECTIVE) — раньше это
 ##   делалось здесь с текстом "OBJECTIVE: TARGET — X/Y", но имя режима в HUD не место (режим —
@@ -38,6 +38,7 @@ extends Node3D
 const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const ArenaMatchScript := preload("res://scenes/bot_arena/arena_match.gd")
+const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_state.gd")
 
 ## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: BotArena.tscn = 0, KillerArena.tscn = 1),
 ## не детектится по наличию узла Objective. Значения совпадают с MatchState.Mode
@@ -61,27 +62,18 @@ var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
 
 ## [ДОБАВЛЕНО, по прямому запросу — "ОБЩИЙ ALERT стейт — у уже существующих на карте И у новых
-## спавнящихся"] Раньше каждый BotSentryController хранил СВОЙ personal-таймер тревоги
-## (_time_since_objective_hit), копившийся в его СОБСТВЕННОМ _physics_process() — но пока бот
-## "заморожен" на респавне (process_mode=DISABLED, см. respawn_controller.gd), его
-## _physics_process() вообще не вызывается: таймер застревал на значении из момента смерти, не
-## отражая реально прошедшее время. Результат — рассинхронизация: у respawn-нутого бота ALERT мог
-## не сработать (или сработать неверно) независимо от того, что реально происходило с objective,
-## пока он был мёртв. Централизованный таймер живёт ЗДЕСЬ — BotArena (корень сцены) никогда не
-## замораживается, копится РОВНО ОДИН РАЗ на всех, не дублируется по ботам. Каждый
-## BotSentryController теперь ЧИТАЕТ его через time_since_objective_hit() (см. ниже), а не хранит
-## свою копию — "уже существующий" и "только что заспавнившийся" бот видят ОДНО И ТО ЖЕ значение.
-## Стартует с INF ("удара никогда не было") — 0.0 читалось бы как "только что попали".
-##
-## [ДОБАВЛЕНО, по прямому запросу — "верни условие сброса ALERT — когда в пределах окружности
-## objective нет танков противника, иначе глобальный ALERT"] Таймер остаётся ОСНОВНЫМ, надёжно
-## подтверждённым живьём условием — это ДОПОЛНИТЕЛЬНЫЙ, независимый путь включения тревоги (см.
-## enemy_in_alert_zone() ниже и её использование в bot_sentry_controller.gd/_ensure_home_state(),
-## объединены через ИЛИ) — если враг физически внутри ObjectiveAlertZone ПРЯМО СЕЙЧАС, ALERT
-## активен, даже если формальный таймер почему-то ещё не сработал/уже истёк. Централизовано здесь
-## (не per-bot, как было в самой первой версии геопроверки) по той же причине, что и таймер —
-## "ГЛОБАЛЬНЫЙ ALERT" по формулировке запроса, один расчёт, общий для всех защитников.
-var _time_since_objective_hit: float = INF
+## спавнящихся"] Централизованный таймер живёт ЗДЕСЬ — BotArena (корень сцены) никогда не
+## замораживается на респавне отдельных ботов (в отличие от них самих, см.
+## respawn_controller.gd), копится РОВНО ОДИН РАЗ на всех, не дублируется по ботам. Каждый
+## TankAIController ЧИТАЕТ его через time_since_objective_hit() (см. ниже), а не хранит свою
+## копию — "уже существующий" и "только что заспавнившийся" бот видят ОДНО И ТО ЖЕ значение.
+## [ПЕРЕНЕСЕНО В ObjectiveAlertState, по прямому запросу — "боты это универсальная система для
+## любой карты"] Сама логика таймера/гео-проверки вынесена в переиспользуемый класс
+## (scenes/main/objective_alert_state.gd) — main.gd (продакшен-оркестратор) владеет ТАКИМ ЖЕ
+## экземпляром для Main.tscn, раньше этих методов там не было вообще (TankAIController жил
+## только на sandbox-аренах) — живьём поймано "Nonexistent function 'time_since_objective_hit'"
+## при первом прогоне после того, как этот компонент стал общим для всех карт.
+var _alert_state := ObjectiveAlertStateScript.new()
 
 ## Тот же зазор, что и team_spawner.gd/respawn_controller.gd — спавн ровно НА поверхности (y
 ## из raycast SpawnZone.pick_spawn_position()) даёт вырожденный контакт с полом, на котором
@@ -124,7 +116,7 @@ func _setup_match_context() -> void:
 	arena_match.setup(match_mode, round_sec, score_manager, objective_health)
 
 ## Бессмертие игрока на тестовой арене (чтобы смерть/respawn игрока не мешали обкатывать ИИ) —
-## теперь тумблер, как Objective On/Off и bot reaction (bot_sentry_controller.gd), а не хардкод в
+## теперь тумблер, как Objective On/Off и bot reaction (tank_ai_controller.gd), а не хардкод в
 ## _ready(). ПО УМОЛЧАНИЮ ВКЛ. Низ-справа, на слот выше кнопки Objective On/Off (та на самом низу).
 func _setup_invincibility_toggle_button() -> void:
 	_player_health.invincible = true
@@ -153,35 +145,24 @@ func _update_invincibility_toggle_button() -> void:
 	_invincibility_toggle_button.text = "Игрок: бессмертие %s" % ("ON" if _player_health.invincible else "OFF")
 
 func _physics_process(delta: float) -> void:
-	_time_since_objective_hit += delta
+	_alert_state.tick(delta)
 
 ## Публичный геттер (не .get() на приватной var с другого скрипта) — вызывается КАЖДЫМ
-## BotSentryController из _ensure_home_state() вместо хранения собственной копии таймера (см.
-## doc-comment у _time_since_objective_hit выше).
+## TankAIController из _ensure_home_state() вместо хранения собственной копии таймера. Тонкая
+## обёртка над ObjectiveAlertState (см. её doc-comment) — имя метода то же, что и раньше, ничего в
+## tank_ai_controller.gd менять не пришлось.
 func time_since_objective_hit() -> float:
-	return _time_since_objective_hit
+	return _alert_state.time_since_hit()
 
-## Геометрическая проверка (дистанция до центра зоны, НЕ vision/_can_see()) — тревога должна ИСКАТЬ
-## противника рядом с objective сама по себе, не только по факту прошлого попадания. "Противник" —
-## любой танк с is_attacker()==true (защитники "чужие" ТОЛЬКО для атакующей команды, симметрично
-## тому, что использует _ensure_home_state() для определения, кто вообще подписан на тревогу).
-## target.visible-фильтр — тот же паттерн, что и в _can_see() (см. bot_sentry_controller.gd) —
-## убитый, ждущий respawn танк (visible=false) не считается "противником в круге".
+## Тонкая обёртка над ObjectiveAlertState.enemy_in_zone() — is_instance_valid, не == null:
+## ObjectiveAlertZone теперь дочерний узел Objective и освобождается ВМЕСТЕ с ним при уничтожении
+## (free_on_destroy=true) — после этого _alert_zone висячая ссылка, != null, но обращаться к ней
+## уже нельзя (сама проверка внутри ObjectiveAlertState тоже это учитывает — дублируем guard здесь
+## только чтобы не звать метод класса на заведомо мусорной ссылке).
 func enemy_in_alert_zone() -> bool:
-	# is_instance_valid, не == null: ObjectiveAlertZone теперь дочерний узел Objective и
-	# освобождается ВМЕСТЕ с ним при уничтожении (free_on_destroy=true) — после этого _alert_zone
-	# висячая ссылка, != null, но обращаться к ней уже нельзя.
 	if not is_instance_valid(_alert_zone):
 		return false
-	var radius: float = float(_alert_zone.get("radius"))
-	var zone_pos: Vector3 = _alert_zone.global_position
-	for tank in get_tree().get_nodes_in_group("tanks"):
-		if not is_instance_valid(tank) or not tank.is_attacker() or not tank.visible:
-			continue
-		var dist: float = Vector2(tank.global_position.x - zone_pos.x, tank.global_position.z - zone_pos.z).length()
-		if dist <= radius:
-			return true
-	return false
+	return _alert_state.enemy_in_zone(_alert_zone, get_tree())
 
 ## Здоровье цели в HUD рисует сам hud.gd (строка под счётом раундов, только TARGET_OBJECTIVE) —
 ## здесь остаётся только тестовый тумблер бессмертия цели + подписка на damaged для сброса
@@ -194,12 +175,16 @@ func _setup_objective_ui() -> void:
 	if _objective_health == null:
 		return
 	_objective_health.damaged.connect(_on_objective_damaged)
+	# [ДОБАВЛЕНО, по прямому запросу — "боты это универсальная система для любой карты"] Та же
+	# группа, что match_manager.gd проставляет на продакшене — TankAIController ищет objective
+	# по ней, не по имени узла ("Objective" здесь, "DestructibleObjective" на проде).
+	_objective_health.add_to_group("objective_health")
 	_setup_objective_toggle_button()
 
 func _on_objective_damaged(_current_hits: int, _max_hits: int, _killer: Node = null) -> void:
-	_time_since_objective_hit = 0.0  # см. doc-comment у переменной — сбрасывается на КАЖДЫЙ удар
+	_alert_state.reset()  # сбрасывается на КАЖДЫЙ удар, см. ObjectiveAlertState.reset()
 
-## Тот же паттерн, что кнопки-тумблеры bot_sentry_controller.gd (_setup_reaction_toggle_button) —
+## Тот же паттерн, что кнопки-тумблеры tank_ai_controller.gd (_setup_reaction_toggle_button) —
 ## отдельный CanvasLayer, не трогаем разметку HUD.tscn. Правый низ — левый низ уже занят
 ## reaction-toggle кнопками ботов (см. debug_ui_slot), правый верх — brain-debug панелями.
 func _setup_objective_toggle_button() -> void:
@@ -215,7 +200,7 @@ func _setup_objective_toggle_button() -> void:
 	button.pressed.connect(_on_objective_toggle_pressed)
 	layer.add_child(button)
 	_objective_toggle_button = button
-	# Без call_deferred, в отличие от bot_sentry_controller.gd — этот скрипт сидит на КОРНЕ сцены,
+	# Без call_deferred, в отличие от tank_ai_controller.gd — этот скрипт сидит на КОРНЕ сцены,
 	# его _ready() уже выполняется последним (после всех детей, см. CLAUDE.md/"Scene bring-up
 	# ordering"), дерево к этому моменту полностью построено.
 	add_child(layer)

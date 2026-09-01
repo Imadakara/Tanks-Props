@@ -7,13 +7,13 @@ extends Node3D
 ## команду, случайная точка внутри неё на каждый спавн/респавн.
 ##
 ## Команда кодируется ПРЕФИКСОМ ИМЕНИ узла, не отдельным @export полем — тот же паттерн, что уже
-## используется в проекте для Waypoint/AttackWaypoint (bot_sentry_controller.gd) и
+## используется в проекте для Waypoint/AttackWaypoint (tank_ai_controller.gd) и
 ## AttackSpawnPoint/DefenseSpawnPoint (team_spawner.gd): "AttackSpawnZone" / "DefenseSpawnZone".
 ## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей —
 ## продакшен-карта держит её под "Map", тестовые арены — прямо в корне (нет отдельного Map-узла).
 ##
 ## [ПЕРЕИСПОЛЬЗУЕТСЯ, по прямому запросу] Тот же скрипт стоит и на узле "ObjectiveAlertZone" —
-## круглая зона тревоги вокруг уничтожаемого objective (bot_sentry_controller.gd, State.ALERT, см.
+## круглая зона тревоги вокруг уничтожаемого objective (tank_ai_controller.gd, State.ALERT, см.
 ## её doc-comment). Имя не начинается ни с "Attack", ни с "Defense" — _draw_debug_circle() рисует
 ## её жёлтой (ветка else), что и требовалось. pick_spawn_position() у этого узла не используется —
 ## ALERT-логика берёт точки сама (_pick_new_alert_target(), круговая выборка), но радиус/окружность
@@ -48,7 +48,7 @@ func _ready() -> void:
 		_draw_debug_circle()
 
 ## Случайная точка в круге (равномерно по площади — sqrt(randf()), не randf() напрямую, тот же
-## приём, что уже используется в bot_sentry_controller.gd/_pick_random_point_near()) С ПРОВЕРКОЙ
+## приём, что уже используется в tank_ai_controller.gd/_pick_random_point_near()) С ПРОВЕРКОЙ
 ## ПОВЕРХНОСТИ ПОД НЕЙ (по прямому запросу) — кастует луч вниз (collision_mask=1, "environment",
 ## та же маска, что и у остальных геометрических проверок в проекте), берёт РЕАЛЬНУЮ высоту
 ## поверхности из результата хита, не просто center.y. Ничего не нашли за max_attempts попыток —
@@ -79,7 +79,9 @@ func pick_spawn_position() -> Vector3:
 ## tank_movement.gd _physics_process(), forward = -_body.global_transform.basis.z) — ТО ЖЕ самое
 ## направление, что и у look_at() (Node3D.look_at() всегда ориентирует -Z на target), поэтому здесь
 ## не пришлось выводить свою формулу угла руками — та же категория бага, что уже была один раз
-## живьём найдена в tank_ai_controller.gd (инвертированный знак поворота, см. CLAUDE.md/vault).
+## живьём найдена в driving-стеке tank_ai_controller.gd (инвертированный знак поворота, см. её
+## _drive_to_point()/дев-план в заголовке того файла) — здесь тот же класс бага заведомо не грозит,
+## look_at()/-basis.z уже согласованы напрямую, без ручного вывода знака.
 ## Статик, не завязан на конкретный инстанс зоны — вызывается как SpawnZoneScript.face_center(tank)
 ## (через preload этого файла, см. вызывающие скрипты — НЕ class_name: headless run_project не
 ## подхватывает свежедобавленный class_name без пересканирования редактором, см. CLAUDE.md/vault,
@@ -92,7 +94,7 @@ static func face_center(tank: Node3D) -> void:
 	tank.look_at(Vector3(0.0, pos.y, 0.0), Vector3.UP)
 
 ## Окружность на земле — MeshInstance3D с ImmediateMesh, построена ОДИН раз в _ready() (зона
-## статична, не нужно перестраивать каждый кадр, в отличие от дебаг-визуалов bot_sentry_controller.gd,
+## статична, не нужно перестраивать каждый кадр, в отличие от дебаг-визуалов tank_ai_controller.gd,
 ## которые следят за живым состоянием бота). Цвет по префиксу имени — красноватый "Attack",
 ## синеватый "Defense", нейтральный жёлтый — иначе (на случай другой команды/нейминга в будущем).
 func _draw_debug_circle() -> void:

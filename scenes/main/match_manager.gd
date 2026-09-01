@@ -36,6 +36,12 @@ func begin_match() -> void:
 		_objective_health.max_hits = GameConfig.objective_hits_required
 		_objective_health.attackers_only = true  # оборона не должна вредить цели
 		_objective_health.destroyed.connect(_on_objective_destroyed)
+		# [ДОБАВЛЕНО, по прямому запросу — "боты это универсальная система для любой карты, чинить
+		# недоработки в этом ключе"] TankAIController ищет objective ПО ГРУППЕ, не по имени узла
+		# ("DestructibleObjective" здесь vs "Objective" на sandbox-аренах — разное имя одного и того
+		# же концепта). Регистрируем РОВНО здесь, в момент, когда attackers_only уже точно true —
+		# единственный надёжный маркер "это объект-цель, не танк" на этот момент выполнения.
+		_objective_health.add_to_group("objective_health")
 
 	var tanks := get_tree().get_nodes_in_group("tanks")
 	_total_tanks = tanks.size()

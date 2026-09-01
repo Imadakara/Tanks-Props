@@ -16,14 +16,15 @@ const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 ## [ДОБАВЛЕНО, по прямому запросу — "если атакующий objective-цель танк уничтожается, то она
 ## появляется сразу в стейте боя с целью на objective, такого быть не должно"] RespawnController
 ## сбрасывает физическое состояние танка (позиция/здоровье/боезапас/TankStateMachine), но НИЧЕГО
-## не знает о AI-стейте (BotSentryController.state живёт в СОВЕРШЕННО ДРУГОМ, тестовом-песочницы
-## компоненте — RespawnController общий, используется и игроком, и production TankAIController, не
-## должен знать про BotSentryController напрямую, это нарушило бы разделение слоёв). Танк,
+## не знает о AI-стейте (TankAIController.state — хоть теперь и сиблинг на КАЖДОМ Tank.tscn,
+## включая игрока, см. её @export enabled — RespawnController всё равно не должен знать про него
+## напрямую, это нарушило бы разделение слоёв: физический респавн и AI-поведение — разная
+## ответственность, даже когда оба живут на одном танке). Танк,
 ## погибший будучи в ATTACK_OBJECTIVE/DEFEND, воскресал бы С ТЕМ ЖЕ state — а ATTACK_OBJECTIVE
 ## вообще не пересчитывается через обычный _ensure_home_state() (в её exception-guard, ждёт, пока
 ## сам не разрешится) — так что бот, реально телепортированный на СВОЙ спавн (далеко от objective),
 ## пытался ехать/стрелять по objective НАПРЯМУЮ, минуя весь маршрут AttackWaypointN. Сигнал —
-## развязка между слоями: кто угодно (BotSentryController) подписывается сам, RespawnController не
+## развязка между слоями: кто угодно (TankAIController) подписывается сам, RespawnController не
 ## обязан знать о его существовании.
 signal respawned
 
@@ -61,30 +62,33 @@ func _on_respawn_timeout() -> void:
 	respawned.emit()
 
 ## [ДОБАВЛЕНО, по прямому запросу — "добавь ботам стейт DEAD, отражать в дебаг-логах на экране,
-## плюс время до респавна"] "BotSentryController" — третье исключение из заморозки, наравне с
+## плюс время до респавна"] "TankAIController" — третье исключение из заморозки, наравне с
 ## HealthComponent. Без него бот-песочница (bot_arena.gd), потеряв танк, тоже получал бы
-## process_mode=DISABLED на свой BotSentryController — его _physics_process() перестал бы
+## process_mode=DISABLED на свой TankAIController — его _physics_process() перестал бы
 ## вызываться движком вообще, а вместе с ним и обновление дебаг-лейбла: текст застревал бы на
 ## последнем стейте ДО смерти (например, "state: DEFEND") вместо живого "DEAD" с тикающим
 ## обратным отсчётом до респавна. Строковое сравнение по имени узла — тот же паттерн, что уже
-## применён к "HealthComponent"; ничего не знает о самом BotSentryController как о типе/скрипте,
-## поэтому безопасно и для игрока, и для продакшен TankAIController-ботов — там просто нет
-## сиблинга с таким именем, исключение никогда не срабатывает. Сама AI-логика (сканирование,
+## применён к "HealthComponent"; ничего не знает о самом TankAIController как о типе/скрипте.
+## [АКТУАЛИЗИРОВАНО — TankAIController теперь сиблинг на КАЖДОМ Tank.tscn, включая игрока, не
+## только тестовых аренах] Исключение теперь СРАБАТЫВАЕТ везде, но остаётся безопасным: узел
+## остаётся дормантным, пока сам не enabled (см. её @export doc-comment) — на игроке/невключённом
+## боте его "разморозка" ничего не даёт, `_physics_process()` тут же возвращается по `not enabled`.
+## Сама AI-логика (сканирование,
 ## движение, стрельба) при этом всё равно не оживает — управляющие компоненты (TankMovement,
-## WeaponController, ...) остаются в списке замораживаемых, а BotSentryController сам проверяет
+## WeaponController, ...) остаются в списке замораживаемых, а TankAIController сам проверяет
 ## `state == State.DEAD` и не совершает никаких действий, кроме обновления собственного лейбла
-## (см. bot_sentry_controller.gd, _think()/_physics_process()).
+## (см. tank_ai_controller.gd, _think()/_physics_process()).
 func _set_frozen(frozen: bool) -> void:
 	_tank.visible = not frozen
 	_hull_collision.disabled = frozen
 	_detector_collision.disabled = frozen
 	var mode: int = Node.PROCESS_MODE_DISABLED if frozen else Node.PROCESS_MODE_INHERIT
 	for child in _tank.get_children():
-		if child == self or child.name == "HealthComponent" or child.name == "BotSentryController":
+		if child == self or child.name == "HealthComponent" or child.name == "TankAIController":
 			continue
 		child.process_mode = mode
 
-## [ДОБАВЛЕНО, по тому же запросу] Публичный геттер, не завязанный на BotSentryController —
+## [ДОБАВЛЕНО, по тому же запросу] Публичный геттер, не завязанный на TankAIController —
 ## обычная величина "сколько осталось", в том же духе, что уже сделано для сигнала `respawned`
 ## (RespawnController не обязан знать, кто и зачем читает эту информацию). 0.0, если таймер не
 ## идёт (танк жив, или ещё не запускался) — не отрицательное/произвольное число.

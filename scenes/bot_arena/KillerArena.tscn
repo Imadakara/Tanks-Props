@@ -1,11 +1,10 @@
 [gd_scene format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_b63ln"]
-[ext_resource type="Script" path="res://scenes/bot_arena/bot_arena.gd" id="1_idf45"]
+[ext_resource type="Script" path="res://scenes/bot_arena/bot_arena.gd" id="1_fe26o"]
 [ext_resource type="Script" path="res://scenes/tank/tank.gd" id="2_7eip8"]
-[ext_resource type="Script" path="res://scenes/bot_arena/bot_sentry_controller.gd" id="3_idf45"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
-[ext_resource type="Script" path="res://scenes/hud/hud.gd" id="7_execi"]
+[ext_resource type="Script" path="res://scenes/hud/hud.gd" id="5_h4vpl"]
 [ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="8_h4vpl"]
 [ext_resource type="PackedScene" path="res://scenes/ammo_crate/AmmoDropZone.tscn" id="9_drop"]
 
@@ -34,15 +33,6 @@ albedo_color = Color(0.55, 0.55, 0.58, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_5mwi5"]
 size = Vector3(5.4, 2.2, 0.5)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_mhw8u"]
-size = Vector3(2, 2, 2)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_utd6a"]
-albedo_color = Color(0.25, 0.28, 0.35, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_vgxt8"]
-size = Vector3(2, 2, 2)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2uusy"]
 size = Vector3(2, 1.25, 2)
@@ -143,8 +133,7 @@ albedo_color = Color(0.6, 0.35, 0.15, 1)
 size = Vector3(2, 1.25, 2)
 
 [node name="BotArena" type="Node3D" unique_id=281684750]
-script = ExtResource("1_idf45")
-match_mode = 1
+script = ExtResource("1_fe26o")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=2025781862]
 transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49999997, -0.49999997, 0.70710677, 0.49999997, 0, 0, 0)
@@ -157,21 +146,23 @@ collision_mask = 3
 script = ExtResource("2_7eip8")
 
 [node name="BotTank" type="CharacterBody3D" parent="." unique_id=1826953914 instance=ExtResource("1_b63ln")]
-transform = Transform3D(-0.8766012, 0, -0.48120168, 0, 1, 0, 0.48120168, 0, -0.8766012, -6.099569, 0.00093119073, -3.2802484)
+transform = Transform3D(-0.8766012, 0, -0.48120168, 0, 1, 0, 0.48120168, 0, -0.8766012, -5.7114024, 0.0008765071, -2.5731287)
 collision_layer = 2
 collision_mask = 3
-velocity = Vector3(2.1654077, 0, 3.9447055)
 script = ExtResource("2_7eip8")
 team = 1
 
-[node name="BotSentryController" type="Node" parent="BotTank" unique_id=1729385129]
-script = ExtResource("3_idf45")
+[node name="CameraRig" parent="BotTank"]
+is_active = false
+
+[node name="TankAIController" parent="BotTank"]
+enabled = true
 role = 0
 hunt_area_center = Vector3(0, -0.25, 0)
 hunt_area_half_extents = Vector2(36, 36)
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
-script = ExtResource("7_execi")
+script = ExtResource("5_h4vpl")
 
 [node name="ObjectiveCamera" type="Camera3D" parent="." unique_id=1090300878]
 transform = Transform3D(1, 0, 0, 0, 0.78086877, 0.62469506, 0, -0.62469506, 0.78086877, 0, 13, -6)
@@ -379,8 +370,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, -24)
 [node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=485153190]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -22)
 
-[node name="AmmoDropZone" parent="." instance=ExtResource("9_drop")]
+[node name="AmmoDropZone" type="Node3D" parent="." unique_id=743978543 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, -28)
 
-[node name="AmmoDropZone2" parent="." instance=ExtResource("9_drop")]
+[node name="AmmoDropZone2" type="Node3D" parent="." unique_id=1610241131 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28, 0, 28)

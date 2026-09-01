@@ -174,6 +174,12 @@ albedo_color = Color(0.25, 0.28, 0.35, 1)
 [sub_resource type="BoxMesh" id="BoxMesh_vyhe5"]
 size = Vector3(2, 2, 2)
 
+[sub_resource type="NavigationMesh" id="NavigationMesh_4yt6b"]
+vertices = PackedVector3Array(-6.75, 0.5, -7, -3, 0.5, -7, -3.25, 0.5, -8.5, -2.75, 0.5, -9.25, -2.75, 0.5, -28.75, -28.75, 0.5, -28.75, -28.75, 0.5, -5.75, -7.75, 0.5, -5.75, 3.25, 0.5, -9, 3.5, 0.5, -8, 6.5, 0.5, -8, 6.75, 0.5, -10.75, 2.5, 0.5, -9.5, 7.75, 0.5, -11.5, 9.25, 0.5, -11.5, 9, 0.5, -28.75, 11, 0.5, -11.5, 11.25, 0.5, -28.75, 13.5, 0.5, -10.5, 13.5, 0.5, -9, 28.75, 0.5, -9.25, 13, 0.5, -11.25, 28.75, 0.5, -28.75, 13.5, 0.5, -7, 28.75, 0.5, -6.75, 9, 3.75, -9, 9, 3.75, -7, 11, 3.75, -7, 11, 3.75, -9, 9.5, 0.5, -8.5, 9.5, 0.5, -7.5, 10.5, 0.5, -7.5, 10.5, 0.5, -8.5, 7, 0.5, -4, 7.25, 0.5, -4.75, 6.5, 0.5, -5.5, -2, 0.5, -4, -2.5, 0.5, -3.25, -1.5, 0.5, -2, 3.25, 0.5, -7, 2.25, 0.5, -6.25, 1.5, 0.5, -2.25, 2.25, 0.5, -1.75, -2.25, 0.5, -6.25, 6.5, 0.5, 2.75, 6.75, 0.5, 6.5, 9, 0.5, 6.25, 9.75, 0.5, 6.75, 13.5, 0.5, -5.5, 12.5, 0.5, -4.5, 10, 0.5, 8, 28.75, 0.5, 8, -7.25, 0.5, 4.75, -6.5, 0.5, -2.75, -7.75, 0.5, -3.75, -12.25, 0.5, 4.5, -28.75, 0.5, 7, -13.5, 0.5, 7.25, -13.5, 0.5, 5.75, 2.5, 0.5, 1.25, 1.75, 0.5, 2.25, 3.75, 0.5, 3, 4.5, 0.5, 2.25, -3.25, 0.5, -2.75, -2.25, 0.5, -1.25, -5.75, 0.5, 6.5, -1.5, 0.5, 2.25, -2.25, 0.5, 1.5, 6.5, 0.5, 9.5, 6.25, 0.5, 7.5, 4.5, 0.5, 8, 3.75, 0.5, 7.5, -5.75, 0.5, 9.75, -7, 0.5, 11.25, 8, 0.5, 10, -9, 0.5, 11.5, -8.75, 0.5, 28.75, 8, 0.5, 28.75, -28.75, 0.5, 9.25, -13.5, 0.5, 9, -11, 3.75, 7, -11, 3.75, 9, -9, 3.75, 9, -9, 3.75, 7, 9.25, 0.5, 9.75, 28.75, 0.5, 28.75, -13.25, 0.5, 11, -12.5, 0.5, 11.5, -28.75, 0.5, 28.75, -11.25, 0.5, 28.75, -11, 0.5, 11.5)
+polygons = [PackedInt32Array(2, 1, 0), PackedInt32Array(2, 0, 3), PackedInt32Array(3, 0, 4), PackedInt32Array(4, 0, 6), PackedInt32Array(4, 6, 5), PackedInt32Array(0, 7, 6), PackedInt32Array(10, 9, 8), PackedInt32Array(8, 12, 10), PackedInt32Array(10, 12, 11), PackedInt32Array(15, 14, 13), PackedInt32Array(11, 12, 13), PackedInt32Array(13, 12, 3), PackedInt32Array(13, 3, 4), PackedInt32Array(13, 4, 15), PackedInt32Array(14, 15, 16), PackedInt32Array(16, 15, 17), PackedInt32Array(20, 19, 18), PackedInt32Array(18, 21, 20), PackedInt32Array(20, 21, 22), PackedInt32Array(22, 21, 17), PackedInt32Array(21, 16, 17), PackedInt32Array(19, 20, 23), PackedInt32Array(23, 20, 24), PackedInt32Array(28, 27, 25), PackedInt32Array(25, 27, 26), PackedInt32Array(32, 31, 29), PackedInt32Array(29, 31, 30), PackedInt32Array(35, 34, 33), PackedInt32Array(38, 37, 36), PackedInt32Array(9, 10, 39), PackedInt32Array(39, 10, 35), PackedInt32Array(39, 35, 40), PackedInt32Array(40, 35, 33), PackedInt32Array(40, 33, 42), PackedInt32Array(40, 42, 41), PackedInt32Array(36, 43, 38), PackedInt32Array(38, 43, 41), PackedInt32Array(41, 43, 40), PackedInt32Array(44, 46, 45), PackedInt32Array(46, 44, 47), PackedInt32Array(47, 44, 49), PackedInt32Array(47, 49, 48), PackedInt32Array(34, 49, 33), PackedInt32Array(33, 49, 44), PackedInt32Array(47, 48, 50), PackedInt32Array(50, 48, 51), PackedInt32Array(51, 48, 24), PackedInt32Array(48, 23, 24), PackedInt32Array(53, 52, 54), PackedInt32Array(54, 52, 55), PackedInt32Array(58, 57, 56), PackedInt32Array(55, 58, 54), PackedInt32Array(54, 58, 7), PackedInt32Array(7, 58, 56), PackedInt32Array(7, 56, 6), PackedInt32Array(62, 61, 59), PackedInt32Array(59, 61, 60), PackedInt32Array(62, 59, 44), PackedInt32Array(44, 59, 42), PackedInt32Array(44, 42, 33), PackedInt32Array(37, 38, 63), PackedInt32Array(63, 38, 64), PackedInt32Array(66, 65, 67), PackedInt32Array(67, 65, 52), PackedInt32Array(64, 67, 63), PackedInt32Array(63, 67, 53), PackedInt32Array(53, 67, 52), PackedInt32Array(70, 69, 68), PackedInt32Array(70, 68, 71), PackedInt32Array(71, 68, 72), PackedInt32Array(72, 68, 73), PackedInt32Array(60, 61, 66), PackedInt32Array(66, 61, 71), PackedInt32Array(66, 71, 65), PackedInt32Array(65, 71, 72), PackedInt32Array(73, 68, 74), PackedInt32Array(73, 74, 75), PackedInt32Array(75, 74, 76), PackedInt32Array(76, 74, 77), PackedInt32Array(79, 78, 57), PackedInt32Array(57, 78, 56), PackedInt32Array(83, 82, 80), PackedInt32Array(80, 82, 81), PackedInt32Array(77, 74, 84), PackedInt32Array(50, 51, 84), PackedInt32Array(84, 51, 85), PackedInt32Array(84, 85, 77), PackedInt32Array(78, 79, 86), PackedInt32Array(86, 87, 78), PackedInt32Array(78, 87, 88), PackedInt32Array(88, 87, 89), PackedInt32Array(87, 90, 89), PackedInt32Array(90, 75, 89), PackedInt32Array(89, 75, 76)]
+geometry_source_geometry_mode = 1
+agent_radius = 1.2
+
 [node name="Map" type="Node3D" unique_id=53834246]
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=823185880]
@@ -467,6 +473,11 @@ mesh = SubResource("BoxMesh_vyhe5")
 [node name="HealthComponent" type="Node" parent="DestructibleObjective" unique_id=614216465]
 script = ExtResource("3_nuen2")
 
+[node name="ObjectiveAlertZone" type="Node3D" parent="DestructibleObjective" unique_id=774250879]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0)
+script = ExtResource("4_hgphw")
+radius = 10.5
+
 [node name="AttackSpawnZone" type="Node3D" parent="." unique_id=826566212]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, -24)
 script = ExtResource("4_hgphw")
@@ -495,13 +506,11 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, -6)
 [node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=895862820]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 6)
 
-[node name="ObjectiveAlertZone" type="Node3D" parent="DestructibleObjective" unique_id=774250879]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0)
-script = ExtResource("4_hgphw")
-radius = 10.5
-
-[node name="AmmoDropZone" parent="." instance=ExtResource("5_drop")]
+[node name="AmmoDropZone" type="Node3D" parent="." unique_id=1037357747 instance=ExtResource("5_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, -24)
 
-[node name="AmmoDropZone2" parent="." instance=ExtResource("5_drop")]
+[node name="AmmoDropZone2" type="Node3D" parent="." unique_id=799626386 instance=ExtResource("5_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0, 24)
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=190406529]
+navigation_mesh = SubResource("NavigationMesh_4yt6b")

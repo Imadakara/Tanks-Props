@@ -18,7 +18,8 @@ what the code does, including reasoning behind changes that were tried and rever
 - `Tank_Prop_Hunt_Game_Modes.md` — **current-state reference for the game modes**
   (TARGET_OBJECTIVE / TEAM_ARENA): rules, round/series flow, HUD block, round-loop code, full map
   list. The "Game modes" section below is a summary; that doc is the detail.
-- `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — bot-AI sandbox (`Bot` branch), states/driving stack/params.
+- `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — the single, universal bot AI (`TankAIController`), used on
+  production and both test arenas alike: states/driving stack/params.
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
   prefab (circle + high dummy) placed in every map's empty corners, its drop/pickup/anti-overlap
   rules, per-map placement, `GameConfig` defaults.
@@ -32,9 +33,8 @@ errors, then `run_script`/`take_screenshot`/`simulate_input` to drive and inspec
 then `stop_project`). See the `godot-mcp-testing` skill for the full tool catalog and known
 gotchas of that MCP server; don't rediscover them by trial and error.
 
-`res://scenes/bot_arena/bot_sentry_controller.gd` has no counterpart in a formal test suite either
-— its correctness is established the same way (live `run_script` assertions on state, not manual
-play).
+`res://scenes/tank/tank_ai_controller.gd` has no counterpart in a formal test suite either — its
+correctness is established the same way (live `run_script` assertions on state, not manual play).
 
 **Current `run/main_scene`** (`project.godot`) points at `res://scenes/main_menu/MainMenu.tscn` — a
 plain three-button launcher (by request), not any of the actual game/test scenes directly. Pick one
@@ -94,11 +94,12 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
 - `RespawnController` — on death, disables the tank in place (hidden, colliders off,
   `process_mode = DISABLED` on every sibling except itself and `HealthComponent`) instead of
   freeing it, then teleports/resets it after `GameConfig.respawn_cooldown_sec`.
-- `TankAIController` — the production bot brain (Patrol/Hold, Disguise, Observe, Attack). Present
-  on every `Tank.tscn` instance but inert (`enabled=false`) unless a spawner turns it on; when
-  enabled it flips every sibling's `is_player_controlled` to `false` and drives them through the
-  same public contract the player uses (`ai_move_input`, `target_yaw`, `try_fire()`,
-  `try_enter_disguise()`) — no duplicated movement/combat logic path for bots vs. player.
+- `TankAIController` — the single AI brain for the whole project (production and both test arenas
+  alike, not a separate per-context system). Present on every `Tank.tscn` instance but inert
+  (`enabled=false`) unless a spawner/scene turns it on; when enabled it flips every sibling's
+  `is_player_controlled` to `false` and drives them through the same public contract the player
+  uses (`ai_move_input`, `target_yaw`, `try_fire()`) — no duplicated movement/combat logic path for
+  bots vs. player. States, roles, driving stack, ammo states: see the Bot AI vault doc.
 
 Because every component gates on `is_player_controlled` independently and defaults to `true`,
 spawning a second player-controlled-by-default tank without flipping that flag first means it
@@ -126,9 +127,9 @@ defaults `is_active = true` and steals `Camera3D.current` the instant it enters 
 `CameraRig._ready()`. `team_spawner.gd` sets `is_active = false` on the orphaned instance *before*
 `add_child()` to avoid a one-frame flicker; when a bot is instead added as a static node inside a
 hand-built `.tscn` (no runtime `instantiate()`/`add_child()` step to intervene in), the fix instead
-has to be a later sibling's `_ready()` explicitly re-asserting `camera.current = false` (see the
-bot arena sandbox's `BotSentryController`, which is deliberately the last child so its `_ready()`
-runs after `CameraRig`'s).
+has to happen later — `TankAIController._initialize()` explicitly re-asserts `camera.current =
+false`, which works regardless of sibling order since it only runs on the first `_physics_process()`
+tick, well after every sibling's `_ready()` including `CameraRig`'s.
 
 ### Autoloads and per-tank config
 
@@ -156,7 +157,7 @@ tanks the same way: `scenes/main/spawn_zone.gd` is a `Node3D` marking a circular
 `Waypoint`/`AttackWaypoint` and the old `AttackSpawnPoint`/`DefenseSpawnPoint` markers it replaces
 (`"AttackSpawnZone"` / `"DefenseSpawnZone"`). `pick_spawn_position()` picks a uniform-by-area random
 point inside the circle (`sqrt(randf())`, not `randf()` — same technique as
-`bot_sentry_controller.gd`'s `_pick_random_point_near()`) and raycasts straight down
+`tank_ai_controller.gd`'s `_pick_random_point_near()`) and raycasts straight down
 (`collision_mask = 1`, "environment") to find the actual ground surface under it, retrying up to
 `max_attempts` times before giving up and returning the zone's own center as a deterministic
 fallback. It also draws its own debug circle (`ImmediateMesh`, red for `Attack*`/blue for
@@ -185,12 +186,15 @@ Three call sites, all funneling through the same `pick_spawn_position()`:
 Zones default to opposite corners of the map (by request) — production `Map.tscn`:
 `AttackSpawnZone` at `(-24,-24)`, `DefenseSpawnZone` at `(24,24)`, radius 7 (covers the old 5-point
 clusters' ~5-unit spread with margin); both sandbox arenas (72×72): `(28,28)`/`(-28,-28)`, radius 8.
-Each zone also gets 3 purely decorative `Attack/DefenseWaypointN` markers on a straight line toward
-the objective at 25/50/75% — **not** wired into any AI controller (`tank_ai_controller.gd` untouched,
-`bot_sentry_controller.gd`'s waypoint collector only reacts to the exact prefix it's configured
-with) — except on `BotArena.tscn`, where `AttackWaypointN` **is** the live route the ATTACK
-`AttackBotTank` already drives (see below); those 3 were recomputed here to actually originate from
-the new corner zone instead of the old off-corner hardcoded spawn.
+Each zone also gets 3 `Attack/DefenseWaypointN` markers on a straight line toward the objective at
+25/50/75% — `team_spawner.gd` wires every production bot's `TankAIController.waypoint_name_prefix`
+to `AttackWaypointN` (one-way, ends in `ATTACK_OBJECTIVE`) or `DefenseWaypointN` (looping patrol)
+by team; the waypoint collector (`_collect_waypoints()`) searches the whole current scene
+recursively, not just root-level children, specifically so it still finds them one level deeper
+under `Map` on production. `BotArena.tscn`'s static `AttackBotTank` reuses the same
+`AttackWaypointN` markers (`waypoint_name_prefix` set directly in the scene file), but its
+defense `BotTank` keeps its own older `WaypointN` markers instead — `DefenseWaypointN` on that map
+is decorative only, nothing points its prefix there.
 
 `SpawnZone.face_center(tank)` (static, called via a `preload()`'d script reference — **not**
 `class_name`: headless `run_project` doesn't pick up a freshly-added `class_name` without an editor
@@ -201,10 +205,7 @@ origin right after every spawn/respawn — all three maps have their `Ground` ce
 world 0) specifically to keep pitch/roll at zero on flat ground; a degenerate near-origin spawn
 (distance < 0.01) is a no-op rather than an undefined `look_at()`.
 
-Deliberately out of scope for this pass (production combat AI, `tank_ai_controller.gd`, was never
-touched): the spawn *mechanism* is now uniform everywhere, but nothing routes production bots along
-the new production-map waypoints — they still patrol/hold from one shared shuffled pool exactly as
-before. Confirmed live on all three maps via `run_script`: repeated `pick_spawn_position()` calls
+Confirmed live on all three maps via `run_script`: repeated `pick_spawn_position()` calls
 land inside each zone's radius on real ground; a forced destroy→timeout cycle on both a production
 bot and a sandbox bot respawns it, fully reset, inside its own team's zone.
 
@@ -275,25 +276,31 @@ Player invincibility on the bot arenas is now a debug toggle button (`Игрок
 bottom-right, **default ON**), same pattern as `Objective: ON/OFF` / bot reaction toggles — not the
 old hardcoded `_ready()` line.
 
-### `scenes/bot_arena/` — isolated bot-AI sandbox (branch `Bot`)
+### `scenes/tank/tank_ai_controller.gd` — the one universal bot brain (`TankAIController`)
 
-A second, self-contained pair of maps (`BotArena.tscn`/`KillerArena.tscn`) with their own AI brain
-(`bot_sentry_controller.gd`/`BotSentryController`), deliberately kept separate from
-`TankAIController` so bot-behavior experiments can't destabilize the production 5×5 flow. Reuses
-`Tank.tscn` and the shared components above unchanged; the brain itself is a 9-state priority engine
-(`IDLE/PATROL/DEFEND/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD`) with its own NavMesh-based
-driving stack (pure pursuit + emergency brake + stuck detector + gap-scan detour), two roles
-(`ACHIEVER`/`KILLER`), three difficulty tiers, and integrations with the shared
-`RespawnController`/`HealthComponent` (death state, alert-on-hit, ballistic aim).
+Single AI system for the whole project — production (`Main.tscn`/`Map.tscn`, spawned dynamically by
+`team_spawner.gd`) and both test arenas (`BotArena.tscn`/`KillerArena.tscn`, static `.tscn`
+instances with `enabled = true` set directly in the scene file) all deploy the exact same node/
+script, not separate per-context AI systems. Lives as a dormant sibling on every `Tank.tscn`
+instance (including the player's, see "Tank as a composed entity" above) and lazily self-inits on
+first enabled `_physics_process()` tick. A 12-state priority engine
+(`IDLE/PATROL/DEFEND/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
+AMMO_WAIT`) with a NavMesh-based driving stack (pure pursuit + emergency brake + stuck detector +
+gap-scan detour), two roles (`ACHIEVER`/`KILLER` — `ACHIEVER` self-degrades to `KILLER` behavior at
+init if the map has no objective), three difficulty tiers, and integrations with the shared
+`RespawnController`/`HealthComponent`/`AmmoComponent` (death state, alert-on-hit, ballistic aim,
+ammo-crate seeking). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
+name- or scene-structure-specific, so the same file works unmodified on any map.
+
+Known accepted gap: no disguise-seeking logic — `PatrolWaypointN`/`DisguiseSlotN` markers on
+`Map.tscn` are AI-orphaned (the mechanic itself is still player-usable).
 
 **Full architecture reference — states, priority ladder, driving-stack internals, per-tier
-parameter tables, scene inventory, known gaps — lives in the vault's Bot AI doc, section 2**
-(`Tank_Prop_Hunt_Bot_AI_Sandbox.md`), not here; read it before non-trivial work on this file. Section
-1 of the same doc covers `TankAIController` itself, including a known unverified defect shared with
-this sandbox's driving code (`_drive_toward()`'s turn-direction sign).
+parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_Prop_Hunt_Bot_AI_Sandbox.md`),
+not here; read it before non-trivial work on this file.
 
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`) purpose-
-built for testing the `KILLER` role — its `BotSentryController.role` is set to `KILLER` in the scene
+built for testing the `KILLER` role — its `TankAIController.role` is set to `KILLER` in the scene
 file itself, has 6 extra `ObstacleN` static bodies spread across the map (vs. `BotArena.tscn`'s
 single cluster near the objective), and its own rebaked NavMesh. Its objective node was removed and
 it now runs the **TEAM_ARENA** mode (see "Game modes" above): a full 3-round loop via a code-
@@ -309,8 +316,8 @@ game logic of its own. The other three are unchanged, just no longer the default
 them directly via `run_project`'s `scene:` param (or repoint `run/main_scene`) to skip the menu:
 
 - `scenes/main/Main.tscn` — the actual production game: 5×5, two teams, `Objective`/`MatchManager`,
-  the real `TankAIController` brain.
-- `scenes/bot_arena/BotArena.tscn` — bot-AI sandbox with an `Objective` and an ACHIEVER test bot
-  (patrols/defends around it).
-- `scenes/bot_arena/KillerArena.tscn` — bot-AI sandbox for the KILLER role + TEAM_ARENA mode
-  (3-round team deathmatch loop), described above.
+  bots driven by `TankAIController` (same brain as the two test arenas below).
+- `scenes/bot_arena/BotArena.tscn` — small-scale test map with an `Objective` and an ACHIEVER test
+  bot (patrols/defends around it), same `TankAIController`.
+- `scenes/bot_arena/KillerArena.tscn` — test map for the KILLER role + TEAM_ARENA mode (3-round
+  team deathmatch loop), described above.
