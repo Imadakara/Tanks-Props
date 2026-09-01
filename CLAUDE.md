@@ -493,6 +493,123 @@ screenshotted before the fix): `"enemy in zone, timer Xs left"` when both condit
 `"enemy in zone (timer expired)"` when only geo holds it, and the original `"expires in Xs..."` text
 when only the timer holds it.
 
+**Second live test, matching the user's original scenario more closely (by request): freeze a
+defender until the objective takes its first real hit, then "spawn" it right at that moment and
+screenshot its state twice, 1s and ~1-2s apart — repeated 3 times.** Rather than reasoning about
+the fix through forced/isolated calls only, `BotTank` was held frozen from scene load (same
+`visible=false`/disabled-colliders/`PROCESS_MODE_DISABLED` pattern `RespawnController._set_frozen`
+uses on a corpse) while `AttackBotTank` played out its route and fired unforced; a polling
+`run_script` (`await scene_tree.process_frame` each tick, checking `HealthComponent.current_hits`)
+caught the exact frame of the first hit, unfroze `BotTank` right there, and called
+`sentry.call("_on_respawned")` — the same init path a real respawn takes — to mimic "born the
+instant the objective started taking fire." Two screenshots per run used the engine-timer pattern
+now in the `godot-mcp-testing` skill (`await scene_tree.create_timer(N).timeout` inside its own
+`run_script`, not wall-clock guessing between tool calls) to land ~1s and ~1-2s later. Three
+independent runs (fresh `run_project` each time): run 1 — `ALERT` at t+1s ("expires in 5.2s"), then
+`PATROL` once the timer lapsed with no second hit; run 2 — same pattern, `ALERT` ("expires in
+3.4s") then `PATROL`; run 3 — `DEFEND` at both screenshots, because `AttackBotTank` happened to be
+directly visible the instant `BotTank` spawned, and `DEFEND` legitimately outranks `ALERT` per the
+priority ladder (§ above) — not a miss, a different correct reaction to the same underlying threat.
+Zero repeats landed in `PATROL` while the objective was genuinely under fresh fire — the original
+bug did not reproduce a third time, across this run and the 25+ prior checks in this doc.
+
+**User independently confirmed live, after this OR-fix landed, that ALERT now actually triggers**
+in their own play session ("протестил — теперь ALERT действительно срабатывает") — the first
+confirmation of the fix from real (not scripted/forced) play, closing out this ALERT saga (§22/§24-
+28/§30-31 across this doc and the vault doc's own numbering).
+
+**Attacker no longer routes back to PATROL after winning a fight it started mid-route (by request
+— "бот уничтожает противника защитника, включает patrol-стейт и откатывается куда-то, а потом уже
+включает атаку objective").** `_ensure_home_state()` only ever routed an attacker to
+`State.ATTACK_OBJECTIVE` through one path: `_advance_waypoint()`, when `waypoints_one_way` reaches
+the last marker. An attacker that instead won a fight (killed the defender) BEFORE reaching that
+last waypoint — entirely plausible, since `DEFEND` interrupts `PATROL` the instant a target is
+spotted, at whatever leg of the route that happens to be — fell back to the generic
+`role == Role.ACHIEVER and not _waypoints.is_empty() → PATROL` branch on losing its target, exactly
+like the defense patrol would. Even standing right next to the objective, it drove off toward its
+NEXT unvisited waypoint first, only reaching `ATTACK_OBJECTIVE` once it later completed the route —
+visually "kills defender, drives away, then attacks" instead of attacking immediately. Fixed with a
+second, symmetric OR-branch reusing the same `ObjectiveAlertZone` circle the defenders' `ALERT`
+already reacts to (`_is_within_objective_circle()` — same distance-to-zone-center pattern as
+`enemy_in_alert_zone()`, computed against this bot's own position instead of looping every tank):
+`_body.is_attacker() and objective_alive and _is_within_objective_circle()` → `State.ATTACK_OBJECTIVE`,
+checked ahead of the `PATROL`/`HUNT` fallbacks and independent of `role`/`waypoints_one_way` — any
+attacker physically inside the circle with no other target goes straight for the objective, route
+progress or not. `_waypoint_index` is deliberately left untouched by this path (same reasoning as
+the existing one-way completion branch — route progress isn't combat state) so a bot that later
+drifts back to `PATROL` for any reason resumes from where it actually was, not from scratch.
+
+Because this new path bypasses `_advance_waypoint()`, it needed the same entry side-effects that
+path already performs (found live-testing the very first version, which set the state but left
+stale aim/nav data): `_reroll_aim_offset()` and pointing `_nav_agent.target_position` at the
+objective are now done inline in `_ensure_home_state()` too, gated on an `entering_attack_objective`
+flag computed before the state actually changes — otherwise the bot would sit in
+`ATTACK_OBJECTIVE` aiming with a stale/zero offset and driving toward wherever its last waypoint's
+nav target happened to be, not the objective. Confirmed live end-to-end (`BotArena.tscn`, no forced
+state — only initial positioning/weakening): defender's health set one hit from death, both tanks
+placed a few meters apart inside the circle with `AttackBotTank` reset to a clean mid-route state
+(`waypoint_index=0`, nowhere near its last waypoint) via the same `_on_respawned()` path real
+respawns use; real combat killed the defender in ~4.2s; one think-tick (~1.5s) later the attacker
+was in `ATTACK_OBJECTIVE`, `target: Objective (3.2m)`, `nav_target` exactly matching the objective's
+position, `waypoint_index` still `0` — confirming the transition came through this new path, not a
+route-completion. Screenshotted directly. Isolated forced checks (inside vs. outside the circle)
+independently confirmed the formula itself: `state=6=ATTACK_OBJECTIVE` inside, `state=1=PATROL`
+outside, `waypoint_index` unchanged either way. `KillerArena.tscn` has no attacker-side
+`BotSentryController` instance (`PlayerTank` is the only attacker there, human-controlled) — nothing
+to smoke-test on that map for this particular fix.
+
+**`State.DEAD` — added to the debug label so a killed bot's on-screen panel says so instead of
+freezing on its last pre-death text (by request).** `RespawnController._set_frozen(true)` sets
+`process_mode = PROCESS_MODE_DISABLED` on every sibling except itself and `HealthComponent` — that
+used to include `BotSentryController` too, so once a bot died its `_physics_process()` simply
+stopped being called by the engine at all, and the debug label stayed stuck showing whatever state
+it was in the instant before death (e.g. `"state: DEFEND"` on a corpse). Fixed with a third
+freeze-exemption in `_set_frozen()`, alongside `RespawnController`/`HealthComponent`: string-matched
+by node name (`child.name == "BotSentryController"`), same mechanism as the existing two, so it's a
+no-op on the player's tank and on production `TankAIController`-driven bots (neither has a sibling
+with that exact name) — no new coupling, `RespawnController` still knows nothing about
+`BotSentryController` as a type. The actual AI stays inert while dead regardless: `TankMovement`/
+`WeaponController`/etc. remain frozen as before, and `BotSentryController._think()` now returns
+immediately when `state == State.DEAD` (no scanning, no `_ensure_home_state()`) — the bot keeps
+running only far enough to notice its own death and refresh its own label.
+
+`BotSentryController` sets `state = State.DEAD` itself, subscribed directly to
+`HealthComponent.destroyed` (same decoupling as the existing `RespawnController.respawned`
+subscription — `RespawnController`'s own `_on_destroyed` handler for the same signal only does the
+physical freeze, doesn't touch AI state) — the moment of death, not the next think-tick, so a corpse
+never shows stale combat text even for a fraction of a second. `_on_respawned()` (already resets
+`state = State.IDLE` unconditionally on every respawn) is what clears `DEAD` — no separate exit path
+needed. Debug label (`_update_brain_debug_label()`) branches early on `state == State.DEAD` into a
+fixed six-line block — session/record-leg/role/difficulty/reaction all replaced with `-` (by
+request — "если стейт DEAD, вся остальная инфа отображается прочерком"), plus a live
+`"respawn in: %.1fs"` line reading a new public `RespawnController.time_until_respawn()` getter
+(returns `0.0` if the timer isn't running, not a stale/negative number) — same "expose a generic
+public query, don't couple the shared component to the sandbox script" pattern already used for
+`time_since_objective_hit()`/`enemy_in_alert_zone()` on `bot_arena.gd`.
+
+Confirmed live (`BotArena.tscn`): forcing `HealthComponent.destroyed.emit()` on `BotTank` flipped
+`state` to `DEAD` synchronously (read back in the same script, no round-trip). Actually catching a
+screenshot of the `DEAD` text needed one methodological correction first: an initial attempt that
+read the state, waited via a *separate* `run_script` call, then screenshotted in a *third* call
+kept showing `PATROL` instead — not a bug, the real 10s `RespawnTimer` (unmodified, unrelated to
+these changes) had already elapsed for real during the round-trip overhead between those three
+separate tool calls (this session's inter-call latency turned out to be large enough, on its own, to
+burn through a 10-second in-game timer). Setting `scene_tree.paused = true` immediately after the
+kill (same session's own established pattern — see the skill's "held camera / pause for a clean
+frame" note) froze the real `RespawnTimer` in place regardless of any subsequent round-trip, and the
+next screenshot showed exactly the intended text: `state: DEAD`, `respawn in: 10.0s`, every other
+line replaced with `-`. Un-pausing and waiting out a real 11s confirmed the far side too: `state`
+left `DEAD` (landed on `ALERT`, since the objective was under fire at the time — expected, not this
+fix's concern), `visible` back to `true`, `time_until_respawn()` back to `0.0`.
+
+**Smoke-tested against production (`Main.tscn`) since `respawn_controller.gd` is a shared,
+non-sandbox-specific file** (player tank + `TankAIController`-driven bots both use it) — forced the
+same `HealthComponent.destroyed.emit()` on `PlayerTank`, confirmed `has_node("BotSentryController")
+== false` there (the new exemption string genuinely never matches on this scene), froze/respawned
+exactly as before the change, `get_debug_output` clean throughout. The new
+`time_until_respawn()` getter is equally inert for production — nothing there calls it, it's purely
+additive.
+
 `scenes/bot_arena/KillerArena.tscn` is a separate scene (duplicated from `BotArena.tscn`, by direct
 request) purpose-built for testing KILLER — its `BotSentryController.role` is set to `KILLER` in the
 scene file itself (not the runtime default), it has 6 extra `ObstacleN` static bodies spread across

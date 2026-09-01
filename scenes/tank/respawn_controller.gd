@@ -60,15 +60,38 @@ func _on_respawn_timeout() -> void:
 	_set_frozen(false)
 	respawned.emit()
 
+## [ДОБАВЛЕНО, по прямому запросу — "добавь ботам стейт DEAD, отражать в дебаг-логах на экране,
+## плюс время до респавна"] "BotSentryController" — третье исключение из заморозки, наравне с
+## HealthComponent. Без него бот-песочница (bot_arena.gd), потеряв танк, тоже получал бы
+## process_mode=DISABLED на свой BotSentryController — его _physics_process() перестал бы
+## вызываться движком вообще, а вместе с ним и обновление дебаг-лейбла: текст застревал бы на
+## последнем стейте ДО смерти (например, "state: DEFEND") вместо живого "DEAD" с тикающим
+## обратным отсчётом до респавна. Строковое сравнение по имени узла — тот же паттерн, что уже
+## применён к "HealthComponent"; ничего не знает о самом BotSentryController как о типе/скрипте,
+## поэтому безопасно и для игрока, и для продакшен TankAIController-ботов — там просто нет
+## сиблинга с таким именем, исключение никогда не срабатывает. Сама AI-логика (сканирование,
+## движение, стрельба) при этом всё равно не оживает — управляющие компоненты (TankMovement,
+## WeaponController, ...) остаются в списке замораживаемых, а BotSentryController сам проверяет
+## `state == State.DEAD` и не совершает никаких действий, кроме обновления собственного лейбла
+## (см. bot_sentry_controller.gd, _think()/_physics_process()).
 func _set_frozen(frozen: bool) -> void:
 	_tank.visible = not frozen
 	_hull_collision.disabled = frozen
 	_detector_collision.disabled = frozen
 	var mode: int = Node.PROCESS_MODE_DISABLED if frozen else Node.PROCESS_MODE_INHERIT
 	for child in _tank.get_children():
-		if child == self or child.name == "HealthComponent":
+		if child == self or child.name == "HealthComponent" or child.name == "BotSentryController":
 			continue
 		child.process_mode = mode
+
+## [ДОБАВЛЕНО, по тому же запросу] Публичный геттер, не завязанный на BotSentryController —
+## обычная величина "сколько осталось", в том же духе, что уже сделано для сигнала `respawned`
+## (RespawnController не обязан знать, кто и зачем читает эту информацию). 0.0, если таймер не
+## идёт (танк жив, или ещё не запускался) — не отрицательное/произвольное число.
+func time_until_respawn() -> float:
+	if _respawn_timer.is_stopped():
+		return 0.0
+	return _respawn_timer.time_left
 
 ## Зона спавна СВОЕЙ команды (не противника) — та же `SpawnZone` (см. spawn_zone.gd), что и у
 ## TeamSpawner при старте матча. Рекурсивный find_child по всей сцене (не get_node("Map")) —

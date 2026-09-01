@@ -62,24 +62,35 @@ extends Node
 ##   PURSUE; _ensure_home_state() так же не трогает SEARCH, пока сам не решит выйти в HUNT.
 ## - DEFEND ("оборона позиции") — стоит на месте, башня/взгляд каждый кадр наводятся на ЖИВУЮ
 ##   позицию цели, огонь по готовности прицела/дальности/боекомплекта.
-## - ATTACK_OBJECTIVE ("атака objective", по прямому запросу, ACHIEVER с waypoints_one_way=true) —
-##   стоит на месте, наводится на Objective.global_position и стреляет — та же механика, что
-##   DEFEND, только цель ВСЕГДА статичный Objective-узел (_objective_node), не танк из
-##   _scan_for_target(). Включается ИЗ PATROL, когда one-way вейпоинт-путь пройден до конца (см.
-##   _advance_waypoint()), не из _ensure_home_state() — та же логика исключения, что у PURSUE/
-##   SEARCH (не перезаписывается каждый think-тик). Objective уничтожен (или его вообще не было на
-##   карте) → _objective_mission_complete=true, IDLE НАВСЕГДА (см. _ensure_home_state()).
+## - ATTACK_OBJECTIVE ("атака objective") — стоит на месте, наводится на Objective.global_position
+##   и стреляет — та же механика, что DEFEND, только цель ВСЕГДА статичный Objective-узел
+##   (_objective_node), не танк из _scan_for_target(). ДВА независимых пути входа: (1) ACHIEVER с
+##   waypoints_one_way=true — когда one-way вейпоинт-путь пройден до конца (см.
+##   _advance_waypoint()); (2) [ДОБАВЛЕНО, по прямому запросу — "если атакующий бот в пределах
+##   окружности objective и у него нет иной цели — нужно включать стейт атаки objective"] ЛЮБОЙ
+##   атакующий (is_attacker(), не только ACHIEVER на последнем вейпоинте), потерявший цель физически
+##   внутри ObjectiveAlertZone — через _ensure_home_state() (см. _is_within_objective_circle()).
+##   Раньше атакующий, прервавший маршрут боем НЕ на последнем вейпоинте (убил защитника где-то по
+##   пути, не обязательно у самого конца маршрута), после победы откатывался в PATROL к следующему
+##   невзятому вейпоинту, даже стоя вплотную к objective — только дойдя до конца маршрута штатно,
+##   переключался в ATTACK_OBJECTIVE; выглядело как "убил защитника, откатился куда-то, и лишь
+##   потом начал атаку objective". Оба пути делают одинаковые side-эффекты входа (_reroll_aim_offset(),
+##   _nav_agent.target_position = objective) — какой конкретно путь сработал, значения не имеет.
+##   Включается ИЗ PATROL, не перезаписывается каждый think-тик — та же логика исключения, что у
+##   PURSUE/SEARCH (не перезаписывается каждый think-тик). Objective уничтожен (или его вообще не
+##   было на карте) → _objective_mission_complete=true, IDLE НАВСЕГДА (см. _ensure_home_state()).
 ## Обнаружил ТАНК в любом "домашнем" стейте (ATTACK_OBJECTIVE — не исключение, Objective не танк,
 ## не мешает этой проверке) → мгновенно (в рамках think_interval_sec) переход в DEFEND, движение
 ## останавливается. Потерял цель (вышла из конуса/дальности/видимости, или уничтожена) → ACHIEVER
-## ВСЕГДА возвращается через _ensure_home_state() в PATROL (если Objective ещё жив и вейпоинты не
-## пусты — так и для waypoints_one_way, даже если отвлеклись уже ИЗ ATTACK_OBJECTIVE: индекс
-## остаётся на последнем вейпоинте, не сбрасывается, значит PATROL тут же выберет новую точку в
-## ТОМ ЖЕ последнем вейпоинте, доедет за секунду-другую и снова уйдёт в ATTACK_OBJECTIVE — короткий,
-## безвредный лишний виток, не прямой скачок обратно, но тот же итоговый эффект); KILLER уходит в
-## PURSUE (см. выше), из которого попадает в SEARCH, а из него — в HUNT. Блуждание взгляда
-## продолжается с текущего угла на всех переходах; вейпоинт-прогресс ACHIEVER (индекс/точка в
-## круге) не сбрасывается.
+## возвращается через _ensure_home_state() либо СРАЗУ в ATTACK_OBJECTIVE (если физически внутри
+## ObjectiveAlertZone — см. путь (2) выше), либо в PATROL (если Objective ещё жив, вейпоинты не
+## пусты, и бот вне круга — так и для waypoints_one_way, даже если отвлеклись уже ИЗ
+## ATTACK_OBJECTIVE: индекс остаётся на последнем вейпоинте, не сбрасывается, значит PATROL тут же
+## выберет новую точку в ТОМ ЖЕ последнем вейпоинте, доедет за секунду-другую и снова уйдёт в
+## ATTACK_OBJECTIVE — короткий, безвредный лишний виток, не прямой скачок обратно, но тот же
+## итоговый эффект); KILLER уходит в PURSUE (см. выше), из которого попадает в SEARCH, а из него —
+## в HUNT. Блуждание взгляда продолжается с текущего угла на всех переходах; вейпоинт-прогресс
+## ACHIEVER (индекс/точка в круге) не сбрасывается.
 ##
 ## Патруль по вейпоинтам — маркеры "<waypoint_name_prefix>N" (Node3D, ищутся по имени в корне
 ## текущей сцены, сортируются по имени — тот же принцип, что PatrolWaypointN у
@@ -149,7 +160,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -608,6 +619,11 @@ func _ready() -> void:
 	_movement.move_speed *= move_speed_multiplier
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
+	# [ДОБАВЛЕНО, по прямому запросу — "добавь стейт DEAD"] Момент смерти — единственный надёжный
+	# триггер: RespawnController тоже подписан на этот же сигнал (свой обработчик), но НЕ знает про
+	# BotSentryController.state (та же развязка слоёв, что и у respawned ниже) — состояние себе бот
+	# выставляет сам.
+	_health.destroyed.connect(_on_destroyed)
 	# [ДОБАВЛЕНО, по прямому запросу — "уничтоженный атакующий появляется сразу в стейте боя с
 	# целью на objective"] См. doc-comment у respawn_controller.gd/signal respawned — сбрасываем
 	# СВОЁ AI-состояние сами, а не полагаемся на RespawnController (который физическое состояние
@@ -793,6 +809,13 @@ func _physics_process(delta: float) -> void:
 			_movement.ai_turn_input = 0.0
 			_wander(delta, false)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.DEAD:
+			# [ДОБАВЛЕНО, по прямому запросу] Ничего не решаем и никуда не целимся — TankMovement/
+			# TurretController и так заморожены RespawnController'ом (BotSentryController — namedное
+			# исключение из заморозки, см. respawn_controller.gd, но остальные сиблинги — нет), эти
+			# присваивания defensive на случай, если что-то извне их разморозит раньше времени.
+			_movement.ai_move_input = 0.0
+			_movement.ai_turn_input = 0.0
 
 	if show_fov_debug:
 		_update_fov_debug_draw()
@@ -804,6 +827,15 @@ func _physics_process(delta: float) -> void:
 ## Движок выбора стейта — приоритет "вижу цель" НАД любым домашним поведением роли (см.
 ## заголовок файла). Вызывается раз в think_interval_sec, не каждый физ.кадр.
 func _think() -> void:
+	# [ДОБАВЛЕНО, по прямому запросу — "добавь стейт DEAD"] Мёртв — не сканируем цель и не решаем
+	# домашнее поведение вообще, до следующего respawned (см. _on_respawned() — единственный выход
+	# из DEAD). Без этой проверки _scan_for_target() продолжал бы находить врагов и утаскивать труп
+	# обратно в DEFEND ещё ДО того, как RespawnController вообще его заморозил на этот тик (сама
+	# заморозка сиблингов происходит в _on_destroyed() того компонента, синхронно с этим же сигналом
+	# — но BotSentryController теперь НЕ замораживается, см. respawn_controller.gd._set_frozen(), и
+	# без этой ранней проверки продолжил бы думать как ни в чём не бывало).
+	if state == State.DEAD:
+		return
 	# Тумблер выключен (см. @export-блок про show_reaction_toggle_button) — не сканируем и не
 	# держим цель вообще, сразу домашнее поведение роли. Если бот был в DEFEND в момент выключения
 	# (нажали кнопку прямо во время боя) — выходим из него тем же путём, что при обычной потере
@@ -828,13 +860,29 @@ func _think() -> void:
 		_on_target_lost()
 	_ensure_home_state()
 
-## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). ACHIEVER
+## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). Атакующий
+## (is_attacker()) физически внутри ObjectiveAlertZone идёт атаковать objective напрямую (см.
+## _is_within_objective_circle(), доп. path (2) в State.ATTACK_OBJECTIVE выше) — иначе ACHIEVER
 ## с расставленными вейпоинтами патрулирует; KILLER со сконфигурированной зоной охотится (HUNT);
 ## иначе — просто стоит и смотрит по кругу (IDLE). PURSUE и SEARCH — ИСКЛЮЧЕНИЕ: не трогаем, пока
 ## каждый не завершится сам (PURSUE — доехал до последней видимой позиции цели, см. State.PURSUE в
 ## _physics_process(); SEARCH — исчерпал попытки/решил вернуться в HUNT, см. _process_search()) —
 ## иначе эта функция, вызываемая КАЖДЫЙ think-тик, пока цель не видна, немедленно перезаписала бы
 ## только что начатую погоню/локальный поиск обратно на HUNT на первом же тике.
+## [ДОБАВЛЕНО, по прямому запросу — "если атакующий бот в пределах окружности objective и у него
+## нет иной цели — нужно включать стейт атаки objective"] Переиспользует тот же круг, что уже
+## держит ALERT у защитников (`_alert_zone`, ObjectiveAlertZone, см. bot_arena.gd.enemy_in_alert_zone()
+## — тот же паттерн дистанции, посчитан здесь на СВОЙ _body, а не в цикле по всем танкам) — это
+## единственное существующее в проекте понятие "окружность objective", симметрично реакции
+## защитников на тот же круг с противоположной стороны.
+func _is_within_objective_circle() -> bool:
+	if _alert_zone == null:
+		return false
+	var radius: float = float(_alert_zone.get("radius"))
+	var zone_pos: Vector3 = _alert_zone.global_position
+	var dist: float = Vector2(_body.global_position.x - zone_pos.x, _body.global_position.z - zone_pos.z).length()
+	return dist <= radius
+
 func _ensure_home_state() -> void:
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE:
 		return
@@ -871,6 +919,18 @@ func _ensure_home_state() -> void:
 	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
 	if not _body.is_attacker() and objective_alive and _alert_zone != null and (time_since_hit < alert_timeout_sec or enemy_nearby):
 		desired = State.ALERT  # см. @export-блок про ALERT — перебивает обычное PATROL/HUNT/IDLE
+	# [ДОБАВЛЕНО, по прямому запросу — "если атакующий бот в пределах окружности objective и у него
+	# нет иной цели — нужно включать стейт атаки objective, а не патруль/откат к вейпоинтам"] Без
+	# этой ветки атакующий, прервавший one-way маршрут боем НЕ на последнем вейпоинте (убил
+	# защитника где-то по пути, до конца маршрута), после победы возвращался в PATROL к следующему
+	# невзятому вейпоинту — даже стоя вплотную к objective, ехал куда-то в сторону маршрута и
+	# только потом, дойдя до конца, переключался в ATTACK_OBJECTIVE. Симметрично ALERT-ветке выше
+	# (тот же круг, противоположная команда, противоположная реакция): не is_attacker() ищет
+	# защищаемое, is_attacker() внутри круга без цели идёт атаковать. Не завязано на role/
+	# waypoints_one_way — любой атакующий, физически внутри круга и без иной цели, должен атаковать
+	# objective напрямую, а не тратить время на маршрут.
+	elif _body.is_attacker() and objective_alive and _is_within_objective_circle():
+		desired = State.ATTACK_OBJECTIVE
 	elif role == Role.ACHIEVER and _objective_mission_complete:
 		desired = State.IDLE  # objective уже уничтожен (waypoints_one_way) — см. _objective_mission_complete
 	elif role == Role.ACHIEVER and not _waypoints.is_empty():
@@ -880,6 +940,12 @@ func _ensure_home_state() -> void:
 	else:
 		desired = State.IDLE
 	if state != desired:
+		# [ДОБАВЛЕНО] entering_attack_objective считается ДО присвоения state=desired — тот же
+		# side-эффект входа, что и у штатного пути (1) в _advance_waypoint() (_reroll_aim_offset() +
+		# nav target на objective), нужен и здесь, иначе бот встанет в ATTACK_OBJECTIVE, но будет
+		# целиться со старым/нулевым прицельным смещением и ехать на устаревший nav-таргет
+		# (последний вейпоинт, не objective).
+		var entering_attack_objective: bool = desired == State.ATTACK_OBJECTIVE
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
@@ -893,6 +959,10 @@ func _ensure_home_state() -> void:
 		_has_waypoint_target = false
 		_has_hunt_target = false
 		_has_alert_target = false
+		if entering_attack_objective:
+			_reroll_aim_offset()
+			if _objective_node != null and is_instance_valid(_objective_node) and _nav_agent.is_inside_tree():
+				_nav_agent.target_position = _objective_node.global_position
 
 ## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
 ## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в
@@ -1134,6 +1204,21 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	_wander_holding = false
 	if state != State.DEFEND and _can_see(killer):
 		_enter_defend(killer)
+
+## [ДОБАВЛЕНО, по прямому запросу — "добавь ботам стейт DEAD, отражай в дебаг-логах, плюс время до
+## респавна"] Единственное место, выставляющее State.DEAD — сразу на самом сигнале уничтожения, не
+## дожидаясь следующего think-тика (труп не должен ни секунды показывать старый боевой стейт).
+## Сброс target/флагов — тот же набор, что и в _on_respawned(), на случай если что-то извне всё же
+## попытается прочитать их, пока бот мёртв (defensive, не строго обязательно: _think() ниже больше
+## не трогает ни один из них, пока state == State.DEAD). _waypoint_index намеренно НЕ трогаем
+## здесь — этим уже занимается _on_respawned() (см. её doc-comment), смерть и респавн разнесены по
+## времени, это разные события с разной ответственностью.
+func _on_destroyed(_killer: Node) -> void:
+	state = State.DEAD
+	_current_target = null
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
 
 ## Блуждание БАШНИ в IDLE/PATROL (v2 — только башня, см. заголовок файла) — то вперёд, то в
 ## сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw — просто ждём
@@ -1924,6 +2009,23 @@ func _update_reaction_toggle_button() -> void:
 
 func _update_brain_debug_label() -> void:
 	if _brain_debug_label == null:
+		return
+	# [ДОБАВЛЕНО, по прямому запросу — "если стейт DEAD, вся остальная инфа отображается прочерком,
+	# плюс время до респавна"] Отдельная, короткая ветка — не проваливаемся в обычный путь ниже
+	# (там session/role/reaction и т.п. показали бы настоящие живые числа, что и просили заменить
+	# прочерком). Время до респавна — RespawnController.time_until_respawn() (публичный геттер, не
+	# завязан на BotSentryController — см. её doc-comment), не собственный таймер: единый источник
+	# истины, тот же принцип, что уже применён к централизованному ALERT-таймеру в bot_arena.gd.
+	if state == State.DEAD:
+		var respawn_left: float = _respawn_controller.time_until_respawn() if _respawn_controller != null else 0.0
+		_brain_debug_label.text = "\n".join([
+			"=== BOT BRAIN: %s ===" % _body.name,
+			"session: -   record leg: -",
+			"role: -   difficulty: -",
+			"state: DEAD   reaction: -",
+			"respawn in: %.1fs" % respawn_left,
+			"look: -",
+		])
 		return
 	var lines: Array = []
 	lines.append("=== BOT BRAIN: %s ===" % _body.name)
