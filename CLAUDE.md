@@ -238,7 +238,14 @@ circle sits on the ground), freed together with the objective and simply absent 
 (`TeamArenaMap.tscn`); every reader of `_alert_zone` uses `is_instance_valid()`, not `== null`.
 **TEAM_ARENA** (`TeamArenaMap.tscn`, no objective node): 3-round team deathmatch,
 `GameConfig.team_arena_round_sec` = 180 s / round, round winner by kill count (ties by
-`defense_wins_ties`), match winner by rounds won.
+`defense_wins_ties`), match winner by rounds won. Sides here are **fixed colour teams** — **Красные**
+(team 0) and **Синие** (team 1) — never "attack"/"defense"; the HUD `TeamLabel`, score line and
+result screen all say Красные/Синие in this mode (in TARGET_OBJECTIVE they say Атака/Оборона).
+
+`match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
+= 0, `TeamArenaMap` = 1). A missing value silently defaults to `TARGET_OBJECTIVE` — that regression
+(TeamArenaMap running as objective: no kill scoring, timeout always a defense win) is exactly what
+happens if the property line is dropped from the scene file.
 
 Both maps run the **same round loop**: `map_scene.gd._setup_match_context()` creates a `ScoreManager`
 + a node named `"MatchManager"` running `scenes/main/match_manager.gd`, which picks its end-of-round
@@ -248,8 +255,15 @@ winner-by-kills) then `MatchState.record_round_result` → `round_ended`. The sa
 can do anything more), it stops `RoundTimer`, starts a `FinalStageTimer`
 (`GameConfig.final_stage_duration_sec` = 30s, HUD shows a countdown), and on timeout resolves the
 round by kill count — the same formula either mode's normal timeout already uses, just triggered
-early. Side-swap between rounds (`hud.gd._on_restart_pressed`, `_has_side_swap()`) is a structural
-check (`current_scene.get_node_or_null("TeamSpawner") != null`), true on any map.
+early. Side-swap between rounds (`hud.gd._on_restart_pressed`, `_has_side_swap()`) happens **only in
+TARGET_OBJECTIVE** (where attack/defense roles genuinely alternate); TEAM_ARENA colour teams are
+fixed for the whole match, so its restart button just reloads.
+
+The **round counter** is `MatchState.current_round_num`, a real stored field — **incremented by
+`advance_round()` when the *next* round starts** (`_on_restart_pressed`), never when the current
+one ends. So the result screen still reads "Раунд 1/3" for round 1's outcome; the top line only
+becomes "Раунд 2/3" after the reload. `rounds_played()` (sum of series wins) is separate and used
+for `series_complete()`. `reset_series()` also zeroes `current_round_num` and `player_team`.
 
 **Ammo drops** (all maps): a self-contained prefab `scenes/ammo_crate/AmmoDropZone.tscn` — a
 spawn-sized ground circle (`DropArea`, reuses `spawn_zone.gd`) plus a high dummy `Marker3D`
@@ -265,9 +279,11 @@ three stay per-zone, only the interval + round-end stop are centralized on the l
 via `TankAIController`'s `AMMO_SEEK`/`AMMO_RETRIEVE`/`AMMO_WAIT` states, see the Bot AI vault doc).
 Full detail: `Tank_Prop_Hunt_Ammo_Drops.md`.
 
-The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`, line 2 the
-mode-dependent overall score (series only for TARGET_OBJECTIVE; round kills + series for
-TEAM_ARENA), line 3 `Цель: N/M попаданий` — objective health, TARGET_OBJECTIVE only, resolved via
+The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`
+(N = `current_round_num`), line 2 the mode-dependent overall score — TARGET_OBJECTIVE: series only
+(`По раундам — Ты N : M Противник`); TEAM_ARENA: round kills + series, all by colour
+(`Убийства  Красные K : L Синие      Раунды  N : M`, Красные always the left number) — line 3
+`Цель: N/M попаданий` — objective health, TARGET_OBJECTIVE only, resolved via
 group `"objective_health"` (same group `TankAIController` reads, not by node name — no
 `OBJECTIVE: TARGET` prefix, the mode name lives in the map settings, not the HUD), line 4 the
 player respawn countdown (`Респаун через N с`, `RespawnLabel`) shown only while

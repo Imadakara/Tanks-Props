@@ -2,18 +2,18 @@ extends CanvasLayer
 ## HUD — минимальный HUD игрока (ТЗ §10): за какую команду игрок в этом раунде (пост-ревью),
 ## боезапас, статус танка с таймерами, финальная стадия, экран результата.
 ## Плюс общий блок матча (верх-центр, одинаков на всех картах):
-##   строка 1 — «Раунд N/M | MM:SS»;
-##   строка 2 — общий счёт по MatchState.match_mode (TARGET_OBJECTIVE — серия раундов;
-##             TEAM_ARENA — убийства команд в раунде + серия);
+##   строка 1 — «Раунд N/M | MM:SS» (N = MatchState.current_round(), инкремент при СТАРТЕ раунда);
+##   строка 2 — общий счёт по MatchState.match_mode: TARGET_OBJECTIVE — серия раундов «Ты/Противник»;
+##             TEAM_ARENA — убийства команд-цветов в раунде + серия, всё по «Красные/Синие»;
 ##   строка 3 — «Цель: N/M попаданий», здоровье objective-цели (только TARGET_OBJECTIVE);
 ##   строка 4 — «Респаун через N с», обратный отсчёт до респауна игрока (видна только пока идёт).
+## В TEAM_ARENA стороны — постоянные команды-цвета (Красные = команда 0, Синие = команда 1),
+## никаких «атака/оборона»; TeamLabel и экран результата это учитывают.
 ## Подписка на сигналы вместо поллинга — кроме отображения "сколько осталось" у Timer-нод и
 ## блока матча (читается из MatchState/узлов каждый кадр: источники резолвятся лениво, см. _resolve_*).
-## RestartButton (пост-ревью) — появляется вместе с ResultLabel по round_ended, снимает
-## захват мыши (иначе по кнопке нечем кликнуть), рестартует сцену. Смену сторон (инверсию
-## MatchState.player_team) делает только в режимах с team_spawner (TARGET_OBJECTIVE) — на арене
-## TEAM_ARENA танки статичны, роль игрока фиксирована. После конца серии кнопка = «Новый матч»
-## (сброс серии).
+## RestartButton — появляется вместе с ResultLabel по round_ended, снимает захват мыши, рестартует
+## сцену; при этом либо advance_round() (следующий раунд), либо reset_series() («Новый матч» после
+## конца серии). Смену сторон (инверсию MatchState.player_team) делает только TARGET_OBJECTIVE.
 
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
@@ -40,12 +40,6 @@ var _barrel: Node3D
 var _camera: Camera3D
 
 func _ready() -> void:
-	# MatchState.player_team, не tank.is_attacker(): дочерние _ready() (в т.ч. этот) отрабатывают
-	# РАНЬШЕ корневого Main._ready(), а TeamSpawner.spawn_team() (ставит tank.team) вызывается
-	# именно из Main._ready() — на момент этой строки tank.team ещё дефолтный, а не тот, что
-	# реально будет у игрока в этом раунде (грабля, поймана на смене сторон после рестарта).
-	_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
-
 	var tank: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
 	if tank != null:
 		_ammo = tank.get_node("AmmoComponent")
@@ -71,6 +65,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _fsm != null:
 		_update_state_label()
+	_update_team_label()
 	_update_round_line()
 	_update_match_score_line()
 	_update_objective_line()
@@ -145,17 +140,36 @@ func _update_round_line() -> void:
 	var t: int = int(max(0.0, timer.time_left))
 	_round_timer_label.text = "%s | %02d:%02d" % [round_txt, t / 60, t % 60]
 
-## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — только серия раундов; TEAM_ARENA —
-## убийства команд в текущем раунде И через разделитель серия раундов.
+## TeamLabel (левый столбец). MatchState.player_team, не tank.is_attacker(): дочерние _ready()
+## (в т.ч. HUD) идут РАНЬШЕ корневого _ready() карты, где TeamSpawner.spawn_team() выставляет
+## tank.team — на момент _ready() HUD значение ещё дефолтное. match_mode тоже ставится корневым
+## _ready(), поэтому обновляем лениво в _process. В TEAM_ARENA стороны — команды-цвета
+## (Красные/Синие), никаких «атака/оборона».
+func _update_team_label() -> void:
+	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+		_team_label.text = "Команда: Красные" if MatchState.player_team == 0 else "Команда: Синие"
+	else:
+		_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
+
+## Серия по цвету команды: [красные, синие]. Красные = команда 0, Синие = команда 1. В TEAM_ARENA
+## смены сторон нет (см. _has_side_swap), поэтому MatchState.player_team стабилен весь матч и
+## маппинг series_wins_you/enemy на цвета не «плавает» между раундами.
+func _series_by_color() -> Array:
+	if MatchState.player_team == 0:
+		return [MatchState.series_wins_you, MatchState.series_wins_enemy]
+	return [MatchState.series_wins_enemy, MatchState.series_wins_you]
+
+## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — только серия раундов («Ты/Противник»);
+## TEAM_ARENA — убийства команд-цветов в текущем раунде И через разделитель серия раундов, всё
+## по цветам (Красные = команда 0 = attack_kills, Синие = команда 1 = defense_kills).
 func _update_match_score_line() -> void:
 	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
 		var sm := _resolve_score_manager()
-		var atk: int = sm.attack_kills if sm != null else 0
-		var def: int = sm.defense_kills if sm != null else 0
-		var you: int = atk if MatchState.player_team == 0 else def
-		var foe: int = def if MatchState.player_team == 0 else atk
-		_score_label.text = "Убийства — Ты %d : %d Противник   |   По раундам %d : %d" % \
-			[you, foe, MatchState.series_wins_you, MatchState.series_wins_enemy]
+		var red_kills: int = sm.attack_kills if sm != null else 0
+		var blue_kills: int = sm.defense_kills if sm != null else 0
+		var s := _series_by_color()  # тот же порядок Красные:Синие, что и в убийствах
+		_score_label.text = "Убийства  Красные %d : %d Синие      Раунды  %d : %d" % \
+			[red_kills, blue_kills, s[0], s[1]]
 	else:
 		_score_label.text = "По раундам — Ты %d : %d Противник" % \
 			[MatchState.series_wins_you, MatchState.series_wins_enemy]
@@ -193,49 +207,64 @@ func _update_respawn_line() -> void:
 
 func _on_round_ended(winner: String) -> void:
 	# record_round_result() (в MatchManager) уже отработал до этого сигнала — серия актуальна.
+	# current_round() ещё НЕ инкрементирован (это делает advance_round при старте след. раунда),
+	# поэтому здесь это номер только что закончившегося раунда.
 	var head := _round_result_head(winner)
 	if MatchState.series_complete():
-		var verdict: String = {
-			"you": "Матч выигран!", "enemy": "Матч проигран", "tie": "Матч: ничья",
-		}[MatchState.series_winner()]
-		_result_label.text = "%s\n%s   (серия %d : %d)" % \
-			[head, verdict, MatchState.series_wins_you, MatchState.series_wins_enemy]
+		_result_label.text = "%s\n%s" % [head, _series_verdict()]
 		_restart_button.text = "Новый матч"
 	else:
 		_result_label.text = "Раунд %d/%d — %s" % \
-			[MatchState.rounds_played(), MatchState.total_rounds, head]
+			[MatchState.current_round(), MatchState.total_rounds, head]
 		_restart_button.text = "Следующий раунд" + (" (смена сторон)" if _has_side_swap() else "")
 	_result_label.visible = true
 	_restart_button.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE  # иначе кнопку нечем кликнуть — мышь захвачена CameraRig
 
+## Итог серии. TARGET_OBJECTIVE — с точки зрения игрока; TEAM_ARENA — по цвету команды-победителя.
+func _series_verdict() -> String:
+	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+		var s := _series_by_color()  # [красные, синие]
+		var res: String
+		if s[0] > s[1]:
+			res = "Красные выиграли матч"
+		elif s[1] > s[0]:
+			res = "Синие выиграли матч"
+		else:
+			res = "Матч: ничья"
+		return "%s   (серия Красные %d : %d Синие)" % [res, s[0], s[1]]
+	var verdict: String = {
+		"you": "Матч выигран!", "enemy": "Матч проигран", "tie": "Матч: ничья",
+	}[MatchState.series_winner()]
+	return "%s   (серия %d : %d)" % [verdict, MatchState.series_wins_you, MatchState.series_wins_enemy]
+
 ## TARGET_OBJECTIVE — «Победа атакующих/обороняющихся» (сторона и есть команда).
-## TEAM_ARENA — с точки зрения игрока: «Ты победил / Противник победил» + счёт убийств раунда
-## (у режима нет постоянной атаки/обороны в голове игрока, но роль игрока в раунде фиксирована).
+## TEAM_ARENA — «Красные/Синие победили» + счёт убийств раунда, никаких атака/оборона.
 func _round_result_head(winner: String) -> String:
 	if MatchState.match_mode != MatchState.Mode.TEAM_ARENA:
 		return "Победа атакующих" if winner == "attack" else "Победа обороняющихся"
-	var player_won: bool = (winner == "attack") == (MatchState.player_team == 0)
 	var sm := _resolve_score_manager()
-	var you: int = 0
-	var foe: int = 0
-	if sm != null:
-		you = sm.attack_kills if MatchState.player_team == 0 else sm.defense_kills
-		foe = sm.defense_kills if MatchState.player_team == 0 else sm.attack_kills
-	return "%s (убийства %d : %d)" % ["Ты победил" if player_won else "Противник победил", you, foe]
+	var red_kills: int = sm.attack_kills if sm != null else 0   # attack == команда 0 == Красные
+	var blue_kills: int = sm.defense_kills if sm != null else 0  # defense == команда 1 == Синие
+	return "%s победили (убийства %d : %d)" % \
+		["Красные" if winner == "attack" else "Синие", red_kills, blue_kills]
 
-## Смена сторон между раундами делается структурной проверкой — есть ли на карте TeamSpawner (см.
-## scenes/main/team_spawner.gd), который инстанцирует танки под роль на каждый спавн. Он есть на
-## любой карте, так что side-swap работает везде одинаково.
+## Смена сторон между раундами — только TARGET_OBJECTIVE: там роли атака/оборона осмысленно
+## чередуются между раундами. В TEAM_ARENA стороны — постоянные команды-цвета (Красные/Синие),
+## игрок весь матч в одной; инверсия player_team рассинхронила бы HUD с реальным полем.
 func _has_side_swap() -> bool:
+	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+		return false
 	var scene := get_tree().current_scene
 	return scene != null and scene.get_node_or_null("TeamSpawner") != null
 
 func _on_restart_pressed() -> void:
 	if MatchState.series_complete():
-		MatchState.reset_series()  # серия доиграна — кнопка запускает новый матч с нуля
-	if _has_side_swap():
-		MatchState.player_team = 1 - MatchState.player_team
+		MatchState.reset_series()  # новый матч с нуля: раунд 1, player_team = 0
+	else:
+		MatchState.advance_round()  # инкремент раунда ИМЕННО здесь — при старте следующего
+		if _has_side_swap():
+			MatchState.player_team = 1 - MatchState.player_team
 	get_tree().reload_current_scene()
 
 func _on_ammo_changed(current: int, max_ammo: int) -> void:
