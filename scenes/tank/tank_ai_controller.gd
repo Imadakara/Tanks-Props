@@ -844,13 +844,21 @@ func _physics_process(delta: float) -> void:
 	match state:
 		State.DEFEND:
 			if _current_target != null and is_instance_valid(_current_target):
-				# reach_dist = fire_range*0.85, не сам fire_range — запас, чтобы гарантированно
-				# оказаться ВНУТРИ радиуса стрельбы (не топтаться ровно на границе, где
-				# float-погрешность может дать dist чуть больше fire_range на отдельных кадрах).
-				var dist: float = _body.global_position.distance_to(_current_target.global_position)
-				if dist > fire_range:
-					_drive_to_point(delta, _current_target.global_position, fire_range * 0.85)
-				else:
+				# [ИЗМЕНЕНО, по прямому запросу — "стрелять на ходу, если цель в зоне досягаемости
+				# стрельбы"] Раньше дистанция гейтилась ЖЁСТКО по fire_range: вошёл в радиус —
+				# движение обнулялось целиком, бот превращался в неподвижную турель. Теперь бот
+				# ВСЕГДА продолжает ехать к цели (reach_dist = fire_range*0.85 — запас, чтобы
+				# гарантированно оказаться ВНУТРИ радиуса стрельбы, не топтаться ровно на границе,
+				# где float-погрешность может дать dist чуть больше fire_range на отдельных
+				# кадрах), стреляя всю дорогу — `_aim_and_fire()` сама решает, готов ли выстрел
+				# (dist<=fire_range), движение сближения этому не мешает. Останавливается ТОЛЬКО
+				# по факту реального прибытия (`arrived`), явно — не полагаемся на то, что
+				# _drive_to_point() сама не трогает inputs после arrived (см. её комментарий):
+				# при живой, двигающейся цели это оставило бы старый ненулевой газ навсегда,
+				# бот продолжал бы упираться в цель без тормоза/антизастряла (те тоже не
+				# выполняются в её ветке "уже приехали").
+				var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * 0.85)
+				if arrived:
 					_movement.ai_move_input = 0.0
 					_movement.ai_turn_input = 0.0
 				_aim_and_fire(_current_target)
@@ -893,17 +901,11 @@ func _physics_process(delta: float) -> void:
 				_objective_mission_complete = true
 				state = State.IDLE
 			else:
-				# [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот замирает не стреляя в
-				# objective"] Тот же дедлок, что уже был в DEFEND (см. её фикс выше): маршрут
-				# AttackWaypointN может закончиться дальше fire_range от objective (на этой карте
-				# так и есть — ~14м от AttackWaypoint3 при fire_range=8.0 у MEDIUM), а этот стейт
-				# раньше безусловно останавливал движение и просто целился — целиться и стрелять
-				# было НЕЧЕМ, dist<=fire_range никогда не выполнялось. Сближаемся тем же
-				# _drive_to_point(), пока не окажемся внутри радиуса.
-				var dist: float = _body.global_position.distance_to(_objective_node.global_position)
-				if dist > fire_range:
-					_drive_to_point(delta, _objective_node.global_position, fire_range * 0.85)
-				else:
+				# Тот же паттерн, что и в DEFEND (см. её комментарий) — едем к objective и стреляем
+				# всю дорогу, не замирая на границе fire_range; останавливаемся явно только по
+				# факту прибытия (reach_dist = fire_range*0.85).
+				var arrived: bool = _drive_to_point(delta, _objective_node.global_position, fire_range * 0.85)
+				if arrived:
 					_movement.ai_move_input = 0.0
 					_movement.ai_turn_input = 0.0
 				_aim_and_fire(_objective_node)
@@ -1321,16 +1323,13 @@ func _can_see(target: Node3D) -> bool:
 ## найдено живым тестом с резким телепортом цели (утрировало обычно небольшую 0.1с-погрешность до
 ## абсурдной: pursue-точка совпала с координатами телепорта за 96м от бота, не с последней реально
 ## видимой позицией).
-## [ИСПРАВЛЕНО, живьём найденный дедлок по прямому запросу — "боты замирают при обнаружении друг
-## друга, держат на прицеле и не стреляют"] Причина: vision_range (10.0 у MEDIUM) шире fire_range
-## (8.0) — цель за пределами fire_range, но внутри vision_range, ВИДНА (значит DEFEND), но
-## недостижима для выстрела, а DEFEND раньше безусловно глушил движение (`ai_move_input=0` для
-## ЛЮБОЙ дистанции) — два бота, оказавшиеся друг у друга в этом "мёртвом кольце", замирали НАВСЕГДА,
-## целясь и не стреляя (см. скриншот в диалоге: dist=8.9м при fire_range=8.0). Фикс — сближение
-## внутри fire_range, см. State.DEFEND в _physics_process(). `_nav_agent.target_position`
-## переустанавливается здесь (не в _physics_process()) — _enter_defend() уже вызывается каждый
-## think-тик, пока цель видна (см. _think()), этого достаточно для живой цели в 1v1-бою;
-## переустанавливать на каждом физ.кадре форсило бы repath 60 раз/сек без реальной пользы.
+## `_nav_agent.target_position` переустанавливается здесь (не в _physics_process()) БЕЗУСЛОВНО —
+## не только пока цель вне fire_range: State.DEFEND теперь сближается и стреляет на ходу до самого
+## reach_dist (см. её комментарий в _physics_process()), значит навмеш-путь обязан вести к РЕАЛЬНОЙ
+## текущей позиции живой цели весь бой, а не застревать на точке, где цель была в момент входа в
+## fire_range. _enter_defend() уже вызывается каждый think-тик, пока цель видна (см. _think()),
+## этого достаточно для живой цели в 1v1-бою; переустанавливать на каждом физ.кадре форсило бы
+## repath 60 раз/сек без реальной пользы.
 func _enter_defend(target: Node) -> void:
 	# Новая переустановка прицельного смещения только на смену цели (см. _reroll_aim_offset()) —
 	# _enter_defend() вызывается КАЖДЫЙ think-тик, пока цель видна (см. _think()), рероллить offset
@@ -1340,8 +1339,7 @@ func _enter_defend(target: Node) -> void:
 	state = State.DEFEND
 	_current_target = target
 	_last_known_target_pos = target.global_position
-	var dist: float = _body.global_position.distance_to(target.global_position)
-	if dist > fire_range and _nav_agent.is_inside_tree():
+	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = target.global_position
 
 ## Случайное смещение точки прицеливания внутри хитбокса цели — берётся ОДИН РАЗ за заход
