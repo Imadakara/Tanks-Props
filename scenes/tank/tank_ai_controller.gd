@@ -215,15 +215,17 @@ const _PROJECTILE_GRAVITY := 9.8
 
 ## Радиус обзора (общий для обоих конусов) и полуширина ГЛАВНОГО конуса — жёстко на направлении
 ## корпуса, всегда активен, независимо от башни/блуждания (см. _can_see() и заголовок файла).
-## Шире, чем в v1 (была движущаяся "камера") — по прямому запросу, "как в других играх".
-## [ИЗМЕНЕНО, по прямому запросу — "увеличь дальность сектора обзора у корпуса и башни ботов в
-## полтора раза"] Было 10.0 (EASY 6.0, HARD 14.0, см. _DIFFICULTY_PRESETS) — ОБЩИЙ радиус для ОБОИХ
-## конусов (главного/корпуса и прицельного/башни, см. _can_see() — dist>vision_range отсекается ДО
-## разделения на конусы), поэтому одно число покрывает "и корпуса, и башни" сразу. Ширина секторов
-## (look_cone_deg/secondary_cone_deg) не менялась — просили именно ДАЛЬНОСТЬ, не угол.
-@export var vision_range: float = 15.0
+## Шире, чем в v1 (была движущаяся "камера") — по прямому запросу, "как в других играх". ОБЩИЙ
+## радиус для ОБОИХ конусов (главного/корпуса и прицельного/башни, см. _can_see() —
+## dist>vision_range отсекается ДО разделения на конусы), поэтому одно число покрывает "и корпуса,
+## и башни" сразу. Ширина секторов (look_cone_deg/secondary_cone_deg) не меняется вместе с этим
+## числом — правки дальности не означают правку угла.
+## `fire_range` == дальность обзора ДО последнего увеличения (см. ниже) — дистанция стрельбы
+## сознательно приравнена к прежнему радиусу сектора, после чего сам радиус вырос ещё на 20%:
+## бот снова видит дальше, чем стреляет, просто оба порога выше, чем были.
+@export var vision_range: float = 18.0
 @export var look_cone_deg: float = 100.0  # полный угол конуса вокруг направления корпуса
-@export var fire_range: float = 8.0
+@export var fire_range: float = 15.0
 @export var fire_aim_tolerance_deg: float = 5.0
 
 ## [ДОБАВЛЕНО, по прямому запросу — "текущая реализация стрельбы не учитывает параболическую
@@ -432,7 +434,9 @@ const _PROJECTILE_GRAVITY := 9.8
 ## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ГЛАВНЫЙ конус обзора
 ## (look_cone_deg, жёстко по направлению корпуса, радиус vision_range); цвет = текущий стейт
 ## (зелёный IDLE, голубой PATROL, красный DEFEND). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
-## башня; узкий белый контур вокруг неё — прицельный конус (secondary_cone_deg).
+## башня; узкий белый контур вокруг неё — прицельный конус (secondary_cone_deg). Оранжевая дуга
+## внутри ОБОИХ конусов — граница fire_range: видит бот до vision_range, но стреляет только
+## внутри этой дуги (см. _update_fov_debug_draw()).
 @export var show_fov_debug: bool = true
 ## Линия текущего NavMesh-пути (голубая) — видна только в PATROL, см. _update_path_debug_draw().
 @export var show_path_debug: bool = true
@@ -457,9 +461,9 @@ const _PROJECTILE_GRAVITY := 9.8
 ## wander_min_turn_deg — общий для всех уровней, сложность его не меняет.
 const _DIFFICULTY_PRESETS := {
 	Difficulty.EASY: {
-		"vision_range": 9.0,  # было 6.0, ×1.5 — см. @export vision_range выше
+		"vision_range": 10.8,  # было 9.0 — см. @export vision_range выше
 		"look_cone_deg": 75.0,
-		"fire_range": 5.0,
+		"fire_range": 9.0,  # == прежний vision_range EASY
 		"fire_aim_tolerance_deg": 9.0,
 		"wander_hold_min_sec": 2.0,
 		"wander_hold_max_sec": 3.5,
@@ -467,9 +471,9 @@ const _DIFFICULTY_PRESETS := {
 		"turret_turn_speed": 0.8,
 	},
 	Difficulty.HARD: {
-		"vision_range": 21.0,  # было 14.0, ×1.5 — см. @export vision_range выше
+		"vision_range": 25.2,  # было 21.0 — см. @export vision_range выше
 		"look_cone_deg": 130.0,
-		"fire_range": 11.0,
+		"fire_range": 21.0,  # == прежний vision_range HARD
 		"fire_aim_tolerance_deg": 3.0,
 		"wander_hold_min_sec": 0.5,
 		"wander_hold_max_sec": 1.2,
@@ -1094,7 +1098,7 @@ func _ensure_home_state() -> void:
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
 	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
 	# версия (гео-проверка "враг физически в круге") оказалась СЛИШКОМ строгой КАК ЕДИНСТВЕННОЕ
-	# условие: defense-бот патрулирует прямо рядом с objective, vision_range(15) достаточно велик
+	# условие: defense-бот патрулирует прямо рядом с objective, vision_range(18) достаточно велик
 	# относительно радиуса круга — как только атакующий попадал в круг, его почти всегда СРАЗУ же
 	# УЖЕ было видно напрямую (приоритет "вижу цель → DEFEND" срабатывал раньше), ALERT почти
 	# никогда не успевал активироваться заметно. Таймер по факту попаданий заменил её как основное
@@ -1356,8 +1360,9 @@ func _reroll_aim_offset() -> void:
 ## уравнение снаряда `y = x*tanθ - g*x²/(2v²cos²θ)`, решается как квадратное относительно t=tanθ
 ## (используя 1/cos²θ = 1+t²): `(g*x²/2v²)*t² - x*t + (y + g*x²/2v²) = 0`. Два корня — настильная
 ## (низкая) и навесная (высокая) дуги; берём НИЗКУЮ (t_low = меньший корень) — обычная танковая
-## пушка, не миномёт; на игровых дистанциях (fire_range 8-11м, launch_speed ~20) угол получается
-## единицы градусов, комфортно внутри диапазона дула бота (-15°..+30°, см. barrel_controller.gd).
+## пушка, не миномёт; на игровых дистанциях (fire_range 9-21м, launch_speed ботов ~30) угол
+## получается единицы градусов, комфортно внутри диапазона дула бота (-15°..+30°, см.
+## barrel_controller.gd).
 ## Дискриминант < 0 — цель физически недостижима на данной скорости снаряда (не должно случаться
 ## при dist<=fire_range с текущим балансом, но на случай будущей рассинхронизации баланса — берём
 ## максимальный доступный угол вместо NaN/деления на некорректный результат).
@@ -2123,6 +2128,18 @@ func _update_fov_debug_draw() -> void:
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
+	# Граница дистанции стрельбы (fire_range) — дуга ВНУТРИ главного конуса, без линий к центру
+	# (не заливка, чисто маркер порога), чтобы отличать "вижу" (весь конус, до vision_range) от
+	# "могу стрелять" (только внутри этой дуги). fire_range всегда <= vision_range по конструкции
+	# (см. @export-блок выше), дуга физически ложится внутри конуса, не выходит за его пределы.
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
+	for i in range(SEGMENTS + 1):
+		var t2b: float = float(i) / float(SEGMENTS)
+		var deg2b: float = lerp(cone_min_deg, cone_max_deg, t2b)
+		mesh.surface_add_vertex(_local_point(deg2b, fire_range, HEIGHT))
+	mesh.surface_end()
+
 	# Текущее РЕАЛЬНОЕ направление башни (куда башня уже физически довернула, не куда стремится) —
 	# turret уже дочерний узел _body, rotation.y у неё локальный без пересчёта.
 	var turret_local_deg: float = rad_to_deg(_turret.rotation.y)
@@ -2145,6 +2162,17 @@ func _update_fov_debug_draw() -> void:
 		var deg3: float = lerp(sec_min_deg, sec_max_deg, t3)
 		mesh.surface_add_vertex(_local_point(deg3, radius, HEIGHT))
 	mesh.surface_add_vertex(center)
+	mesh.surface_end()
+
+	# Та же граница дистанции стрельбы, но внутри прицельного (башенного) сектора — цель может
+	# попасть в кадр через ЛЮБОЙ из двух конусов (см. _can_see()), поэтому порог стрельбы отмечен
+	# в обоих.
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
+	for i in range(SEGMENTS + 1):
+		var t3b: float = float(i) / float(SEGMENTS)
+		var deg3b: float = lerp(sec_min_deg, sec_max_deg, t3b)
+		mesh.surface_add_vertex(_local_point(deg3b, fire_range, HEIGHT))
 	mesh.surface_end()
 
 	# Целевой угол блуждания башни (_look_yaw — куда башня СЕЙЧАС стремится довернуться, "линия",

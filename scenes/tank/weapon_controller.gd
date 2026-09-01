@@ -10,7 +10,11 @@ const ProjectileScene := preload("res://scenes/projectile/Projectile.tscn")
 signal fired()
 
 @export var is_player_controlled: bool = true
-@export var launch_speed: float = 20.0
+## Дефолт скрипта — тот же приём, что у health_component.gd's max_hits: TeamSpawner всегда
+## переопределяет это из config/*_tank_config.json, но дефолт держим на уровне актуального
+## баланса (текущий бот-профиль, 30.0) — на случай будущего статичного инстанса Tank.tscn в
+## обход спавнера, чтобы он не откатывался молча на устаревшее число.
+@export var launch_speed: float = 30.0
 @export var muzzle_forward_offset: float = 0.8
 @export var muzzle_up_offset: float = 0.0
 
