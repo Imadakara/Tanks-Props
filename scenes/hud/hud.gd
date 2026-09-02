@@ -171,15 +171,13 @@ func _update_team_label() -> void:
 	else:
 		_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
 
-## Серия по цвету команды: [красные, синие]. Красные = команда 0, Синие = команда 1. В TEAM_ARENA
-## смены сторон нет (см. _has_side_swap), поэтому MatchState.player_team стабилен весь матч и
-## маппинг series_wins_you/enemy на цвета не «плавает» между раундами.
+## Серия по цвету команды: [красные, синие]. Серия хранится по стороне (attack/defense), а в
+## TEAM_ARENA смены сторон нет: attack = команда 0 = Красные, defense = команда 1 = Синие.
 func _series_by_color() -> Array:
-	if MatchState.player_team == 0:
-		return [MatchState.series_wins_you, MatchState.series_wins_enemy]
-	return [MatchState.series_wins_enemy, MatchState.series_wins_you]
+	return [MatchState.series_wins_attack, MatchState.series_wins_defense]
 
-## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — только серия раундов («Ты/Противник»);
+## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — серия раундов по стороне
+## («Атака : Оборона» — игрок меняет сторону между раундами, «Ты» не имеет смысла);
 ## TEAM_ARENA — убийства команд-цветов в текущем раунде И через разделитель серия раундов, всё
 ## по цветам (Красные = команда 0 = attack_kills, Синие = команда 1 = defense_kills).
 func _update_match_score_line() -> void:
@@ -191,8 +189,8 @@ func _update_match_score_line() -> void:
 		_score_label.text = "Убийства  Красные %d : %d Синие      Раунды  %d : %d" % \
 			[red_kills, blue_kills, s[0], s[1]]
 	else:
-		_score_label.text = "По раундам — Ты %d : %d Противник" % \
-			[MatchState.series_wins_you, MatchState.series_wins_enemy]
+		_score_label.text = "По раундам — Атака %d : %d Оборона" % \
+			[MatchState.series_wins_attack, MatchState.series_wins_defense]
 
 ## Группа "objective_health" — та же, что map_scene.gd регистрирует и TankAIController читает
 ## (см. tank_ai_controller.gd._find_objective()) — не по имени узла, работает для любой карты без
@@ -241,7 +239,8 @@ func _on_round_ended(winner: String) -> void:
 	_restart_button.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE  # иначе кнопку нечем кликнуть — мышь захвачена CameraRig
 
-## Итог серии. TARGET_OBJECTIVE — с точки зрения игрока; TEAM_ARENA — по цвету команды-победителя.
+## Итог серии — по стороне-победителю. TEAM_ARENA — по цвету; TARGET_OBJECTIVE — по атака/оборона
+## (игрок мог помогать обеим сторонам за матч, «выиграл/проиграл» от лица игрока не однозначно).
 func _series_verdict() -> String:
 	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
 		var s := _series_by_color()  # [красные, синие]
@@ -254,9 +253,10 @@ func _series_verdict() -> String:
 			res = "Матч: ничья"
 		return "%s   (серия Красные %d : %d Синие)" % [res, s[0], s[1]]
 	var verdict: String = {
-		"you": "Матч выигран!", "enemy": "Матч проигран", "tie": "Матч: ничья",
+		"attack": "Матч за атакой", "defense": "Матч за обороной", "tie": "Матч: ничья",
 	}[MatchState.series_winner()]
-	return "%s   (серия %d : %d)" % [verdict, MatchState.series_wins_you, MatchState.series_wins_enemy]
+	return "%s   (серия Атака %d : %d Оборона)" % \
+		[verdict, MatchState.series_wins_attack, MatchState.series_wins_defense]
 
 ## TARGET_OBJECTIVE — «Победа атакующих/обороняющихся» (сторона и есть команда).
 ## TEAM_ARENA — «Красные/Синие победили» + счёт убийств раунда, никаких атака/оборона.

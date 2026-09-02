@@ -203,9 +203,13 @@ only runs on the first `_physics_process()` tick, well after every sibling's `_r
 button — every map has a `TeamSpawner` node, see "Spawn system" below); `match_mode: Mode
 {TARGET_OBJECTIVE, TEAM_ARENA}` — a **per-map setting**, not runtime detection: `map_scene.gd` has
 `@export_enum var match_mode` set in each map's own scene file; the HUD reads it *lazily* since its
-own `_ready()` precedes the root's; and a round-series score (`series_wins_you`/
-`series_wins_enemy`, `total_rounds = 3`) tracked by *persistent* team (your team vs. the bots), not
-by side. `MatchManager._end_round()` calls `MatchState.record_round_result(winner)` before emitting
+own `_ready()` precedes the root's; and a round-series score (`series_wins_attack`/
+`series_wins_defense`, `total_rounds = 3`) tracked **by side, not by "the player's team"** —
+`record_round_result(winner_side)` just credits whichever side ("attack"/"defense") took the round.
+In TARGET_OBJECTIVE the player swaps sides between rounds (see side-swap under "Game modes"), so
+"the player's team" isn't a stable thing; the attack/defense **bot squads** are (fixed by roster).
+In TEAM_ARENA there's no swap, so "attack" is permanently team 0 / Красные and "defense" team 1 /
+Синие. `MatchManager._end_round()` calls `MatchState.record_round_result(winner)` before emitting
 `round_ended`; the series accumulates across `reload_current_scene()` and is reset only from the
 main menu (`main_menu.gd`) or the "Новый матч" button after `series_complete()`.
 `config/player_tank_config.json` and `config/bot_tank_config.json` hold per-profile physical stats
@@ -328,10 +332,11 @@ round just resolves at timeout by the mode's normal rule. Side-swap between roun
 TARGET_OBJECTIVE** (where attack/defense roles genuinely alternate); TEAM_ARENA colour teams are
 fixed for the whole match, so its restart button just reloads.
 
-A match is **best-of-3, decided by majority**: `series_complete()` is true as soon as one side
-reaches `rounds_to_win()` (`total_rounds / 2 + 1` = 2), so a 2-0 ends the match after round 2 —
-round 3 (the decider) is only played on a 1-1. Same `series_complete()` for both modes.
-`series_winner()` = whoever has more round wins.
+A match is **best-of-3, decided by majority of round wins per side**: `series_complete()` is true
+as soon as `series_wins_attack` or `series_wins_defense` reaches `rounds_to_win()`
+(`total_rounds / 2 + 1` = 2). So round 1 won by attack + round 2 won by defense = 1-1 → the
+decider round 3 is played; a genuine 2-0 for one side ends the match after round 2. Same
+`series_complete()` for both modes. `series_winner()` returns `"attack"`/`"defense"`/`"tie"`.
 
 The **round counter** is `MatchState.current_round_num`, a real stored field — **incremented by
 `advance_round()` when the *next* round starts** (`_on_restart_pressed`), never when the current
@@ -361,8 +366,9 @@ in *every* zone simultaneously (not one at a random zone like ammo). A `ModCrate
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`
 (N = `current_round_num`), line 2 the mode-dependent overall score — TARGET_OBJECTIVE: series only
-(`По раундам — Ты N : M Противник`); TEAM_ARENA: round kills + series, all by colour
-(`Убийства  Красные K : L Синие      Раунды  N : M`, Красные always the left number) — line 3
+(`По раундам — Атака N : M Оборона`, by side since the player swaps); TEAM_ARENA: round kills +
+series, all by colour (`Убийства  Красные K : L Синие      Раунды  N : M`, Красные =
+`series_wins_attack`, always the left number) — line 3
 `Цель: N/M попаданий` — objective health, TARGET_OBJECTIVE only, resolved via
 group `"objective_health"` (same group `TankAIController` reads, not by node name — no
 `OBJECTIVE: TARGET` prefix, the mode name lives in the map settings, not the HUD), line 4 the

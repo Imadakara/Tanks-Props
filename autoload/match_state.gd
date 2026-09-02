@@ -12,12 +12,17 @@ extends Node
 ## - current_round_num — номер ИДУЩЕГО раунда (1..total_rounds). Инкрементируется РОВНО при старте
 ##   следующего раунда (hud._on_restart_pressed → advance_round), НЕ при завершении текущего —
 ##   иначе экран результата уже показывал бы номер следующего.
-## - Счёт серии (series_wins_*) НАКАПЛИВАЕТСЯ через reload_current_scene() — сбрасывается только
-##   из главного меню (main_menu.gd) и по кнопке «Новый матч» после конца серии (hud.gd).
-##   "Твоя команда" — устойчивая сущность: series_wins_you всегда про команду человека.
-## - Матч — best-of-3: заканчивается, как только одна команда взяла БОЛЬШИНСТВО (2 раунда), см.
-##   series_complete()/rounds_to_win(). Победа 2:0 после второго раунда — матч сразу окончен,
-##   третий (решающий) играется только при 1:1. Обе игровые режима идут через один series_complete().
+## - Счёт серии — ПО СТОРОНЕ (series_wins_attack / series_wins_defense), не по «команде игрока».
+##   В TARGET_OBJECTIVE игрок между раундами меняет сторону (hud._has_side_swap), поэтому
+##   «команда игрока» — НЕ устойчивая величина; устойчивы именно стороны: атакующий и
+##   защищающийся отряды ботов фиксированы (ростер), плавает только игрок. В TEAM_ARENA смены
+##   сторон нет — "attack" там всегда команда 0 (Красные), "defense" — команда 1 (Синие).
+##   НАКАПЛИВАЕТСЯ через reload_current_scene(), сбрасывается из меню (main_menu.gd) и по кнопке
+##   «Новый матч» (hud.gd).
+## - Матч — best-of-3: заканчивается, как только ОДНА сторона взяла БОЛЬШИНСТВО (2 раунда), см.
+##   series_complete()/rounds_to_win(). Раунд 1 за атакой + раунд 2 за защитой → 1:1, играется
+##   решающий третий. 2:0 после второго — матч сразу окончен. Оба режима — через один
+##   series_complete().
 
 enum Mode { TARGET_OBJECTIVE, TEAM_ARENA }
 
@@ -26,14 +31,14 @@ var match_mode: int = Mode.TARGET_OBJECTIVE
 
 var total_rounds: int = 3
 var current_round_num: int = 1
-var series_wins_you: int = 0
-var series_wins_enemy: int = 0
+var series_wins_attack: int = 0
+var series_wins_defense: int = 0
 
 func reset_series() -> void:
 	current_round_num = 1
 	player_team = 0
-	series_wins_you = 0
-	series_wins_enemy = 0
+	series_wins_attack = 0
+	series_wins_defense = 0
 
 ## Переход к следующему раунду — вызывается ИМЕННО при старте нового раунда (не при конце текущего).
 func advance_round() -> void:
@@ -41,7 +46,7 @@ func advance_round() -> void:
 
 ## Сколько раундов серии уже отыграно = сумма побед обеих сторон (каждый раунд даёт ровно одну).
 func rounds_played() -> int:
-	return series_wins_you + series_wins_enemy
+	return series_wins_attack + series_wins_defense
 
 func current_round() -> int:
 	return current_round_num
@@ -50,26 +55,24 @@ func current_round() -> int:
 func rounds_to_win() -> int:
 	return total_rounds / 2 + 1
 
-## Матч окончен, как только ОДНА команда набрала большинство раундов. Для best-of-3: победа
-## 2:0 (после второго раунда) заканчивает матч сразу — третий, решающий, играется ТОЛЬКО при
-## счёте 1:1. (rounds_played() >= total_rounds отдельно не нужен: после трёх раундов у кого-то
-## уже минимум 2 победы.)
+## Матч окончен, как только ОДНА сторона набрала большинство раундов. Для best-of-3: 2:0 после
+## второго раунда — матч сразу окончен; третий (решающий) — только при 1:1.
 func series_complete() -> bool:
-	return series_wins_you >= rounds_to_win() or series_wins_enemy >= rounds_to_win()
+	return series_wins_attack >= rounds_to_win() or series_wins_defense >= rounds_to_win()
 
-## winner_side — "attack" | "defense", как эмитит MatchManager.round_ended. player_team = сторона
-## игрока в ЭТОМ раунде (инвертируется рестартом уже ПОСЛЕ вызова), поэтому здесь она ещё
-## актуальна для только что закончившегося раунда.
+## winner_side — "attack" | "defense", как эмитит MatchManager.round_ended. Кредитуем СТОРОНУ
+## напрямую — какая сторона взяла раунд, той и очко серии. НЕ через player_team: он между
+## раундами инвертируется (смена сторон), и «сторона игрока выиграла» ≠ «команда игрока выиграла».
 func record_round_result(winner_side: String) -> void:
-	var player_is_attack: bool = player_team == 0
-	if (winner_side == "attack") == player_is_attack:
-		series_wins_you += 1
+	if winner_side == "attack":
+		series_wins_attack += 1
 	else:
-		series_wins_enemy += 1
+		series_wins_defense += 1
 
+## "attack" | "defense" | "tie" — какая сторона выиграла матч (больше выигранных раундов).
 func series_winner() -> String:
-	if series_wins_you > series_wins_enemy:
-		return "you"
-	if series_wins_enemy > series_wins_you:
-		return "enemy"
+	if series_wins_attack > series_wins_defense:
+		return "attack"
+	if series_wins_defense > series_wins_attack:
+		return "defense"
 	return "tie"
