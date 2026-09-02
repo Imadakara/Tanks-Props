@@ -30,11 +30,10 @@ extends Node
 @export var ammo_per_crate: int = 3  # дефолт содержимого ящика, если зона сброса не задаёт своё ammo_per_crate
 @export var round_timer_sec: float = 180.0  # режим TARGET_OBJECTIVE (Destroy Target) — 3 мин на раунд
 @export var team_arena_round_sec: float = 180.0  # режим TEAM_ARENA — командный бой, 3 мин на раунд
-## [ИЗМЕНЕНО — objective переведён на HP-модель под систему модификаций/мортиру, см.
-## Tank_Prop_Hunt_Modifications.md] Было 10. Теперь это ПОЛНОЕ ЗДОРОВЬЕ цели: обычный снаряд
+## ПОЛНОЕ ЗДОРОВЬЕ objective-цели (HP-модель, см. Tank_Prop_Hunt_Modifications.md): обычный снаряд
 ## снимает 1 (Projectile.damage), спец-выстрел мортиры — mortar_objective_damage (30).
-## HealthComponent.current_hits теперь трактуется как HP, не счётчик попаданий. match_manager.gd
-## по-прежнему проставляет это в objective_health.max_hits при setup().
+## HealthComponent.current_hits для цели трактуется как HP. match_manager.gd проставляет это в
+## objective_health.max_hits при setup().
 @export var objective_hits_required: int = 100  # режим "Destroy Target" — HP объекта-цели для победы атаки
 
 ## Модификации танка (подбираемые красные ящики, слот в HUD; см. Tank_Prop_Hunt_Modifications.md).

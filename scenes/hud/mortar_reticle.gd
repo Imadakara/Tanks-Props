@@ -1,7 +1,8 @@
 extends Control
-## MortarReticle — экранный кружок для точки падения навесного снаряда. НЕ ИСПОЛЬЗУЕТСЯ: после
-## перехода на кольцо-на-земле (mortar_behavior._reticle_ring) hud.gd в режиме прицеливания
-## прячет все экранные прицелы. Узел оставлен в HUD.tscn мёртвым (см. Tank_Prop_Hunt_Modifications.md §5).
+## MortarReticle — экранный кружок для точки падения навесного снаряда. НЕ ИСПОЛЬЗУЕТСЯ: прицел
+## режима прицеливания мортиры — кольцо на земле (mortar_behavior._reticle_ring), а hud.gd в этом
+## режиме прячет все экранные прицелы. Узел оставлен в HUD.tscn мёртвым (см.
+## Tank_Prop_Hunt_Modifications.md).
 
 func _draw() -> void:
 	var c := size * 0.5

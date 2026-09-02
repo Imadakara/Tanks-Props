@@ -125,38 +125,21 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
 - `CollisionDetector` — Area3D on the tank body; a *moving* tank of any team touching a `DISGUISED`
   tank breaks its disguise (`break_disguise("collision")`). Independent of the enemy-relative rules
   above.
-- `ModificationController` — the single pickup-modification **slot**, now a generic host (full
-  detail: `Tank_Prop_Hunt_Modifications.md`). One slot per tank; pick up only when empty
-  (`can_pick_up()`), both teams, no drop — `clear_slot()` on use (the modification calls it) or on
-  respawn (`RespawnController`). A `Modification` `Resource` (`id`/`display_name`/`hud_short` +
-  `behavior_scene: PackedScene`) carries no logic; `install()` instances its `behavior_scene` as a
-  child, `setup(tank)` + `on_installed()`, and the controller **forwards a fixed contract**
-  (`intercepts_fire`/`on_fire_pressed`/`blocks_hull_movement`/`hides_crosshair` +
-  `ai_usable`/`ai_engage_range`/`ai_prep_sec`/`ai_aim_solution`/`ai_fire_at`) to it, null-safe.
-  Base contract: `scenes/modifications/modification_behavior.gd` (`extends Node3D`, no `class_name`,
-  all methods no-op by default). No `id == &"mortar"` branches or private reach-ins anywhere else —
-  `weapon_controller`/`tank_movement`/`hud`/`tank_ai_controller` all talk to the contract.
-  First (and only) behavior = **mortar** (`scenes/modifications/mortar/{mortar_behavior.gd,Mortar.tscn}`,
-  `mortar.tres` points at it): red barrel cylinder + a two-press lobbed special shot. Player presses
-  `fire` (→ `_mod.intercepts_fire()` → `on_fire_pressed()` → `mortar_behavior._begin_aiming()`):
-  hull frozen via `TankMovement`'s `_mod.blocks_hull_movement()` gate, view swaps to
-  `Turret/MortarCamera` (the one mortar-specific node still in `Tank.tscn`), screen crosshair hidden
-  (`_mod.hides_crosshair()`), barrel elevates, mouse X = turret yaw / mouse Y = reticle distance in
-  `[2 .. GameConfig.mortar_range]`; `fire` again → `mortar_behavior._launch()` →
-  `WeaponController.fire_special(dir, speed, damage)` (generic; mortar supplies the high-arc
-  ballistic `dir`, `GameConfig.mortar_objective_damage` 30, `GameConfig.mortar_launch_speed` 12) →
-  `_mod.clear_slot()`; a movement key exits aiming with no shot. The aiming reticle is a **3D ring
-  lying on the ground** at the predicted impact point (`_reticle_ring`, `TorusMesh`, `top_level`) —
-  slides over the surface with the mouse; no screen crosshair in this mode. Bots both pick up **and
-  use** the mortar via `TankAIController` (`MOD_SEEK`/`MOD_RETRIEVE`/`MORTAR_ATTACK`, the latter
-  driving convergence from `_mod.ai_aim_solution()` and firing via `_mod.ai_fire_at()`):
-  attackers head for a drop zone only within a 10 s window after a mortar drop (`_should_seek_mortar()`;
-  `mortar_taken` per zone + live occupancy check keep multiple bots from chasing one zone; no crate
-  on arrival → back to normal, no loitering) and lob at the objective while avoiding tank fights —
-  but once the mortar is spent, a visible tank shooting them takes priority (→ `DEFEND`). Defenders
-  grab a crate only if it enters their view and lob at enemy tanks; a bot seeking ammo grabs a
-  mortar if that's all the zone has. Full detail:
-  `Tank_Prop_Hunt_Modifications.md`.
+- `ModificationController` — the single pickup-modification **slot**, a generic host. One slot per
+  tank; pick up only when empty (`can_pick_up()`), both teams, no drop — `clear_slot()` on use (the
+  modification calls it) or on respawn (`RespawnController`). A `Modification` `Resource`
+  (`id`/`display_name`/`hud_short` + `behavior_scene: PackedScene`) carries no logic; `install()`
+  instances its `behavior_scene` as a child (`setup(tank)` + `on_installed()`), and the controller
+  forwards a fixed contract — `intercepts_fire`/`on_fire_pressed`/`blocks_hull_movement`/
+  `hides_crosshair` for the player, `ai_usable`/`ai_engage_range`/`ai_prep_sec`/`ai_aim_solution`/
+  `ai_fire_at` for `TankAIController` — null-safe. Base contract:
+  `scenes/modifications/modification_behavior.gd` (`extends Node3D`, no `class_name`, all methods
+  no-op). `weapon_controller`/`tank_movement`/`hud`/`tank_ai_controller` all talk to this contract —
+  no `id == &"mortar"` checks. The only behavior so far is the **mortar**
+  (`scenes/modifications/mortar/{mortar_behavior.gd,Mortar.tscn}`): a two-press lobbed special shot
+  (aim mode → ground ring reticle → `WeaponController.fire_special(dir, speed, damage)`), the one
+  mortar-specific node in `Tank.tscn` being `Turret/MortarCamera`. Bots pick it up **and** use it
+  (`MOD_SEEK`/`MOD_RETRIEVE`/`MORTAR_ATTACK`). Full detail: `Tank_Prop_Hunt_Modifications.md`.
 - `HealthComponent` — `take_hit(killer, damage := 1)`; `current_hits += damage`, `destroyed` at
   `current_hits >= max_hits`. Tanks use `max_hits` **3** (`config/*_tank_config.json`, script
   default also 3 — raised from 2 so the mortar has a point vs tanks; normal `Projectile.damage` is

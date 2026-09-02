@@ -1490,7 +1490,7 @@ func _point_in_view(p: Vector3) -> bool:
 	query.collision_mask = 1  # environment (ящик — Area, не тело, не заслоняет)
 	return space.intersect_ray(query).is_empty()
 
-## Вход в MOD_SEEK для АТАКУЮЩЕГО (см. заголовок файла, §12 Bot AI doc). Всё вместе:
+## Вход в MOD_SEEK для АТАКУЮЩЕГО (см. заголовок файла). Всё вместе:
 ##  - я атакующий, слот пуст, на карте есть зоны сброса, objective ещё жив;
 ##  - с последнего сброса мортиры прошло < GameConfig.mortar_fresh_window_sec (окно «свежести»);
 ##  - «не в бою с танком» — гарантировано структурно: сюда (_ensure_home_state / arm
