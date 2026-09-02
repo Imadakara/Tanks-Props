@@ -297,7 +297,7 @@ Two modes, keyed off `MatchState.match_mode` (see Autoloads above), each map a t
 mode (see "Map inventory"). **TARGET_OBJECTIVE** (`TargetObjectiveMap.tscn`): an `Objective` static
 body with a `HealthComponent` (`attackers_only = true`) sits on the map; **objective destroyed →
 round ends with an attack win; round timer expires with it intact → defense win**. Round timer for
-this mode is `GameConfig.round_timer_sec` = **150 s (2:30)**. The `ObjectiveAlertZone` (the ground
+this mode is `GameConfig.round_timer_sec` = **180 s (3 min)**. The `ObjectiveAlertZone` (the ground
 circle the AI uses for `State.ALERT`) is a **child of the objective node** (local `y = -1` so the
 circle sits on the ground), freed together with the objective and simply absent on maps without one
 (`TeamArenaMap.tscn`); every reader of `_alert_zone` uses `is_instance_valid()`, not `== null`.
@@ -315,12 +315,16 @@ happens if the property line is dropped from the scene file.
 Both maps run the **same round loop**: `map_scene.gd._setup_match_context()` creates a `ScoreManager`
 + a node named `"MatchManager"` running `scenes/main/match_manager.gd`, which picks its end-of-round
 condition from `match_mode` (objective `destroyed` → attack / timeout → defense, vs. timeout →
-winner-by-kills) then `MatchState.record_round_result` → `round_ended`. The same script also owns a
-**final stage**: if every tank's `AmmoComponent` reports `ammo_depleted` in the same round (nobody
-can do anything more), it stops `RoundTimer`, starts a `FinalStageTimer`
-(`GameConfig.final_stage_duration_sec` = 30s, HUD shows a countdown), and on timeout resolves the
-round by kill count — the same formula either mode's normal timeout already uses, just triggered
-early. Side-swap between rounds (`hud.gd._on_restart_pressed`, `_has_side_swap()`) happens **only in
+winner-by-kills) then `MatchState.record_round_result` → `round_ended`. The same script also owns
+the **final stage**: extra time (`GameConfig.final_stage_duration_sec` = 30s, HUD shows a
+countdown, ammo crates keep dropping, tanks respawn with ammo), then the round resolves by kill
+count. It is a **per-map opt-in** — `map_scene.gd` has `@export var final_stage_enabled` set in
+each map's `.tscn` (**on** for `TeamArenaMap`, **off** for `TargetObjectiveMap`) — and it starts
+**only at the moment the main `RoundTimer` expires** *and* every still-alive (not respawning) tank
+is out of ammo (the round has genuinely stalled). It is **not** triggered mid-round by ammo
+running out while the clock is still going. When disabled, or when someone still has ammo, the
+round just resolves at timeout by the mode's normal rule. Side-swap between rounds
+(`hud.gd._on_restart_pressed`, `_has_side_swap()`) happens **only in
 TARGET_OBJECTIVE** (where attack/defense roles genuinely alternate); TEAM_ARENA colour teams are
 fixed for the whole match, so its restart button just reloads.
 

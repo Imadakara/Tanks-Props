@@ -30,7 +30,7 @@ extends Node
 @export var ammo_crate_count: int = 2  # дефолт потолка одновременно НЕподобранных ящиков НА ОДНУ зону сброса (AmmoDropZone), если её max_pending_crates не задан
 @export var ammo_crate_spawn_interval_sec: float = 30.0  # дефолт интервала сброса зоны (AmmoDropZone.drop_interval_sec), если не переопределён на инстансе
 @export var ammo_per_crate: int = 3  # дефолт содержимого ящика, если зона сброса не задаёт своё ammo_per_crate
-@export var round_timer_sec: float = 150.0  # режим TARGET_OBJECTIVE (Destroy Target) — 2:30 на раунд
+@export var round_timer_sec: float = 180.0  # режим TARGET_OBJECTIVE (Destroy Target) — 3 мин на раунд
 @export var team_arena_round_sec: float = 180.0  # режим TEAM_ARENA — командный бой, 3 мин на раунд
 ## [ИЗМЕНЕНО — objective переведён на HP-модель под систему модификаций/мортиру, см.
 ## Tank_Prop_Hunt_Modifications.md] Было 10. Теперь это ПОЛНОЕ ЗДОРОВЬЕ цели: обычный снаряд

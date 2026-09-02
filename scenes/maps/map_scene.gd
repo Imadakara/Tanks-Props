@@ -8,9 +8,12 @@ extends Node3D
 ##   TARGET_OBJECTIVE, `TeamArenaMap.tscn` = TEAM_ARENA), НЕ детект по наличию узла `Objective`.
 ##   Это «настройка карты», не строка в HUD.
 ## - `_setup_match_context()` заводит из кода `ScoreManager` + узел `"MatchManager"` (см.
-##   `scenes/main/match_manager.gd`) — полноценный постраундовый цикл, включая финальную стадию.
-##   HUD находит "MatchManager"/`RoundTimer`/`FinalStageTimer` одними и теми же лукапами на любой
-##   карте.
+##   `scenes/main/match_manager.gd`) — полноценный постраундовый цикл. HUD находит
+##   "MatchManager"/`RoundTimer`/`FinalStageTimer` одними и теми же лукапами на любой карте.
+## - Финальная стадия (доп. время после основного таймера, если бой в тупике) — ОПЦИЯ КАРТЫ:
+##   `@export var final_stage_enabled`, задаётся в `.tscn`. По умолчанию вкл на `TeamArenaMap`,
+##   выкл на `TargetObjectiveMap` (там время вышло → сразу победа защиты). Условие/поведение —
+##   в `match_manager.gd`.
 ## - Кнопка "Objective On/OFF" — переключает `HealthComponent.invincible` на цели, текст отражает
 ##   состояние; появляется только там, где на карте вообще есть `Objective` (нет на
 ##   `TeamArenaMap.tscn`, режим TEAM_ARENA). Здоровье цели в HUD рисует сам `hud.gd`.
@@ -31,6 +34,11 @@ const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_st
 ## `TeamArenaMap.tscn` = 1), не детектится по наличию узла Objective. Значения совпадают с
 ## `MatchState.Mode` (0 = TARGET_OBJECTIVE, 1 = TEAM_ARENA).
 @export_enum("TARGET_OBJECTIVE", "TEAM_ARENA") var match_mode: int = 0
+
+## Опция карты: наступает ли финальная стадия (доп. время + продолжающийся сброс ящиков), когда
+## основное время раунда вышло, а у всех живых танков кончился боезапас. Задаётся в .tscn каждой
+## карты: TeamArenaMap = true, TargetObjectiveMap = false. Условие/логику см. match_manager.gd.
+@export var final_stage_enabled: bool = false
 
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
 @onready var _player_health: Node = $PlayerTank/HealthComponent
@@ -82,12 +90,13 @@ func _setup_match_context() -> void:
 
 	# Полноценный постраундовый цикл (см. match_manager.gd): TARGET_OBJECTIVE — уничтожение цели →
 	# победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель по убийствам; плюс
-	# финальная стадия при общем исчерпании боезапаса (см. её doc-comment) — для любого режима.
+	# опциональная финальная стадия (final_stage_enabled) — доп. время, если время вышло и боезапас
+	# у всех живых танков кончился.
 	var match_manager := Node.new()
 	match_manager.name = "MatchManager"
 	match_manager.set_script(MatchManagerScript)
 	add_child(match_manager)
-	match_manager.setup(match_mode, round_sec, score_manager, objective_health)
+	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled)
 
 ## Бессмертие игрока — тумблер «Игрок: бессмертие ON/OFF» (низ-справа), ПО УМОЛЧАНИЮ ВКЛ. Тот же
 ## паттерн, что Objective On/Off и bot reaction (tank_ai_controller.gd). Низ-справа, на слот выше

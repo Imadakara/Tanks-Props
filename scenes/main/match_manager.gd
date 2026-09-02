@@ -14,33 +14,34 @@ extends Node
 ## чтобы HUD прочитал уже актуальный счёт. Следующий раунд/новый матч — кнопкой в HUD (reload
 ## сцены), серия копится через autoload.
 ##
-## Финальная стадия — досрочное завершение раунда, если у ВСЕХ танков сразу кончился боезапас
-## (дальше в этом раунде обеим командам физически нечем продолжать бой). `GameConfig.
-## final_stage_duration_sec` (30с) — грейс-период, в течение которого HUD показывает обратный
-## отсчёт (`FinalStageLabel`, `hud.gd._update_final_stage_label()`); по истечении раунд решается
-## `_winner_by_kills()` — той же формулой, что и обычный таймаут TEAM_ARENA (для TEAM_ARENA
-## финальная стадия — не отдельная механика, а тот же исход раунда, наступивший раньше срока; для
-## TARGET_OBJECTIVE — единственный способ разрешить стадию, когда добить/удержать objective больше
-## нечем).
+## Финальная стадия — доп. время после ОСНОВНОГО таймера раунда, если бой зашёл в тупик: время
+## вышло И у всех оставшихся в живых танков кончились боеприпасы (продолжать нечем). `GameConfig.
+## final_stage_duration_sec` (30с) — грейс-период, в течение которого падают ящики (см.
+## ammo_drop_zone.gd — его каденс продолжается, пока раунд не закрыт), танки респавнятся с
+## боезапасом, HUD показывает обратный отсчёт (`FinalStageLabel`, `hud.gd._update_final_stage_label()`);
+## по истечении раунд решается `_winner_by_kills()`. Триггерится РОВНО в момент истечения
+## `RoundTimer` (не раньше, не по накоплению `ammo_depleted` в середине боя) и ТОЛЬКО если карта
+## включила финальную стадию (`final_stage_enabled`, @export на map_scene.gd — по умолчанию вкл на
+## TeamArenaMap, выкл на TargetObjectiveMap).
 
 signal round_ended(winner: String)  # "attack" | "defense"
 signal final_stage_started()
 
 var _final_stage_active: bool = false
+var _final_stage_enabled: bool = false  # задаётся картой через setup(); см. map_scene.gd @export
 var _round_over: bool = false
 var _mode: int = 0  # MatchState.Mode; всегда перезаписывается в setup() до первого использования
 var _round_timer: Timer
 var _final_stage_timer: Timer
 var _score_manager: Node
-var _depleted_tanks: Array = []
-var _total_tanks: int = 0
 
 ## Вызывается из map_scene.gd._setup_match_context() сразу после add_child() — не _ready(): явным
 ## вызовом из оркестратора в корне сцены, тот же порядок, что и у ScoreManager.begin_match().
 ## objective_health = null для режима TEAM_ARENA (цели на карте нет).
-func setup(mode: int, round_sec: float, score_manager: Node, objective_health: Node) -> void:
+func setup(mode: int, round_sec: float, score_manager: Node, objective_health: Node, final_stage_enabled: bool) -> void:
 	_mode = mode
 	_score_manager = score_manager
+	_final_stage_enabled = final_stage_enabled
 
 	_round_timer = Timer.new()
 	_round_timer.name = "RoundTimer"
@@ -55,35 +56,39 @@ func setup(mode: int, round_sec: float, score_manager: Node, objective_health: N
 	if _mode == MatchState.Mode.TARGET_OBJECTIVE and objective_health != null:
 		objective_health.destroyed.connect(_on_objective_destroyed)
 
-	var tanks := get_tree().get_nodes_in_group("tanks")
-	_total_tanks = tanks.size()
-	for tank in tanks:
-		var ammo: Node = tank.get_node_or_null("AmmoComponent")
-		if ammo != null:
-			ammo.ammo_depleted.connect(_on_tank_ammo_depleted.bind(tank))
-
 func _on_objective_destroyed(_killer: Node) -> void:
 	_end_round("attack")  # цель уничтожена — победа атакующих
 
 func _on_round_timeout() -> void:
 	if _final_stage_active:
 		return  # финальная стадия уже идёт своим отдельным таймером — обычный таймаут не решает
+	# Основное время вышло. Финальная стадия — только если карта её включила И бой зашёл в тупик
+	# (все живые танки без боеприпасов). Иначе раунд решается сразу по обычному условию режима.
+	if _final_stage_enabled and _alive_tanks_all_out_of_ammo():
+		_start_final_stage()
+		return
 	if _mode == MatchState.Mode.TEAM_ARENA:
 		_end_round(_winner_by_kills())
 	else:
 		_end_round("defense")  # цель уцелела к концу таймера — победа защиты
 
-func _on_tank_ammo_depleted(tank: Node) -> void:
-	if _final_stage_active or _round_over:
-		return
-	if not _depleted_tanks.has(tank):
-		_depleted_tanks.append(tank)
-	if _total_tanks > 0 and _depleted_tanks.size() >= _total_tanks:
-		_start_final_stage()
+## Все ЖИВЫЕ (не на респавне) танки без боезапаса — и хотя бы один живой танк есть. Проверяется
+## РОВНО в момент истечения основного таймера раунда (см. _on_round_timeout).
+func _alive_tanks_all_out_of_ammo() -> bool:
+	var any_alive := false
+	for tank in get_tree().get_nodes_in_group("tanks"):
+		var health: Node = tank.get_node_or_null("HealthComponent")
+		if health == null or not health.is_alive:
+			continue  # труп на респавне — не «оставшийся в живых»
+		any_alive = true
+		var ammo: Node = tank.get_node_or_null("AmmoComponent")
+		if ammo != null and ammo.has_ammo():
+			return false
+	return any_alive
 
 func _start_final_stage() -> void:
 	_final_stage_active = true
-	_round_timer.stop()  # финальная стадия наступает независимо от таймера раунда
+	_round_timer.stop()  # уже истёк (one_shot) — вызов безвреден, оставлен для ясности
 	_final_stage_timer = Timer.new()
 	_final_stage_timer.name = "FinalStageTimer"
 	_final_stage_timer.one_shot = true
