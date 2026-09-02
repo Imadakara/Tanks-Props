@@ -124,6 +124,29 @@ extends Node
 ## (боезапас реально ноль — сигнал AmmoComponent.ammo_depleted, перебивает даже DEFEND, гуманно:
 ## стрелять всё равно нечем). См. _ensure_home_state()/_on_ammo_depleted() соответственно.
 ##
+## [ДОБАВЛЕНО — система модификаций танка, см. Tank_Prop_Hunt_Modifications.md] Боты подбирают И
+## применяют мортиру, по-разному в зависимости от команды. Четыре стейта, exception-guard в
+## _ensure_home_state() как AMMO_*/PURSUE/SEARCH:
+## - MOD_SEEK — только АТАКУЮЩИЙ. Вход (_should_seek_mortar()): (1) с последнего сброса мортиры
+##   прошло < GameConfig.mortar_fresh_window_sec (10 с) — время сброса известно из
+##   MortarDropTimer зоны-лидера; (2) бот НЕ в бою с танком противника (гарантировано тем, что
+##   до _ensure_home_state()/arm ATTACK_OBJECTIVE доходим только без видимой танк-цели — objective
+##   танком не считается); (3) есть свободная зона (_pick_mortar_zone()): не та, где мортиру уже
+##   забрал БОТ с последнего сброса (zone.mortar_bot_took), и не та, куда уже едет другой бот
+##   нашей стороны (_zone_taken_by_other_bot()). Прокладывает маршрут в центр выбранной зоны;
+##   заехал в круг — ящик есть → MOD_RETRIEVE, нет → MOD_WAIT.
+## - MOD_WAIT — только АТАКУЮЩИЙ: ждёт у зоны появления ящика до GameConfig.mod_zone_wait_sec
+##   (сброс мог быть только что / ящик ещё падает), появился → MOD_RETRIEVE; вышло время → назад
+##   к атаке objective (следующая поездка — в окно после очередного сброса).
+## - MOD_RETRIEVE — оба: едет к конкретному ящику, подбор чисто физический (ModCrate.body_entered →
+##   ModificationController.install). Защитник входит сюда напрямую из _ensure_home_state(), когда
+##   красный ящик попал в его поле зрения (_visible_mod_crate()) — сам к зонам не ездит.
+## - MORTAR_ATTACK — есть мортира в слоте: подъехать в пределы GameConfig.mortar_range, встать,
+##   свести навесной прицел (фаза подготовки mortar_prep_sec) и дать залп (_weapon.fire_mortar_at).
+##   Атакующий целит в objective и СТАРАЕТСЯ НЕ ВСТУПАТЬ В БОЙ (пока несёт мортиру — _think() не
+##   сканирует танки-цели, _on_damaged() не уводит в DEFEND). Защитник целит в видимый танк
+##   противника (мортира = гарантированный one-shot). Мортира израсходована → обычный цикл роли.
+##
 ## Патруль по вейпоинтам — маркеры "<waypoint_name_prefix>N" (Node3D, ищутся рекурсивно по имени во
 ## всей текущей сцене — find_children(), не только прямые дети корня, см. _collect_waypoints(); ни
 ## одна текущая карта не заворачивает маркеры в промежуточный узел, но рекурсивный поиск остаётся
@@ -194,7 +217,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MOD_WAIT, MORTAR_ATTACK }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -507,6 +530,7 @@ const _DIFFICULTY_PRESETS := {
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 @onready var _respawn_controller: Node = get_parent().get_node("RespawnController")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
+@onready var _mod: Node = get_parent().get_node("ModificationController")
 
 var state: State = State.IDLE
 var _initialized: bool = false
@@ -591,6 +615,17 @@ var _ammo_target_crate: Node = null
 var _ammo_wait_target_pos: Vector3 = Vector3.ZERO
 var _has_ammo_wait_target: bool = false
 var _ammo_wait_timer: float = 0.0
+
+## Модификации (см. заголовок файла). _mod_target_crate — конкретный красный ящик в MOD_RETRIEVE.
+## _mod_zone — зона сброса, к которой едет атакующий (MOD_SEEK/MOD_WAIT); другие боты нашей
+## стороны читают это поле, чтобы не ехать в ту же зону (_zone_taken_by_other_bot()).
+## _mod_wait_timer — отсчёт ожидания у зоны. _mortar_target_node — цель навесного выстрела
+## (objective у атакующего, вражеский танк у защитника). _mortar_prep_timer — «фаза подготовки».
+var _mod_target_crate: Node = null
+var _mod_zone: Node = null
+var _mod_wait_timer: float = 0.0
+var _mortar_target_node: Node = null
+var _mortar_prep_timer: float = 0.0
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
 ## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
@@ -697,6 +732,7 @@ func _initialize() -> void:
 	_barrel.is_player_controlled = false
 	_weapon.is_player_controlled = false
 	_disguise.is_player_controlled = false
+	_mod.is_player_controlled = false  # бот подбирает модификации (MOD_SEEK), но режим прицеливания мортиры — только у игрока
 	_turret.turn_speed = turret_turn_speed
 	_movement.move_speed *= move_speed_multiplier
 	_look_yaw = _body.rotation.y
@@ -730,6 +766,8 @@ func _initialize() -> void:
 	# зон сброса не должна давать боту вечно спотыкаться об этот механизм (см. проверку в
 	# _enter_ammo_seek()/_think()).
 	_ammo_zones = get_tree().get_nodes_in_group("ammo_drop_zones")
+	# Модификации: поездка атакующего за мортирой инициируется не своим таймером, а окном
+	# GameConfig.mortar_fresh_window_sec после реального сброса (см. _should_seek_mortar()).
 	# Жёсткий приоритет "боезапас кончился" (см. _think()) — реагирует МГНОВЕННО на сам факт, не
 	# ждёт следующего think-тика опроса has_ammo(), и способен перебить даже DEFEND (см. её место
 	# использования) — не через обычную _ensure_home_state()'s лестницу (та вызывается ТОЛЬКО когда
@@ -911,6 +949,13 @@ func _physics_process(delta: float) -> void:
 			if _objective_node == null or not is_instance_valid(_objective_node):
 				_objective_mission_complete = true
 				state = State.IDLE
+			# [ДОБАВЛЕНО — система модификаций] ATTACK_OBJECTIVE самоуправляемый (в exception-guard
+			# _ensure_home_state), поэтому поездку атакующего за свежей мортирой инициируем и здесь:
+			# окно после сброса открыто и есть свободная зона (_should_seek_mortar()) — уходим в
+			# MOD_SEEK. Вне окна / без свободной зоны бот продолжает обстрел objective.
+			elif _should_seek_mortar():
+				state = State.MOD_SEEK
+				_pick_mod_zone()
 			else:
 				# Тот же паттерн, что и в DEFEND (см. её комментарий) — едем к objective и стреляем
 				# всю дорогу, не замирая на границе fire_range; останавливаемся явно только по
@@ -1005,6 +1050,72 @@ func _physics_process(delta: float) -> void:
 					_drive_to_point(delta, _ammo_wait_target_pos, waypoint_reach_dist)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.MOD_SEEK:
+			# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ едет к зоне сброса проверить мортиру.
+			# Заехал в круг зоны → ящик есть (MOD_RETRIEVE) / нет (MOD_WAIT). Слот уже занят
+			# (подобрали по дороге, физически) → пометить зону как «забрал бот» и в IDLE.
+			if not _mod.can_pick_up():
+				_mark_mortar_taken()
+				state = State.IDLE
+			elif not is_instance_valid(_mod_zone):
+				state = State.IDLE
+			else:
+				var area: Node3D = _ammo_zone_area(_mod_zone)
+				var center: Vector3 = area.global_position
+				var radius: float = float(area.get("radius"))
+				var d: float = Vector2(_body.global_position.x - center.x, _body.global_position.z - center.z).length()
+				if d <= radius:
+					var crate: Node = _find_mod_crate_in_zone(_mod_zone)
+					if crate != null:
+						_mod_target_crate = crate
+						state = State.MOD_RETRIEVE
+						if _nav_agent.is_inside_tree():
+							_nav_agent.target_position = crate.global_position
+					else:
+						state = State.MOD_WAIT
+						_mod_wait_timer = GameConfig.mod_zone_wait_sec
+				else:
+					_drive_to_point(delta, center, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.MOD_WAIT:
+			# АТАКУЮЩИЙ стоит у зоны, ждёт появления красного ящика (сброс мог быть только что).
+			if not _mod.can_pick_up():
+				_mark_mortar_taken()  # подобрали ящик, докатившийся к нам
+				state = State.IDLE
+			elif not is_instance_valid(_mod_zone):
+				state = State.IDLE
+			else:
+				_mod_wait_timer -= delta
+				var crate: Node = _find_mod_crate_in_zone(_mod_zone)
+				if crate != null:
+					_mod_target_crate = crate
+					state = State.MOD_RETRIEVE
+					if _nav_agent.is_inside_tree():
+						_nav_agent.target_position = crate.global_position
+				elif _mod_wait_timer <= 0.0:
+					state = State.IDLE  # не дождались — назад к атаке, следующая поездка через mortar_drop_interval_sec
+				else:
+					_movement.ai_move_input = 0.0
+					_movement.ai_turn_input = 0.0
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.MOD_RETRIEVE:
+			# Оба: едем к конкретному ящику; подбор физический (ModCrate.body_entered → install).
+			# Мы подобрали → пометить зону «забрал бот» и в IDLE. Ящик исчез (опередил игрок/бот, наш
+			# слот всё ещё пуст) → просто IDLE, метку НЕ ставим (в фикции «свои в курсе» игрок не в счёт;
+			# метку чужого бота уже поставил тот бот сам).
+			if not _mod.can_pick_up():
+				_mark_mortar_taken()
+				state = State.IDLE
+			elif not is_instance_valid(_mod_target_crate):
+				state = State.IDLE
+			else:
+				_drive_to_point(delta, _mod_target_crate.global_position, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.MORTAR_ATTACK:
+			_process_mortar_attack(delta)
 
 	if show_fov_debug:
 		_update_fov_debug_draw()
@@ -1045,6 +1156,14 @@ func _think() -> void:
 		_ensure_home_state()
 		return
 
+	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ с мортирой в слоте бьёт по objective и СТАРАЕТСЯ
+	# НЕ ВСТУПАТЬ В БОЙ: не сканируем танки-цели вообще, сразу навесная атака objective. Если
+	# objective нет/уничтожен — мортира атакующему бесполезна, падаем в обычный цикл (мортира
+	# просто лежит в слоте).
+	if _has_mortar() and _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node):
+		_enter_mortar_attack(_objective_node)
+		return
+
 	var visible_target: Node = null
 	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из DEFEND не
 	# выпадает — бот продолжает огонь по «имитации» (см. _can_see()). Первичное обнаружение ниже
@@ -1055,7 +1174,12 @@ func _think() -> void:
 		visible_target = _scan_for_target()
 
 	if visible_target != null:
-		_enter_defend(visible_target)
+		# [ДОБАВЛЕНО — система модификаций] ЗАЩИТНИК с мортирой применяет её по вражескому танку
+		# (гарантированный one-shot) вместо обычного DEFEND.
+		if _has_mortar() and not _body.is_attacker():
+			_enter_mortar_attack(visible_target)
+		else:
+			_enter_defend(visible_target)
 		return
 
 	if state == State.DEFEND:
@@ -1093,7 +1217,9 @@ func _ensure_home_state() -> void:
 	# ATTACK_OBJECTIVE: управляют своими переходами САМИ (см. State.AMMO_* в _physics_process()),
 	# не должны молча перезатираться каждый think-тик, пока цель не видна.
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE \
-			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT:
+			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT \
+			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MOD_WAIT \
+			or state == State.MORTAR_ATTACK:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -1150,8 +1276,19 @@ func _ensure_home_state() -> void:
 	# защищаемое, is_attacker() внутри круга без цели идёт атаковать. Не завязано на role/
 	# waypoints_one_way — любой атакующий, физически внутри круга и без иной цели, должен атаковать
 	# objective напрямую, а не тратить время на маршрут.
+	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ в окне GameConfig.mortar_fresh_window_sec после
+	# сброса мортиры едет за ней — ВЫШЕ ATTACK_OBJECTIVE по приоритету: смысл именно в том, чтобы
+	# дотащить мортиру до objective (30 урона против 1 от обычного снаряда). Полное условие +
+	# координация нескольких ботов между зонами — в _should_seek_mortar(). Требует objective жив
+	# (иначе мортира бесполезна). Вне окна / без свободной зоны — обычный обстрел objective.
+	elif _should_seek_mortar():
+		desired = State.MOD_SEEK
 	elif _body.is_attacker() and objective_alive and _is_within_objective_circle():
 		desired = State.ATTACK_OBJECTIVE
+	# ЗАЩИТНИК к зонам не ездит: подбирает мортиру, только если красный ящик попал ему в поле
+	# зрения (_visible_mod_crate()). Ниже ALERT — под активной тревогой защита objective важнее.
+	elif not _body.is_attacker() and _mod.can_pick_up() and _visible_mod_crate() != null:
+		desired = State.MOD_RETRIEVE
 	elif role == Role.ACHIEVER and _objective_mission_complete:
 		desired = State.IDLE  # objective уже уничтожен (waypoints_one_way) — см. _objective_mission_complete
 	elif role == Role.ACHIEVER and not _waypoints.is_empty():
@@ -1168,6 +1305,8 @@ func _ensure_home_state() -> void:
 		# (последний вейпоинт, не objective).
 		var entering_attack_objective: bool = desired == State.ATTACK_OBJECTIVE
 		var entering_ammo_seek: bool = desired == State.AMMO_SEEK
+		var entering_mod_seek: bool = desired == State.MOD_SEEK
+		var entering_mod_retrieve: bool = desired == State.MOD_RETRIEVE
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
@@ -1187,6 +1326,196 @@ func _ensure_home_state() -> void:
 				_nav_agent.target_position = _objective_node.global_position
 		if entering_ammo_seek:
 			_pick_ammo_zone()
+		if entering_mod_seek:
+			_pick_mod_zone()
+		if entering_mod_retrieve:
+			_mod_target_crate = _visible_mod_crate()
+			if _mod_target_crate != null and _nav_agent.is_inside_tree():
+				_nav_agent.target_position = _mod_target_crate.global_position
+
+## --- Модификации: помощники (см. заголовок файла, State.MOD_*/MORTAR_ATTACK) --------------------
+
+func _has_mortar() -> bool:
+	return _mod.current_mod != null and StringName(_mod.current_mod.id) == &"mortar"
+
+## Красный ящик В ПРЕДЕЛАХ РАДИУСА зоны от её центра (аналог _find_crate_in_zone для патронов).
+func _find_mod_crate_in_zone(zone: Node) -> Node:
+	var area: Node3D = _ammo_zone_area(zone)
+	if area == null:
+		return null
+	var radius: float = float(area.get("radius"))
+	var center: Vector3 = area.global_position
+	for crate in get_tree().get_nodes_in_group("mod_crates"):
+		if not is_instance_valid(crate):
+			continue
+		if Vector2(crate.global_position.x - center.x, crate.global_position.z - center.z).length() <= radius:
+			return crate
+	return null
+
+## Красный ящик, попавший в поле зрения бота (для ЗАЩИТНИКА — он к зонам не ездит). Дистанция +
+## любой из двух конусов (главный/корпус ИЛИ прицельный/башня, как _can_see) + LOS по environment.
+func _visible_mod_crate() -> Node:
+	for crate in get_tree().get_nodes_in_group("mod_crates"):
+		if is_instance_valid(crate) and _point_in_view(crate.global_position):
+			return crate
+	return null
+
+func _point_in_view(p: Vector3) -> bool:
+	var to_p: Vector3 = p - _turret.global_position
+	var dist: float = to_p.length()
+	if dist > vision_range or dist < 0.01:
+		return false
+	var world_yaw: float = _yaw_to_world_point(_turret.global_position, p)
+	var hull_diff: float = rad_to_deg(absf(wrapf(world_yaw - _body.rotation.y, -PI, PI)))
+	var turret_world_yaw: float = _body.rotation.y + _turret.rotation.y
+	var turret_diff: float = rad_to_deg(absf(wrapf(world_yaw - turret_world_yaw, -PI, PI)))
+	if hull_diff > look_cone_deg * 0.5 and turret_diff > secondary_cone_deg * 0.5:
+		return false
+	var space := _body.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(_turret.global_position, p + Vector3.UP * 0.3)
+	query.exclude = [_body]
+	query.collision_mask = 1  # environment (ящик — Area, не тело, не заслоняет)
+	return space.intersect_ray(query).is_empty()
+
+## Вход в MOD_SEEK для АТАКУЮЩЕГО (см. заголовок файла, §12 Bot AI doc). Всё вместе:
+##  - я атакующий, слот пуст, на карте есть зоны сброса, objective ещё жив;
+##  - с последнего сброса мортиры прошло < GameConfig.mortar_fresh_window_sec (окно «свежести»);
+##  - «не в бою с танком» — гарантировано структурно: сюда (_ensure_home_state / arm
+##    ATTACK_OBJECTIVE) доходим ТОЛЬКО когда видимой танк-цели нет; objective танком не считается;
+##  - есть свободная зона (_pick_mortar_zone() != null): не та, где мортиру уже забрал бот с
+##    последнего сброса, и не та, куда уже едет другой бот нашей стороны.
+func _should_seek_mortar() -> bool:
+	if not _body.is_attacker() or not _mod.can_pick_up():
+		return false
+	if _ammo_zones.is_empty():
+		return false
+	if _objective_node == null or not is_instance_valid(_objective_node):
+		return false
+	if _time_since_mortar_drop() >= GameConfig.mortar_fresh_window_sec:
+		return false
+	return _pick_mortar_zone() != null
+
+## Секунд с последнего РЕАЛЬНОГО сброса мортиры. Читается у зоны-лидера (MortarDropTimer): время
+## с последнего тика = wait_time − time_left. INF, если лидера/таймера нет или сброса ещё не было.
+func _time_since_mortar_drop() -> float:
+	var leader: Node = _mortar_drop_leader()
+	if leader == null:
+		return INF
+	var timer: Timer = leader.get_node_or_null("MortarDropTimer")
+	if timer == null or timer.is_stopped() or int(leader.get("mortar_drops_done")) <= 0:
+		return INF
+	return timer.wait_time - timer.time_left
+
+func _mortar_drop_leader() -> Node:
+	for z in _ammo_zones:
+		if is_instance_valid(z) and z.has_node("MortarDropTimer"):
+			return z
+	return null
+
+## Ближайшая по центру круга СВОБОДНАЯ зона сброса: не помеченная mortar_bot_took (там бот уже
+## забрал мортиру в этом цикле) и не занятая другим ботом нашей стороны. null — свободных нет
+## (тогда MOD_SEEK не начинается, бот продолжает атаковать objective).
+func _pick_mortar_zone() -> Node:
+	var best: Node = null
+	var best_d: float = INF
+	for z in _ammo_zones:
+		if not is_instance_valid(z):
+			continue
+		if bool(z.get("mortar_bot_took")):
+			continue
+		if _zone_taken_by_other_bot(z):
+			continue
+		var area: Node3D = _ammo_zone_area(z)
+		if area == null:
+			continue
+		var d: float = _body.global_position.distance_to(area.global_position)
+		if d < best_d:
+			best_d = d
+			best = z
+	return best
+
+## true — другой ЖИВОЙ бот нашей стороны сейчас едет/ждёт в этой зоне за мортирой (его state —
+## MOD_SEEK/MOD_WAIT и его _mod_zone == z). Самоочищается: как только тот бот сменит стейт/цель
+## или умрёт (state != MOD_SEEK/MOD_WAIT), зона снова считается свободной. «Боты одной стороны в
+## курсе, кто чем занят».
+func _zone_taken_by_other_bot(z: Node) -> bool:
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if t == _body or not is_instance_valid(t):
+			continue
+		if t.team != _body.team:
+			continue
+		var brain: Node = t.get_node_or_null("TankAIController")
+		if brain == null or not brain.enabled:
+			continue
+		if (brain.state == State.MOD_SEEK or brain.state == State.MOD_WAIT) and brain._mod_zone == z:
+			return true
+	return false
+
+## Пометить текущую целевую зону как «мортиру тут забрал БОТ» — до следующего сброса другие
+## атакующие боты нашей стороны в неё не поедут (ammo_drop_zone.gd снимает флаг в
+## _on_mortar_drop_tick()). Вызывается ботом в момент, когда его слот перестал быть пустым в
+## MOD_SEEK/MOD_WAIT/MOD_RETRIEVE. Для защитника _mod_zone == null → no-op.
+func _mark_mortar_taken() -> void:
+	if _mod_zone != null and is_instance_valid(_mod_zone):
+		_mod_zone.set("mortar_bot_took", true)
+
+## Вход в MOD_SEEK: фиксируем выбранную свободную зону (_pick_mortar_zone) и прокладываем маршрут
+## в её центр. null (свободных зон нет) → _mod_zone остаётся null, arm MOD_SEEK тут же уйдёт в IDLE.
+func _pick_mod_zone() -> void:
+	_mod_zone = _pick_mortar_zone()
+	if _mod_zone != null and _nav_agent.is_inside_tree():
+		_nav_agent.target_position = _ammo_zone_area(_mod_zone).global_position
+
+## Вход в MORTAR_ATTACK. tgt — objective (атакующий) или вражеский танк (защитник). Сброс фазы
+## подготовки при смене цели/первом входе; nav-таргет на цель, чтобы подъехать в радиус мортиры.
+func _enter_mortar_attack(tgt: Node) -> void:
+	if tgt == null or not is_instance_valid(tgt):
+		return
+	# _think() зовёт это КАЖДЫЙ тик, пока цель актуальна — сброс фазы подготовки только на
+	# настоящем входе / смене цели (иначе прицел никогда не сведётся). Nav-таргет освежаем каждый
+	# тик (как _enter_defend): у защитника цель — движущийся танк, путь должен вести к живой позиции.
+	if state != State.MORTAR_ATTACK or _mortar_target_node != tgt:
+		_mortar_prep_timer = GameConfig.mortar_prep_sec
+	_mortar_target_node = tgt
+	state = State.MORTAR_ATTACK
+	if _nav_agent.is_inside_tree():
+		_nav_agent.target_position = tgt.global_position
+
+## Каждый физ.кадр в State.MORTAR_ATTACK. Подъехать в пределы GameConfig.mortar_range, встать,
+## свести навесной прицел (yaw башни + pitch дула), выдержать фазу подготовки — залп
+## (_weapon.fire_mortar_at). Мортира израсходована → _has_mortar() false → выход в IDLE, обычный цикл.
+func _process_mortar_attack(delta: float) -> void:
+	if not _has_mortar() or not is_instance_valid(_mortar_target_node):
+		state = State.IDLE
+		return
+	# Целимся в ЦЕНТР коллайдера цели (+0.3 по Y — центр BoxShape корпуса, см. Tank.tscn), не в
+	# точку на земле: навесной снаряд идёт круто вниз, попасть надо в объём танка.
+	var tpos: Vector3 = _mortar_target_node.global_position + Vector3(0.0, 0.3, 0.0)
+	var dist: float = _body.global_position.distance_to(tpos)
+	if dist > GameConfig.mortar_range * 0.9:
+		_drive_to_point(delta, tpos, GameConfig.mortar_range * 0.8)
+		_mortar_prep_timer = GameConfig.mortar_prep_sec  # вне радиуса — прицел не считается сведённым
+		_look_yaw = _yaw_to_world_point(_turret.global_position, tpos)
+		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		return
+	_movement.ai_move_input = 0.0
+	_movement.ai_turn_input = 0.0
+	var muzzle: Vector3 = _barrel.global_position
+	_look_yaw = _yaw_to_world_point(_turret.global_position, tpos)
+	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+	var flat: float = Vector2(tpos.x - muzzle.x, tpos.z - muzzle.z).length()
+	var pitch: float = _mod._solve_ballistic_high_pitch(flat, tpos.y - muzzle.y)
+	_barrel.target_pitch = pitch
+	# Мортира одноразовая и дорогая — требуем ТУГОЙ сходимости прицела (жёстче обычного выстрела),
+	# чтобы навесной снаряд гарантированно накрыл цель.
+	var yaw_ok: bool = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI))) <= 1.5
+	var pitch_ok: bool = rad_to_deg(absf(pitch - _barrel.rotation.x)) <= 1.0
+	if yaw_ok and pitch_ok:
+		_mortar_prep_timer -= delta
+		if _mortar_prep_timer <= 0.0:
+			_weapon.fire_mortar_at(tpos)  # успех → мортира ушла, следующий кадр выйдет в IDLE
+	else:
+		_mortar_prep_timer = GameConfig.mortar_prep_sec
 
 ## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
 ## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в
@@ -1251,6 +1580,14 @@ func _on_respawned() -> void:
 	_ammo_zone = null
 	_ammo_target_crate = null
 	_has_ammo_wait_target = false
+	# Модификации — respawn очищает слот (respawn_controller.gd), сбрасываем и все MOD/MORTAR-поля.
+	# _mod_zone = null здесь важно и для координации: пока бот мёртв, _zone_taken_by_other_bot()
+	# и так его не считает (state == DEAD), но после респавна он не должен «держать» старую зону.
+	_mod_target_crate = null
+	_mod_zone = null
+	_mod_wait_timer = 0.0
+	_mortar_target_node = null
+	_mortar_prep_timer = 0.0
 
 func _on_target_lost() -> void:
 	if role == Role.KILLER:
@@ -1451,6 +1788,13 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
 	_wander_holding = false
+	# [ДОБАВЛЕНО — система модификаций] Атакующий с мортирой СТАРАЕТСЯ НЕ ВСТУПАТЬ В БОЙ: разворот
+	# «камеры» на выстрел оставляем (осведомлённость), но в DEFEND не уходим — продолжаем нести
+	# мортиру к objective. Также не перебиваем уже идущую навесную атаку/подбор мортиры.
+	if _has_mortar() and _body.is_attacker():
+		return
+	if state == State.MORTAR_ATTACK or state == State.MOD_SEEK or state == State.MOD_WAIT or state == State.MOD_RETRIEVE:
+		return
 	if state != State.DEFEND and _can_see(killer):
 		_enter_defend(killer)
 
@@ -1468,6 +1812,9 @@ func _on_destroyed(_killer: Node) -> void:
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
+	# Смерть в MOD_SEEK/MOD_WAIT — сразу освобождаем зону для других ботов нашей стороны
+	# (state == DEAD и так исключает бота из _zone_taken_by_other_bot, это дубль-страховка).
+	_mod_zone = null
 
 ## Блуждание БАШНИ в IDLE/PATROL (v2 — только башня, см. заголовок файла) — то вперёд, то в
 ## сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw — просто ждём
@@ -2141,6 +2488,8 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(1.0, 0.1, 0.05, 0.3)  # насыщенный красный — активно стреляет, как DEFEND
 		State.ALERT:
 			fill_color = Color(0.95, 0.85, 0.15, 0.24)  # жёлтый — тот же цвет, что у ObjectiveAlertZone
+		State.MORTAR_ATTACK:
+			fill_color = Color(1.0, 0.35, 0.75, 0.3)  # пурпурный — навесная атака мортирой
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
 	var center := Vector3(0.0, HEIGHT, 0.0)
@@ -2464,6 +2813,22 @@ func _update_brain_debug_label() -> void:
 			_append_nav_debug_lines(lines)
 		State.AMMO_WAIT:
 			lines.append("waiting for crate (%.1fs to next move)" % _ammo_wait_timer)
+		State.MOD_SEEK:
+			if _mod_zone != null and is_instance_valid(_mod_zone):
+				var area: Node3D = _ammo_zone_area(_mod_zone)
+				lines.append("mod zone: %s (%.1fm)  [%.1fs since drop]" % [String(_mod_zone.get_parent().name), _body.global_position.distance_to(area.global_position), _time_since_mortar_drop()])
+			_append_nav_debug_lines(lines)
+		State.MOD_WAIT:
+			lines.append("waiting for mortar crate (%.1fs left)" % _mod_wait_timer)
+		State.MOD_RETRIEVE:
+			if is_instance_valid(_mod_target_crate):
+				lines.append("mortar crate: %.1fm" % _body.global_position.distance_to(_mod_target_crate.global_position))
+			_append_nav_debug_lines(lines)
+		State.MORTAR_ATTACK:
+			if is_instance_valid(_mortar_target_node):
+				var dist: float = _body.global_position.distance_to(_mortar_target_node.global_position)
+				lines.append("mortar → %s (%.1fm, prep %.1fs)" % [String(_mortar_target_node.name), dist, max(0.0, _mortar_prep_timer)])
+			_append_nav_debug_lines(lines)
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

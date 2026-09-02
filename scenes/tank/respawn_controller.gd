@@ -32,6 +32,7 @@ signal respawned
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
+@onready var _mod: Node = get_parent().get_node("ModificationController")
 @onready var _hull_collision: CollisionShape3D = get_parent().get_node("CollisionShape3D")
 @onready var _detector_collision: CollisionShape3D = get_parent().get_node("CollisionDetector/CollisionShape3D")
 @onready var _respawn_timer: Timer = $RespawnTimer
@@ -57,6 +58,9 @@ func _on_respawn_timeout() -> void:
 	_ammo.current_ammo = _ammo.max_ammo
 	_ammo.ammo_changed.emit(_ammo.current_ammo, _ammo.max_ammo)
 	_state_machine.force_reset()
+	# Модификация теряется вместе с танком (сбросить/сохранить её нельзя, см.
+	# Tank_Prop_Hunt_Modifications.md) — слот освобождается на респавне.
+	_mod.clear_slot()
 	_tank.clear_damage_paint()
 	_set_frozen(false)
 	respawned.emit()

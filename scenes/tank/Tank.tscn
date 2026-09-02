@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://scenes/tank/collision_detector.gd" id="9_i6w10"]
 [ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="10_i6w10"]
 [ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_n5ru5"]
+[ext_resource type="Script" path="res://scenes/tank/modification_controller.gd" id="13_modc"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_bfi3s"]
 size = Vector3(1.2, 0.6, 1.8)
@@ -64,6 +65,10 @@ script = ExtResource("3_bfi3s")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.1)
 mesh = SubResource("BoxMesh_mu8yi")
 
+[node name="MortarCamera" type="Camera3D" parent="Turret" unique_id=555111222]
+transform = Transform3D(1, 0, 0, 0, 0.76604444, 0.6427876, 0, -0.6427876, 0.76604444, 0, 8, 10)
+current = false
+
 [node name="Barrel" type="Node3D" parent="Turret" unique_id=643352722]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.2)
 script = ExtResource("5_oswvf")
@@ -110,3 +115,6 @@ script = ExtResource("12_n5ru5")
 
 [node name="TankAIController" type="Node" parent="." unique_id=199337739]
 script = ExtResource("10_i6w10")
+
+[node name="ModificationController" type="Node3D" parent="." unique_id=199337740]
+script = ExtResource("13_modc")

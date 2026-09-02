@@ -23,6 +23,9 @@ extends Marker3D
 ## Ссылка на сцену ящика через preload, НЕ class_name — headless `run_project` не подхватывает
 ## свежедобавленный class_name без пересканирования редактором (грабля проекта, см. CLAUDE.md).
 const AmmoCrateScene := preload("res://scenes/ammo_crate/AmmoCrate.tscn")
+## Красный ящик модификации (см. Tank_Prop_Hunt_Modifications.md). Тот же префаб-механизм зоны
+## роняет и его — отдельным каденсом (см. _mortar_timer / _on_mortar_drop_tick).
+const ModCrateScene := preload("res://scenes/mod_crate/ModCrate.tscn")
 
 ## Все `DropOrigin` на карте — в этой группе; по ней лидер собирает список зон карты.
 const _GROUP := "ammo_drop_zones"
@@ -40,16 +43,35 @@ const _GROUP := "ammo_drop_zones"
 ## Скорость кинематического падения ящика, ед/с.
 @export var fall_speed: float = 18.0
 
+## КРАСНЫЙ ЯЩИК МОДИФИКАЦИИ (мортира) — отдельный каденс поверх патронного, тоже на зоне-лидере,
+## НО роняет ОДНОВРЕМЕННО в КАЖДОЙ зоне карты (не одну на случайной, как патроны — см.
+## _on_mortar_drop_tick). Только на картах режима TARGET_OBJECTIVE. 0 → GameConfig.mortar_drop_interval_sec.
+@export var mortar_drop_interval_sec: float = 30.0
+## Потолок одновременно НЕ подобранных красных ящиков ЭТОЙ зоны.
+@export var max_pending_mortar_crates: int = 1
+
 const _PLACEMENT_ATTEMPTS: int = 20
-## environment(1) | tanks(2) | ammo_crates(32) — не ронять в стену/дом/танк/чужой ящик.
-## Та же маска и тот же приём (sphere query), что были в match_manager._find_free_crate_position.
-const _PROBE_MASK: int = 35
+## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) — не ронять в стену/дом/танк/
+## чужой ящик (жёлтый или красный). Та же маска и приём (sphere query), что в
+## match_manager._find_free_crate_position.
+const _PROBE_MASK: int = 99
 const _PROBE_RADIUS: float = 0.6
 
 var _area: Node3D
 var _timer: Timer  # только у зоны-лидера, у остальных null
+var _mortar_timer: Timer  # только у лидера И только в режиме TARGET_OBJECTIVE, иначе null
 var _pending: Array = []
+var _pending_mortar: Array = []
 var _inited: bool = false
+
+## --- Координация атакующих ботов вокруг мортиры (читают tank_ai_controller.gd) ---------------
+## true — мортиру в ЭТОЙ зоне уже забрал БОТ (не игрок) с момента последнего сброса; сбрасывается
+## в false на каждом _on_mortar_drop_tick(). Пока true — атакующие боты в эту зону не едут
+## («боты одной стороны в курсе, что тут уже подобрали»).
+var mortar_bot_took: bool = false
+## Счётчик состоявшихся сбросов мортиры — только у зоны-лидера, инкремент в _on_mortar_drop_tick().
+## Бот через него отличает «сброса ещё не было» (0) от «прошло N секунд с последнего сброса».
+var mortar_drops_done: int = 0
 
 func _ready() -> void:
 	add_to_group(_GROUP)
@@ -78,6 +100,18 @@ func _process(_delta: float) -> void:
 	_timer.timeout.connect(_on_drop_tick)
 	_timer.start()
 
+	# Красные ящики модификации — только на картах режима TARGET_OBJECTIVE (ТЗ). MatchState.match_mode
+	# уже проставлен корневым _ready() карты (тот идёт до этого ленивого init, как и MatchManager выше).
+	if MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE:
+		var interval: float = mortar_drop_interval_sec if mortar_drop_interval_sec > 0.0 else GameConfig.mortar_drop_interval_sec
+		_mortar_timer = Timer.new()
+		_mortar_timer.name = "MortarDropTimer"
+		_mortar_timer.one_shot = false
+		_mortar_timer.wait_time = interval
+		add_child(_mortar_timer)
+		_mortar_timer.timeout.connect(_on_mortar_drop_tick)
+		_mortar_timer.start()
+
 ## Лидер — зона с наименьшим node-path среди живых членов группы. Детерминированно, все зоны
 ## приходят к одному ответу. Зоны на этих картах статичны и не освобождаются, выбор однократный.
 func _is_leader() -> bool:
@@ -95,6 +129,8 @@ func _live_zones() -> Array:
 func _on_round_ended(_winner: String) -> void:
 	if _timer != null:
 		_timer.stop()  # бой кончился — новых сбросов не нужно
+	if _mortar_timer != null:
+		_mortar_timer.stop()
 
 ## Тик каденса (только у лидера): роняем ОДИН ящик на случайной зоне карты. Перебираем зоны в
 ## случайном порядке, сбрасываем на первой, где получилось (не на потолке, есть свободная
@@ -108,6 +144,33 @@ func _on_drop_tick() -> void:
 
 func _cap() -> int:
 	return max_pending_crates if max_pending_crates > 0 else GameConfig.ammo_crate_count
+
+## Тик каденса красного ящика (только у лидера, только режим TARGET_OBJECTIVE): роняем ОДНОВРЕМЕННО
+## по одному красному ящику в КАЖДОЙ живой зоне карты (ТЗ — «в двух зонах сброса одновременно»),
+## не одну на случайной, как патроны. Зона на потолке / без свободной точки — просто пропускается.
+## Перед сбросом: инкремент mortar_drops_done (у лидера) и снятие mortar_bot_took со ВСЕХ зон —
+## свежий ящик = чистый лист для координации ботов (см. tank_ai_controller.gd).
+func _on_mortar_drop_tick() -> void:
+	mortar_drops_done += 1
+	for z in _live_zones():
+		z.mortar_bot_took = false
+	for z in _live_zones():
+		z._try_drop_mortar()
+
+## Попытка сбросить КРАСНЫЙ ящик на ЭТОЙ зоне. Симметрично _try_drop(), но свой список
+## _pending_mortar и свой потолок max_pending_mortar_crates.
+func _try_drop_mortar() -> bool:
+	_prune_pending()
+	if _pending_mortar.size() >= max_pending_mortar_crates:
+		return false
+	var target: Variant = _pick_drop_point()
+	if target == null:
+		return false
+	var crate: Node3D = ModCrateScene.instantiate()
+	get_tree().current_scene.add_child(crate)
+	crate.fall_to(target, global_position.y, fall_speed)
+	_pending_mortar.append(crate)
+	return true
 
 ## Попытка сбросить ящик на ЭТОЙ зоне. true — ящик заспавнен; false — зона на потолке или за
 ## _PLACEMENT_ATTEMPTS не нашлось свободного места.
@@ -152,14 +215,20 @@ func _pick_drop_point() -> Variant:
 ## с типизированной лямбдой — та в Godot 4.7 падает с "Cannot convert argument 1 from Object to
 ## Object" на массиве Node-ов.
 func _prune_pending() -> void:
+	_pending = _alive_only(_pending)
+	_pending_mortar = _alive_only(_pending_mortar)
+
+func _alive_only(arr: Array) -> Array:
 	var alive: Array = []
-	for c in _pending:
+	for c in arr:
 		if is_instance_valid(c):
 			alive.append(c)
-	_pending = alive
+	return alive
 
+## Проверяем ОБА списка (жёлтые + красные ящики этой зоны) — снаряды и мортира не должны падать
+## друг на друга (sphere-проба в _pick_drop_point ловит только тела: Ground/танки, но не Area3D-ящики).
 func _too_close_to_pending(p: Vector3) -> bool:
-	for c in _pending:
+	for c in _pending + _pending_mortar:
 		if not is_instance_valid(c):
 			continue
 		if Vector2(c.global_position.x - p.x, c.global_position.z - p.z).length() < min_crate_separation:

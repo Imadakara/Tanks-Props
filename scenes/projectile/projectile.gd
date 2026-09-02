@@ -9,6 +9,10 @@ signal hit_tank(tank: Node)
 @export var speed: float = 20.0
 @export var fall_acceleration: float = 9.8
 @export var max_lifetime_sec: float = 8.0
+## Урон, передаётся в HealthComponent.take_hit(). Обычный выстрел = 1; спец-выстрел мортиры
+## (см. weapon_controller.gd/_fire_mortar) ставит сюда GameConfig.mortar_objective_damage (30) —
+## этого хватает и на one-shot по танку (max_hits 2), и на кусок 100-HP objective.
+@export var damage: int = 1
 
 var velocity: Vector3 = Vector3.ZERO
 var _shooter: Node = null
@@ -36,5 +40,5 @@ func _on_body_entered(body: Node) -> void:
 	var health: Node = body.get_node_or_null("HealthComponent")
 	if health != null:
 		hit_tank.emit(body)
-		health.take_hit(_shooter)
+		health.take_hit(_shooter, damage)
 	queue_free()

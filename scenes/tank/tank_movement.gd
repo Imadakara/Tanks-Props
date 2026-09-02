@@ -25,11 +25,13 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 
 var _body: CharacterBody3D
 var _state_machine: Node
+var _mod: Node
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
 	assert(_body != null, "TankMovement must be a direct child of a CharacterBody3D")
 	_state_machine = get_parent().get_node_or_null("TankStateMachine")
+	_mod = get_parent().get_node_or_null("ModificationController")
 
 func _physics_process(delta: float) -> void:
 	var turn_input: float
@@ -41,6 +43,13 @@ func _physics_process(delta: float) -> void:
 		turn_input = ai_turn_input
 		move_input = ai_move_input
 	last_move_input = move_input
+
+	# Прицеливание мортиры (см. modification_controller.gd) — корпус стоит намертво: это и есть
+	# косвенное объяснение невозможности стрельбы мортирой на ходу. Сам выход из режима по
+	# кнопке движения ловит ModificationController._unhandled_input, здесь только стоп.
+	if _mod != null and _mod.is_aiming():
+		last_move_input = 0.0
+		return
 
 	# Корпус зафиксирован во время маскировки (ТЗ §6); попытка движения — триггер
 	# досрочного снятия маскировки (ТЗ §5.1), сам ход применяется уже следующим кадром,

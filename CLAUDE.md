@@ -30,6 +30,24 @@ what the code does, including reasoning behind changes that were tried and rever
   key **M**), the `GameConfig`-driven prop (meta-game picks it later), x-ray-silhouette player view,
   full break-trigger list incl. the two enemy-relative rules, and the bot's `_can_see()` blindness
   gate.
+- `Tank_Prop_Hunt_Modifications.md` — **current-state reference for the tank modification system**:
+  the single HUD slot (pick up only when empty, both teams, no drop — use or lose on death), the
+  red `ModCrate` (spawned by the ammo drop-zone leader, both zones at once, `TARGET_OBJECTIVE`
+  only), and the first modification, the **mortar** — barrel attachment, two-press lobbed special
+  shot with its own aiming camera + ground-ring reticle, +30 to the 100-HP objective / one-shot
+  vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_WAIT`/`MOD_RETRIEVE`/
+  `MORTAR_ATTACK`): attackers only within a 10 s window after each mortar drop (and coordinating so
+  two bots don't chase the same zone), defenders only on a crate they can see.
+- `Tank_Prop_Hunt_Map_Creation_Guide.md` — **step-by-step how-to for designers** (assumes no
+  project knowledge): make a new map + assign its `match_mode`, the required-node skeleton, add/tune
+  the `Objective`, place `SpawnZone`s + author the roster JSON (role/difficulty/count/waypoints),
+  place + tune `AmmoDropZone`s. Task-oriented; the `Game_Modes`/`Bot_AI`/`Ammo_Drops` docs are the
+  system detail it points back to.
+- `Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md` — **step-by-step how-to for designers**: add / remove
+  / move / resize `Obstacle*` (solid) and `HazardZone*` (impassable area) under `NavigationRegion3D`,
+  and the mandatory manual NavMesh re-bake after any such change (editor "Bake NavigationMesh"
+  button, per-map, no automation; async-bake gotcha if scripted). Placement pitfalls (agent-radius
+  clearance, keep zone circles clear).
 
 ## Running / testing
 
@@ -107,9 +125,32 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
 - `CollisionDetector` — Area3D on the tank body; a *moving* tank of any team touching a `DISGUISED`
   tank breaks its disguise (`break_disguise("collision")`). Independent of the enemy-relative rules
   above.
-- `HealthComponent` — multi-hit (`max_hits`, **default 2**, restoring the "two hits to kill, red
-  paint job after the first" rule as a project-wide default), reused verbatim for the destructible
-  objective, not tank-specific. `attackers_only` lets an objective ignore friendly fire;
+- `ModificationController` — the single pickup-modification slot + all mortar logic (full detail:
+  `Tank_Prop_Hunt_Modifications.md`). One slot per tank; pick up only when empty (`can_pick_up()`),
+  both teams, no drop — `clear_slot()` on use (`WeaponController`) or on respawn
+  (`RespawnController`). First mod = **mortar** (`scenes/modifications/mortar.tres`, a scriptless
+  `Modification` `Resource`): red barrel cylinder + a two-press lobbed special shot. Player presses
+  `fire` → `begin_aiming()` (hull frozen via `TankMovement`'s `is_aiming()` gate, view swaps to
+  `Turret/MortarCamera`, the screen crosshair is hidden, barrel elevates,
+  mouse X = turret yaw / mouse Y = reticle distance in `[2 .. GameConfig.mortar_range]`); `fire`
+  again → `_fire_mortar()` → `WeaponController.fire_mortar_at()` (high-arc ballistic solve,
+  `proj.damage = GameConfig.mortar_objective_damage` 30, `proj.speed = GameConfig.mortar_launch_speed`
+  12); a movement key exits aiming with no shot. The aiming reticle is a **3D ring lying on the
+  ground** at the predicted impact point (`_reticle_ring`, `TorusMesh`, `top_level`) — it slides
+  over the surface with the mouse; no screen crosshair in this mode. Bots both pick up **and use**
+  the mortar via `TankAIController` (`MOD_SEEK`/`MOD_WAIT`/`MOD_RETRIEVE`/`MORTAR_ATTACK`):
+  attackers head for a drop zone only within a 10 s window after a mortar drop (`_should_seek_mortar()`;
+  `mortar_bot_took` per zone + live occupancy check keep multiple bots from chasing one zone) and
+  lob at the objective while avoiding tank fights; defenders grab a crate only if it enters their
+  view and lob at enemy tanks. Full detail:
+  `Tank_Prop_Hunt_Modifications.md`.
+- `HealthComponent` — `take_hit(killer, damage := 1)`; `current_hits += damage`, `destroyed` at
+  `current_hits >= max_hits`. Tanks use `max_hits` **3** (`config/*_tank_config.json`, script
+  default also 3 — raised from 2 so the mortar has a point vs tanks; normal `Projectile.damage` is
+  1, red paint on hits 1–2). The objective uses this as an **HP pool** — `match_manager.gd` sets its
+  `max_hits = GameConfig.objective_hits_required` (**100**), a normal shell does 1, the mortar
+  special does `GameConfig.mortar_objective_damage` (30). `attackers_only` lets an objective ignore
+  friendly fire;
   `free_on_destroy=false` on tanks hands cleanup to `RespawnController` instead of freeing the node;
   `invincible` is a point override (see the debug toggle buttons under "Game modes"), not part of
   normal balance. The "red paint" on a non-fatal hit is `tank.gd._on_damaged()` (material swap on
@@ -306,6 +347,12 @@ three stay per-zone, only the interval + round-end stop are centralized on the l
 via `TankAIController`'s `AMMO_SEEK`/`AMMO_RETRIEVE`/`AMMO_WAIT` states, see the Bot AI vault doc).
 Full detail: `Tank_Prop_Hunt_Ammo_Drops.md`.
 
+**Modification crates** (`TARGET_OBJECTIVE` maps only): the same drop-zone leader also runs a
+`MortarDropTimer` (`GameConfig.mortar_drop_interval_sec`, 30 s) that drops one **red `ModCrate`**
+in *every* zone simultaneously (not one at a random zone like ammo). A `ModCrate` fills the tank's
+`ModificationController` slot with the mortar mod when the slot is empty. `TeamArenaMap.tscn`
+(`TEAM_ARENA`) starts no such timer. Full detail: `Tank_Prop_Hunt_Modifications.md`.
+
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`
 (N = `current_round_num`), line 2 the mode-dependent overall score — TARGET_OBJECTIVE: series only
 (`По раундам — Ты N : M Противник`); TEAM_ARENA: round kills + series, all by colour
@@ -329,13 +376,17 @@ sandbox.
 Single AI system for the whole project — every map deploys the exact same node/script, not a
 per-map or per-context system. Lives as a dormant sibling on every `Tank.tscn` instance (including
 the player's, see "Tank as a composed entity" above) and lazily self-inits on first enabled
-`_physics_process()` tick. A 12-state priority engine
+`_physics_process()` tick. A 16-state priority engine
 (`IDLE/PATROL/DEFEND/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
-AMMO_WAIT`) with a NavMesh-based driving stack (pure pursuit + emergency brake + stuck detector +
-gap-scan detour), two roles (`ACHIEVER`/`KILLER` — `ACHIEVER` self-degrades to `KILLER` behavior at
-init if the map has no objective), three difficulty tiers, and integrations with the shared
-`RespawnController`/`HealthComponent`/`AmmoComponent` (death state, alert-on-hit, ballistic aim,
-ammo-crate seeking). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
+AMMO_WAIT/MOD_SEEK/MOD_WAIT/MOD_RETRIEVE/MORTAR_ATTACK`) with a NavMesh-based driving stack (pure
+pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
+`ACHIEVER` self-degrades to `KILLER` behavior at init if the map has no objective), three difficulty
+tiers, and integrations with the shared
+`RespawnController`/`HealthComponent`/`AmmoComponent`/`ModificationController` (death state,
+alert-on-hit, ballistic aim, ammo-crate seeking, plus mortar pickup **and use** — attackers head
+for a drop zone only in a 10 s window after a mortar drop (coordinating so two bots take different
+zones) and lob at the objective while avoiding tank fights, defenders grab a seen crate and lob at
+tanks; full detail in `Tank_Prop_Hunt_Modifications.md`). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
 name- or scene-structure-specific, so the same file works unmodified on any map. Bots don't activate
 or seek disguise; `_can_see()` hides a `DISGUISED` enemy from *acquisition* but not from a bot
 already fighting it (`ignore_disguise` param — see `DisguiseController` above and

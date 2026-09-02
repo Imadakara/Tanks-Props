@@ -168,7 +168,7 @@ mesh = SubResource("BoxMesh_vgxt8")
 
 [node name="HealthComponent" type="Node" parent="NavigationRegion3D/Objective" unique_id=1661619236]
 script = ExtResource("2_2uusy")
-max_hits = 10
+max_hits = 100
 attackers_only = true
 
 [node name="ObjectiveAlertZone" type="Node3D" parent="NavigationRegion3D/Objective" unique_id=1340384586]

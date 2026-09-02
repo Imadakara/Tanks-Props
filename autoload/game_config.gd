@@ -32,7 +32,22 @@ extends Node
 @export var ammo_per_crate: int = 3  # дефолт содержимого ящика, если зона сброса не задаёт своё ammo_per_crate
 @export var round_timer_sec: float = 150.0  # режим TARGET_OBJECTIVE (Destroy Target) — 2:30 на раунд
 @export var team_arena_round_sec: float = 180.0  # режим TEAM_ARENA — командный бой, 3 мин на раунд
-@export var objective_hits_required: int = 10  # режим "Destroy Target" — попаданий по DestructibleObjective для победы атаки
+## [ИЗМЕНЕНО — objective переведён на HP-модель под систему модификаций/мортиру, см.
+## Tank_Prop_Hunt_Modifications.md] Было 10. Теперь это ПОЛНОЕ ЗДОРОВЬЕ цели: обычный снаряд
+## снимает 1 (Projectile.damage), спец-выстрел мортиры — mortar_objective_damage (30).
+## HealthComponent.current_hits теперь трактуется как HP, не счётчик попаданий. match_manager.gd
+## по-прежнему проставляет это в objective_health.max_hits при setup().
+@export var objective_hits_required: int = 100  # режим "Destroy Target" — HP объекта-цели для победы атаки
+
+## Модификации танка (подбираемые красные ящики, слот в HUD; см. Tank_Prop_Hunt_Modifications.md).
+## Первая модификация — «мортира»: одноразовая насадка на дуло, навесной спец-выстрел.
+@export var mortar_range: float = 9.0  # макс. вынос кружка-прицела и дальность навесного выстрела (половина базового vision_range бота)
+@export var mortar_launch_speed: float = 12.0  # начальная скорость навесного снаряда мортиры — заметно ниже обычной (~30), чтобы mortar_range был близок к пределу дальности и дуга реально менялась ближе/дальше
+@export var mortar_objective_damage: int = 30  # урон навесного выстрела мортиры (по objective — из 100 HP; по танку 30 >= max_hits → one-shot)
+@export var mortar_drop_interval_sec: float = 30.0  # раз в столько секунд боя красный ящик падает ОДНОВРЕМЕННО в каждой зоне сброса (только режим TARGET_OBJECTIVE)
+@export var mortar_fresh_window_sec: float = 10.0  # сколько секунд ПОСЛЕ сброса атакующий бот считает мортиру «свежей» и едет за ней (иначе продолжает атаковать objective)
+@export var mod_zone_wait_sec: float = 5.0  # сколько атакующий бот ждёт у зоны сброса появления ящика мортиры, прежде чем вернуться к атаке
+@export var mortar_prep_sec: float = 1.5  # «фаза подготовки» бота перед навесным выстрелом: сколько держать сведённый прицел до залпа
 @export var respawn_cooldown_sec: float = 10.0  # уничтоженный танк возвращается в игру через столько сек (пост-ревью, см. respawn_controller.gd)
 @export var defense_wins_ties: bool = true
 ## Читается TankAIController._can_see() (disguise_controller.gd — реализация самой маскировки). false

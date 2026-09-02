@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" path="res://scenes/hud/hud.gd" id="1_fdg6f"]
 [ext_resource type="Script" path="res://scenes/hud/crosshair.gd" id="2_xvj7f"]
+[ext_resource type="Script" path="res://scenes/hud/mortar_reticle.gd" id="3_mtrt"]
 
 [node name="root" type="CanvasLayer" unique_id=1886000725]
 script = ExtResource("1_fdg6f")
@@ -26,6 +27,13 @@ offset_top = 80.0
 offset_right = 20.0
 offset_bottom = 80.0
 text = "Статус: --"
+
+[node name="ModSlotLabel" type="Label" parent="." unique_id=1358991797]
+offset_left = 20.0
+offset_top = 110.0
+offset_right = 20.0
+offset_bottom = 110.0
+text = "Модификация: —"
 
 [node name="RoundTimerLabel" type="Label" parent="." unique_id=917783115]
 anchor_left = 0.5
@@ -109,3 +117,12 @@ offset_right = 24.0
 offset_bottom = 24.0
 mouse_filter = 2
 script = ExtResource("2_xvj7f")
+
+[node name="MortarReticle" type="Control" parent="." unique_id=1772123824]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 32.0
+offset_bottom = 32.0
+mouse_filter = 2
+script = ExtResource("3_mtrt")

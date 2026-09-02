@@ -1,0 +1,9 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/modifications/modification.gd" id="1_mortar"]
+
+[resource]
+script = ExtResource("1_mortar")
+id = &"mortar"
+display_name = "Мортира"
+hud_short = "МОРТИРА"

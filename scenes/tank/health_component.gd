@@ -23,7 +23,11 @@ extends Node
 signal damaged(current_hits: int, max_hits: int, killer: Node)
 signal destroyed(killer: Node)
 
-@export var max_hits: int = 2
+## [ИЗМЕНЕНО, по прямому запросу — "всем ботам и игроку сделать 3 HP (+1 по дефолту), чтобы был
+## смысл применять мортиру по танкам"] Было 2. Танки читают из config/*_tank_config.json (тоже
+## подняты на 3); подъём дефолта скрипта — та же страховка, что и раньше, для статичного инстанса
+## Tank.tscn в обход спавнера. Objective перетирается на 100 (см. objective_hits_required).
+@export var max_hits: int = 3
 ## true только на HealthComponent узла Objective (задано прямо в .tscn каждой карты) — оборона
 ## не должна вредить цели (см. «Игровые режимы»/Destroy Target). Определяем атакующего через
 ## killer.is_attacker() — killer это корень танка-стрелка (см. weapon_controller.gd).
@@ -40,14 +44,18 @@ signal destroyed(killer: Node)
 var current_hits: int = 0
 var is_alive: bool = true
 
-func take_hit(killer: Node = null) -> void:
+## damage — сколько единиц урона снимает это попадание (обычный снаряд = 1, спец-выстрел мортиры =
+## GameConfig.mortar_objective_damage). До перевода objective на HP-модель было всегда «+1
+## попадание»; теперь current_hits/max_hits трактуются как HP. Для танков (max_hits = 3) мортира
+## (30) — гарантированный one-shot, отдельной ветки не нужно.
+func take_hit(killer: Node = null, damage: int = 1) -> void:
 	if invincible:
 		return
 	if not is_alive:
 		return
 	if attackers_only and (killer == null or not killer.has_method("is_attacker") or not killer.is_attacker()):
 		return  # снаряд обороны просто гасится о цель, урона нет — без сигнала damaged
-	current_hits += 1
+	current_hits += damage
 	damaged.emit(current_hits, max_hits, killer)
 	if current_hits >= max_hits:
 		is_alive = false

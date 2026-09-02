@@ -28,6 +28,8 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @onready var _result_label: Label = $ResultLabel
 @onready var _restart_button: Button = $RestartButton
 @onready var _crosshair: Control = $Crosshair
+@onready var _mortar_reticle: Control = $MortarReticle
+@onready var _mod_slot_label: Label = $ModSlotLabel
 
 var _fsm: Node
 var _ammo: Node
@@ -38,6 +40,7 @@ var _objective_health: Node  # HealthComponent objective-цели (режим TA
 var _round_timer: Timer
 var _barrel: Node3D
 var _camera: Camera3D
+var _mod: Node  # ModificationController танка игрока — слот модификации + режим прицеливания мортиры
 
 func _ready() -> void:
 	var tank: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
@@ -51,6 +54,10 @@ func _ready() -> void:
 		_respawn = tank.get_node_or_null("RespawnController")
 		_barrel = tank.get_node("Turret/Barrel")
 		_camera = tank.get_node("CameraRig/Camera3D")
+		_mod = tank.get_node_or_null("ModificationController")
+		if _mod != null:
+			_mod.mod_changed.connect(_on_mod_changed)
+			_on_mod_changed(_mod.current_mod)
 
 	# MatchManager/ScoreManager/RoundTimer/objective резолвятся лениво (см. _resolve_*) и
 	# поллятся: карта заводит эти узлы из кода уже ПОСЛЕ этого _ready(), а objective может
@@ -75,16 +82,29 @@ func _process(_delta: float) -> void:
 		_update_final_stage_label()
 	_update_crosshair()
 
+func _on_mod_changed(mod: Resource) -> void:
+	_mod_slot_label.text = "Модификация: —" if mod == null else "Модификация: %s" % mod.hud_short
+
 func _update_crosshair() -> void:
-	if _barrel == null or _camera == null:
+	if _barrel == null:
 		return
+	# Активная камера, не CameraRig/Camera3D напрямую — в режиме прицеливания мортиры это MortarCamera.
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	# Режим прицеливания мортиры: прицел — кольцо НА ЗЕМЛЕ (ModificationController._reticle_ring,
+	# 3D-меш в точке падения), экранных прицелов не показываем вообще.
+	if _mod != null and _mod.is_aiming():
+		_crosshair.visible = false
+		_mortar_reticle.visible = false
+		return
+	_mortar_reticle.visible = false
 	var aim_point: Vector3 = _barrel.global_position + (-_barrel.global_transform.basis.z) * 20.0
-	if _camera.is_position_behind(aim_point):
+	if cam.is_position_behind(aim_point):
 		_crosshair.visible = false
 		return
 	_crosshair.visible = true
-	var screen_pos: Vector2 = _camera.unproject_position(aim_point)
-	_crosshair.position = screen_pos - _crosshair.size * 0.5
+	_crosshair.position = cam.unproject_position(aim_point) - _crosshair.size * 0.5
 
 func _on_final_stage_started() -> void:
 	_final_stage_label.visible = true

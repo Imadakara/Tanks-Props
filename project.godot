@@ -38,6 +38,7 @@ renderer/rendering_method="forward_plus"
 3d_physics/layer_4="disguise_obstacle"
 3d_physics/layer_5="objective_zone"
 3d_physics/layer_6="ammo_crates"
+3d_physics/layer_7="mod_crates"
 
 [input]
 
