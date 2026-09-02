@@ -531,6 +531,14 @@ const _DIFFICULTY_PRESETS := {
 ## как и alert_timeout_sec выше.
 @export var objective_priority_hp_threshold: int = 3
 
+## [ДОБАВЛЕНО, по прямому запросу — "видит ящик с патронами и их 5 и менее — ехать подбирать; уже в
+## круге зоны сброса, там есть ящик — тоже подбирать при 5 и менее"] Порог current_ammo, ниже/равно
+## которому бот реагирует на КОНКРЕТНЫЙ ящик под рукой (видимый или в зоне, где стоит) — см.
+## _ensure_home_state()/_ammo_zone_containing_bot()/_visible_ammo_crate(). Мягче старого жёсткого
+## порога "==1" ниже в _ensure_home_state() (тот по-прежнему едет в СЛУЧАЙНУЮ зону вслепую, если
+## конкретного ящика под рукой нет) — общее правило механики, не тюнинг сложности.
+@export var ammo_pickup_scan_threshold: int = 5
+
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
@@ -1291,6 +1299,23 @@ func _ensure_home_state() -> void:
 	var time_since_hit: float = _arena.time_since_objective_hit() if _arena != null else INF
 	var enemy_nearby: bool = _arena.enemy_in_alert_zone() if _arena != null else false
 	var objective_alive: bool = _objective_node != null and is_instance_valid(_objective_node)
+	# [ДОБАВЛЕНО, по прямому запросу — "видит ящик с патронами и их 5 и менее, сам не в зоне
+	# сброса — ехать подбирать; уже в круге зоны сброса, там есть ящик — тоже подбирать при 5 и
+	# менее"] Вычисляется ЗАРАНЕЕ, до цепочки if/elif (GDScript не разрешает var между её звеньями,
+	# см. комментарий про time_since_hit/enemy_nearby выше) — конкретный ящик, до которого стоит
+	# доехать ПРЯМО СЕЙЧАС, не абстрактная зона. Два раздельных случая, ровно по формулировке
+	# запроса: бот ФИЗИЧЕСКИ в круге одной из зон (_ammo_zone_containing_bot(), не обязательно его
+	# целевая _ammo_zone) — берём ящик ИЗ ЭТОЙ зоны, если он там есть; иначе (бот не в зоне вообще)
+	# — ящик, просто попавший в поле зрения (_visible_ammo_crate()), из любой зоны. В зоне без
+	# ящика бот НЕ переключается на визуально доступный ящик другой зоны — второй случай явно
+	# ограничен условием "не в зоне".
+	var ammo_zone_here: Node = _ammo_zone_containing_bot()
+	var ammo_crate_nearby: Node = null
+	if not _ammo_zones.is_empty() and _ammo.current_ammo <= ammo_pickup_scan_threshold:
+		if ammo_zone_here != null:
+			ammo_crate_nearby = _find_crate_in_zone(ammo_zone_here)
+		else:
+			ammo_crate_nearby = _visible_ammo_crate()
 	# [ДОБАВЛЕНО, по прямому запросу — "если остался 1 боеприпас и бот не имеет захваченной цели —
 	# должен переходить в стейт поиска боеприпасов"] "Не имеет захваченной цели" уже гарантировано
 	# самим фактом, что мы вообще дошли до этой функции — _think() вызывает _ensure_home_state()
@@ -1299,7 +1324,9 @@ func _ensure_home_state() -> void:
 	# перебивает даже видимую цель и не проходит через эту лестницу вообще). Пустой список
 	# _ammo_zones (карта без ящиков) — условие никогда не срабатывает, тот же defensive-паттерн,
 	# что и у _hunt_area_valid/_alert_zone.
-	if not _ammo_zones.is_empty() and _ammo.current_ammo == 1:
+	if ammo_crate_nearby != null:
+		desired = State.AMMO_RETRIEVE  # конкретный ящик под рукой — не гонять в случайную зону вслепую
+	elif not _ammo_zones.is_empty() and _ammo.current_ammo == 1:
 		desired = State.AMMO_SEEK
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
 	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
@@ -1369,6 +1396,7 @@ func _ensure_home_state() -> void:
 		# (последний вейпоинт, не objective).
 		var entering_attack_objective: bool = desired == State.ATTACK_OBJECTIVE
 		var entering_ammo_seek: bool = desired == State.AMMO_SEEK
+		var entering_ammo_retrieve_direct: bool = desired == State.AMMO_RETRIEVE and ammo_crate_nearby != null
 		var entering_mod_seek: bool = desired == State.MOD_SEEK
 		var entering_mod_retrieve: bool = desired == State.MOD_RETRIEVE
 		state = desired
@@ -1390,6 +1418,16 @@ func _ensure_home_state() -> void:
 				_nav_agent.target_position = _objective_node.global_position
 		if entering_ammo_seek:
 			_pick_ammo_zone()
+		# [ДОБАВЛЕНО — приоритетный подбор видимого/зонного ящика, см. ammo_crate_nearby выше]
+		# _ammo_zone НЕ трогаем — тот же прецедент, что у entering_mod_retrieve ниже (тоже не
+		# трогает _mod_zone): используется только для AMMO_WAIT-лоитеринга, который сюда не
+		# относится, а обычный выход из AMMO_RETRIEVE (see State.AMMO_RETRIEVE в _physics_process())
+		# в подавляющем большинстве случаев ведёт в IDLE (ящик поднял значимую пачку патронов, не
+		# отдельные штуки — current_ammo почти всегда > 1 сразу после подбора).
+		if entering_ammo_retrieve_direct:
+			_ammo_target_crate = ammo_crate_nearby
+			if _nav_agent.is_inside_tree():
+				_nav_agent.target_position = ammo_crate_nearby.global_position
 		if entering_mod_seek:
 			_pick_mod_zone()
 		if entering_mod_retrieve:
@@ -2355,6 +2393,33 @@ func _find_crate_in_zone(zone: Node) -> Node:
 			continue
 		var dist: float = Vector2(crate.global_position.x - center.x, crate.global_position.z - center.z).length()
 		if dist <= radius:
+			return crate
+	return null
+
+## [ДОБАВЛЕНО, по прямому запросу — "уже в круге одной из зон сброса — подбирать ящик оттуда при
+## малом боезапасе"] Зона (ЛЮБАЯ из _ammo_zones, не обязательно текущая целевая _ammo_zone — бот мог
+## оказаться рядом просто патрулируя/сражаясь), внутри круга которой бот физически стоит СЕЙЧАС.
+## Тот же паттерн дистанции, что _is_within_objective_circle()/State.AMMO_SEEK в _physics_process(),
+## но по ВСЕМ зонам сразу — первая подходящая.
+func _ammo_zone_containing_bot() -> Node:
+	for z in _ammo_zones:
+		if not is_instance_valid(z):
+			continue
+		var area: Node3D = _ammo_zone_area(z)
+		if area == null:
+			continue
+		var radius: float = float(area.get("radius"))
+		var dist: float = Vector2(_body.global_position.x - area.global_position.x, _body.global_position.z - area.global_position.z).length()
+		if dist <= radius:
+			return z
+	return null
+
+## [ДОБАВЛЕНО, по прямому запросу — "видит ящик с патронами — ехать подбирать"] Патронный ящик,
+## попавший в поле зрения бота — тот же _point_in_view() (конусы + LOS), что и _visible_mod_crate()
+## (группа "ammo_crates", та же, что _find_crate_in_zone() выше).
+func _visible_ammo_crate() -> Node:
+	for crate in get_tree().get_nodes_in_group("ammo_crates"):
+		if is_instance_valid(crate) and _point_in_view(crate.global_position):
 			return crate
 	return null
 
