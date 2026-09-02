@@ -1,9 +1,11 @@
-[gd_resource type="Resource" load_steps=2 format=3]
+[gd_resource type="Resource" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scenes/modifications/modification.gd" id="1_mortar"]
+[ext_resource type="PackedScene" path="res://scenes/modifications/mortar/Mortar.tscn" id="2_mortar_behavior"]
 
 [resource]
 script = ExtResource("1_mortar")
 id = &"mortar"
 display_name = "Мортира"
 hud_short = "МОРТИРА"
+behavior_scene = ExtResource("2_mortar_behavior")

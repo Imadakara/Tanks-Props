@@ -38,7 +38,10 @@ extends Node3D
 @export var show_debug_circle: bool = true
 
 func _ready() -> void:
-	if show_debug_circle:
+	# Круг на земле — отладочный визуал (зоны спавна + круги зон сброса ящиков): только в
+	# debug-режиме (MatchState.debug_enabled, галочка в меню). show_debug_circle остаётся
+	# вложенным per-instance фильтром.
+	if show_debug_circle and MatchState.debug_enabled:
 		_draw_debug_circle()
 
 ## Случайная точка в круге (равномерно по площади — sqrt(randf()), не randf() напрямую, тот же

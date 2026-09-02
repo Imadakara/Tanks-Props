@@ -30,14 +30,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if not event.is_action_pressed("fire"):
 		return
-	# Мортира в слоте — спец-выстрел НЕ в один клик (см. modification_controller.gd):
-	# первый «fire» → режим прицеливания; второй «fire» (уже в режиме) → навесной выстрел.
-	# Выход из режима без выстрела — по кнопке движения (ловит ModificationController).
-	if _mod.current_mod != null and StringName(_mod.current_mod.id) == &"mortar":
-		if _mod.is_aiming():
-			_fire_mortar()
-		else:
-			_mod.begin_aiming()
+	# Модификация в слоте перехватывает «fire» (напр. мортира: 1-й клик — прицеливание, 2-й —
+	# навесной выстрел). Пустой слот / пассивная модификация → intercepts_fire() == false.
+	if _mod.intercepts_fire():
+		_mod.on_fire_pressed()
 		return
 	try_fire()
 
@@ -61,28 +57,22 @@ func _spawn_projectile() -> void:
 	proj.speed = launch_speed
 	proj.launch(muzzle, direction, _body)
 
-## Игрок: навесной выстрел в точку кольца-прицела (ModificationController).
-func _fire_mortar() -> void:
-	fire_mortar_at(_mod.get_reticle_world_point())
-
-## Навесной спец-выстрел мортиры в мировую точку `target`. Общий вход: игрок (_fire_mortar) и
-## боты (tank_ai_controller.gd, State.MORTAR_ATTACK). Расходует модификацию (clear_slot) и один
-## боеприпас, уходит в RELOAD как обычный выстрел. Направление — навесная дуга от дульного среза
-## к target (ModificationController.mortar_launch_dir); proj.damage = mortar_objective_damage (30):
-## по objective кусок из 100 HP, по любому танку one-shot. false — нет боеприпаса / RELOAD.
-func fire_mortar_at(target: Vector3) -> bool:
+## Спец-выстрел модификации: расходует боеприпас и уходит в RELOAD как обычный выстрел, но летит
+## по ПЕРЕДАННОМУ направлению `dir` со своими `speed`/`damage` (модификация считает их сама —
+## напр. навесную дугу и урон мортиры). Очистку слота (clear_slot) делает сама модификация после
+## успеха. false — нет боеприпаса / RELOAD. Общий вход: игрок и боты (через
+## ModificationController → mortar_behavior._launch / ai_fire_at).
+func fire_special(dir: Vector3, speed: float, damage: int) -> bool:
 	if not _ammo.has_ammo():
 		return false
 	if not _state_machine.request_fire():
 		return false
 	_ammo.consume()
 	var muzzle: Vector3 = _barrel.global_position
-	var direction: Vector3 = _mod.mortar_launch_dir(muzzle, target)
 	var proj := ProjectileScene.instantiate()
 	get_tree().current_scene.add_child(proj)
-	proj.speed = GameConfig.mortar_launch_speed
-	proj.damage = GameConfig.mortar_objective_damage
-	proj.launch(muzzle, direction, _body)
+	proj.speed = speed
+	proj.damage = damage
+	proj.launch(muzzle, dir, _body)
 	fired.emit()
-	_mod.clear_slot()
 	return true

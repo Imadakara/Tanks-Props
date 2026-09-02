@@ -70,10 +70,15 @@ var _alert_state := ObjectiveAlertStateScript.new()
 ## корневой CLAUDE.md, "Scene bring-up ordering").
 func _ready() -> void:
 	_build_map_borders()
-	_setup_invincibility_toggle_button()
+	if MatchState.debug_enabled:
+		_setup_invincibility_toggle_button()
 	$TeamSpawner.spawn_team()
 	_setup_match_context()
-	_objective_camera.look_at(Vector3(0, 1, -21), Vector3.UP)
+	# ObjectiveCamera смотрит на саму цель (не хардкод-точка): позиция берётся с узла Objective,
+	# если он на карте есть; иначе — центр поля (камера всё равно доступна только в debug, клавиша 2).
+	var objective_node: Node3D = get_tree().current_scene.find_child("Objective", true, false)
+	var look_target: Vector3 = objective_node.global_position if objective_node != null else Vector3(0.0, 1.0, 0.0)
+	_objective_camera.look_at(look_target, Vector3.UP)
 	_setup_objective_ui()
 
 ## Непроходимая красная граница по периметру карты — 4 стены-коробки вокруг узла `Ground`.
@@ -227,7 +232,8 @@ func _setup_objective_ui() -> void:
 	# Группа "objective_health" — TankAIController ищет objective по ней, не по имени узла
 	# (устраняет зависимость от конкретного имени объекта-цели для любой будущей карты).
 	_objective_health.add_to_group("objective_health")
-	_setup_objective_toggle_button()
+	if MatchState.debug_enabled:
+		_setup_objective_toggle_button()
 
 func _on_objective_damaged(_current_hits: int, _max_hits: int, _killer: Node = null) -> void:
 	_alert_state.reset()  # сбрасывается на КАЖДЫЙ удар, см. ObjectiveAlertState.reset()
@@ -261,7 +267,10 @@ func _on_objective_toggle_pressed() -> void:
 func _update_objective_toggle_button() -> void:
 	_objective_toggle_button.text = "Objective: %s" % ("OFF" if _objective_health.invincible else "ON")
 
+## Камеры-клавиши 1/2/3 (наблюдение за ботом от третьего лица) — только debug-режим.
 func _unhandled_input(event: InputEvent) -> void:
+	if not MatchState.debug_enabled:
+		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	match event.keycode:

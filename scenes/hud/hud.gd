@@ -92,9 +92,9 @@ func _update_crosshair() -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
-	# Режим прицеливания мортиры: прицел — кольцо НА ЗЕМЛЕ (ModificationController._reticle_ring,
-	# 3D-меш в точке падения), экранных прицелов не показываем вообще.
-	if _mod != null and _mod.is_aiming():
+	# Модификация может прятать экранный прицел (мортира в режиме прицеливания: её роль играет
+	# кольцо НА ЗЕМЛЕ, mortar_behavior._reticle_ring) — тогда не показываем никаких экранных прицелов.
+	if _mod != null and _mod.hides_crosshair():
 		_crosshair.visible = false
 		_mortar_reticle.visible = false
 		return

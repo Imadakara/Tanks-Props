@@ -8,11 +8,16 @@ extends Resource
 ## модификации — через preload("res://scenes/modifications/<name>.tres"); .tres хранит указатель
 ## на этот скрипт как [ext_resource type="Script" path=...], что работает и headless.
 ##
-## Поля — только идентичность/отображение. Числовой баланс мортиры (дальность, урон, каденс
-## спавна) живёт в GameConfig (mortar_range / mortar_objective_damage / mortar_drop_interval_sec),
-## как и остальной баланс проекта.
+## Поля id/display_name/hud_short — только идентичность/отображение. Логика модификации живёт в
+## её СЦЕНЕ-ПОВЕДЕНИИ (behavior_scene, корень наследует
+## scenes/modifications/modification_behavior.gd) — ModificationController инстансирует её в слот
+## при install(). Числовой баланс мортиры (дальность, урон, каденс спавна) живёт в GameConfig
+## (mortar_range / mortar_objective_damage / mortar_drop_interval_sec), как и остальной баланс.
 
 @export var id: StringName = &""
 @export var display_name: String = ""
 ## Короткая подпись для строки HUD «Модификация: <hud_short>».
 @export var hud_short: String = ""
+## Сцена-поведение (Node3D-корень со скриптом-наследником modification_behavior.gd). null —
+## пассивная модификация без логики (заняла слот, HUD показывает — и всё).
+@export var behavior_scene: PackedScene = null

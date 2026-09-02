@@ -143,8 +143,9 @@ extends Node
 ##   красный ящик попал в его поле зрения (_visible_mod_crate()) — сам к зонам не ездит. Сюда же
 ##   уходит бот, приехавший в зону сброса за ОБЫЧНЫМИ патронами (AMMO_SEEK/AMMO_WAIT) и не нашедший
 ##   там патронного ящика, но нашедший мортиру — «подбирает что есть».
-## - MORTAR_ATTACK — есть мортира в слоте: подъехать в пределы GameConfig.mortar_range, встать,
-##   свести навесной прицел (фаза подготовки mortar_prep_sec) и дать залп (_weapon.fire_mortar_at).
+## - MORTAR_ATTACK — есть готовый спец-эффект в слоте (_mod.ai_usable()): подъехать в пределы
+##   _mod.ai_engage_range(), встать, свести прицел (_mod.ai_aim_solution, фаза подготовки
+##   _mod.ai_prep_sec()) и дать залп (_mod.ai_fire_at). Мортиру не хардкодим — спрашиваем модификацию.
 ##   Атакующий целит в objective и НЕ ИЩЕТ боя (пока несёт мортиру — _think() не сканирует
 ##   танки-цели, _on_damaged() не уводит в DEFEND). НО после выстрела мортира израсходована → бот
 ##   в обычном цикле, и если по нему ведёт огонь ВИДИМЫЙ вражеский танк — _on_damaged() уводит в
@@ -811,14 +812,18 @@ func _initialize() -> void:
 	var camera: Camera3D = camera_rig.get_node("Camera3D")
 	camera.current = false
 
-	if show_fov_debug:
-		_setup_fov_debug_draw()
-	if show_path_debug:
-		_setup_path_debug_draw()
-	if show_brain_debug:
-		_setup_brain_debug_label()
-	if show_reaction_toggle_button:
-		_setup_reaction_toggle_button()
+	# Вся отладочная обвязка бота — только в debug-режиме (MatchState.debug_enabled, галочка в
+	# меню; per-instance show_*-флаги остаются вложенным фильтром). Прямой запуск карты из
+	# редактора debug_enabled НЕ гасит (дефолт true).
+	if MatchState.debug_enabled:
+		if show_fov_debug:
+			_setup_fov_debug_draw()
+		if show_path_debug:
+			_setup_path_debug_draw()
+		if show_brain_debug:
+			_setup_brain_debug_label()
+		if show_reaction_toggle_button:
+			_setup_reaction_toggle_button()
 
 ## MEDIUM ничего не меняет (числа выше УЖЕ тюнинг medium). EASY/HARD перезаписывают поля
 ## значениями из _DIFFICULTY_PRESETS — правки конкретных @export-полей в инспекторе этого
@@ -1135,12 +1140,15 @@ func _physics_process(delta: float) -> void:
 		State.MORTAR_ATTACK:
 			_process_mortar_attack(delta)
 
-	if show_fov_debug:
-		_update_fov_debug_draw()
-	if show_path_debug:
-		_update_path_debug_draw()
-	if show_brain_debug:
-		_update_brain_debug_label()
+	# Обновляем оверлеи только если их setup реально прошёл (debug-режим + per-instance show_*-флаг,
+	# см. _initialize()) — иначе _fov_debug_mesh/_path_debug_mesh/_brain_debug_label == null.
+	if MatchState.debug_enabled:
+		if show_fov_debug:
+			_update_fov_debug_draw()
+		if show_path_debug:
+			_update_path_debug_draw()
+		if show_brain_debug:
+			_update_brain_debug_label()
 
 ## Движок выбора стейта — приоритет "вижу цель" НАД любым домашним поведением роли (см.
 ## заголовок файла). Вызывается раз в think_interval_sec, не каждый физ.кадр.
@@ -1437,8 +1445,11 @@ func _ensure_home_state() -> void:
 
 ## --- Модификации: помощники (см. заголовок файла, State.MOD_*/MORTAR_ATTACK) --------------------
 
+## Имя историческое (первая и пока единственная модификация — мортира). Спрашивает
+## ModificationController, есть ли в слоте готовый к применению ботом спец-эффект — не про
+## конкретно мортиру (см. modification_behavior.gd/ai_usable()).
 func _has_mortar() -> bool:
-	return _mod.current_mod != null and StringName(_mod.current_mod.id) == &"mortar"
+	return _mod.ai_usable()
 
 ## Красный ящик В ПРЕДЕЛАХ РАДИУСА зоны от её центра (аналог _find_crate_in_zone для патронов).
 func _find_mod_crate_in_zone(zone: Node) -> Node:
@@ -1577,26 +1588,30 @@ func _enter_mortar_attack(tgt: Node) -> void:
 	# настоящем входе / смене цели (иначе прицел никогда не сведётся). Nav-таргет освежаем каждый
 	# тик (как _enter_defend): у защитника цель — движущийся танк, путь должен вести к живой позиции.
 	if state != State.MORTAR_ATTACK or _mortar_target_node != tgt:
-		_mortar_prep_timer = GameConfig.mortar_prep_sec
+		_mortar_prep_timer = _mod.ai_prep_sec()
 	_mortar_target_node = tgt
 	state = State.MORTAR_ATTACK
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = tgt.global_position
 
-## Каждый физ.кадр в State.MORTAR_ATTACK. Подъехать в пределы GameConfig.mortar_range, встать,
-## свести навесной прицел (yaw башни + pitch дула), выдержать фазу подготовки — залп
-## (_weapon.fire_mortar_at). Мортира израсходована → _has_mortar() false → выход в IDLE, обычный цикл.
+## Каждый физ.кадр в State.MORTAR_ATTACK. Подъехать в пределы _mod.ai_engage_range(), встать,
+## свести навесной прицел (yaw башни + pitch дула из _mod.ai_aim_solution), выдержать фазу
+## подготовки (_mod.ai_prep_sec) — залп (_mod.ai_fire_at). Спец-эффект израсходован → _has_mortar()
+## false → выход в IDLE, обычный цикл. Дистанции/прицел/выстрел спрашиваем у модификации, а не
+## хардкодим мортиру (см. modification_behavior.gd).
 func _process_mortar_attack(delta: float) -> void:
 	if not _has_mortar() or not is_instance_valid(_mortar_target_node):
 		state = State.IDLE
 		return
+	var engage_range: float = _mod.ai_engage_range()
+	var prep_sec: float = _mod.ai_prep_sec()
 	# Целимся в ЦЕНТР коллайдера цели (+0.3 по Y — центр BoxShape корпуса, см. Tank.tscn), не в
 	# точку на земле: навесной снаряд идёт круто вниз, попасть надо в объём танка.
 	var tpos: Vector3 = _mortar_target_node.global_position + Vector3(0.0, 0.3, 0.0)
 	var dist: float = _body.global_position.distance_to(tpos)
-	if dist > GameConfig.mortar_range * 0.9:
-		_drive_to_point(delta, tpos, GameConfig.mortar_range * 0.8)
-		_mortar_prep_timer = GameConfig.mortar_prep_sec  # вне радиуса — прицел не считается сведённым
+	if dist > engage_range * 0.9:
+		_drive_to_point(delta, tpos, engage_range * 0.8)
+		_mortar_prep_timer = prep_sec  # вне радиуса — прицел не считается сведённым
 		_look_yaw = _yaw_to_world_point(_turret.global_position, tpos)
 		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		return
@@ -1605,8 +1620,7 @@ func _process_mortar_attack(delta: float) -> void:
 	var muzzle: Vector3 = _barrel.global_position
 	_look_yaw = _yaw_to_world_point(_turret.global_position, tpos)
 	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
-	var flat: float = Vector2(tpos.x - muzzle.x, tpos.z - muzzle.z).length()
-	var pitch: float = _mod._solve_ballistic_high_pitch(flat, tpos.y - muzzle.y)
+	var pitch: float = _mod.ai_aim_solution(muzzle, tpos).get("pitch", deg_to_rad(85.0))
 	_barrel.target_pitch = pitch
 	# Мортира одноразовая и дорогая — требуем ТУГОЙ сходимости прицела (жёстче обычного выстрела),
 	# чтобы навесной снаряд гарантированно накрыл цель.
@@ -1615,9 +1629,9 @@ func _process_mortar_attack(delta: float) -> void:
 	if yaw_ok and pitch_ok:
 		_mortar_prep_timer -= delta
 		if _mortar_prep_timer <= 0.0:
-			_weapon.fire_mortar_at(tpos)  # успех → мортира ушла, следующий кадр выйдет в IDLE
+			_mod.ai_fire_at(tpos)  # успех → спец-эффект ушёл, следующий кадр выйдет в IDLE
 	else:
-		_mortar_prep_timer = GameConfig.mortar_prep_sec
+		_mortar_prep_timer = prep_sec
 
 ## Цель потеряна/уничтожена во время DEFEND. ACHIEVER — единообразно для всех уровней сложности,
 ## просто возврат к домашнему поведению роли (_ensure_home_state() вызывается сразу после в

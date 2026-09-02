@@ -44,10 +44,10 @@ func _physics_process(delta: float) -> void:
 		move_input = ai_move_input
 	last_move_input = move_input
 
-	# Прицеливание мортиры (см. modification_controller.gd) — корпус стоит намертво: это и есть
-	# косвенное объяснение невозможности стрельбы мортирой на ходу. Сам выход из режима по
-	# кнопке движения ловит ModificationController._unhandled_input, здесь только стоп.
-	if _mod != null and _mod.is_aiming():
+	# Модификация может замораживать корпус (мортира — на время прицеливания: косвенное объяснение
+	# невозможности стрельбы мортирой на ходу; выход из режима по клавише движения ловит сам
+	# mortar_behavior._unhandled_input, здесь только стоп).
+	if _mod != null and _mod.blocks_hull_movement():
 		last_move_input = 0.0
 		return
 

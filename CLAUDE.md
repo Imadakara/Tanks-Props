@@ -125,20 +125,31 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
 - `CollisionDetector` — Area3D on the tank body; a *moving* tank of any team touching a `DISGUISED`
   tank breaks its disguise (`break_disguise("collision")`). Independent of the enemy-relative rules
   above.
-- `ModificationController` — the single pickup-modification slot + all mortar logic (full detail:
-  `Tank_Prop_Hunt_Modifications.md`). One slot per tank; pick up only when empty (`can_pick_up()`),
-  both teams, no drop — `clear_slot()` on use (`WeaponController`) or on respawn
-  (`RespawnController`). First mod = **mortar** (`scenes/modifications/mortar.tres`, a scriptless
-  `Modification` `Resource`): red barrel cylinder + a two-press lobbed special shot. Player presses
-  `fire` → `begin_aiming()` (hull frozen via `TankMovement`'s `is_aiming()` gate, view swaps to
-  `Turret/MortarCamera`, the screen crosshair is hidden, barrel elevates,
-  mouse X = turret yaw / mouse Y = reticle distance in `[2 .. GameConfig.mortar_range]`); `fire`
-  again → `_fire_mortar()` → `WeaponController.fire_mortar_at()` (high-arc ballistic solve,
-  `proj.damage = GameConfig.mortar_objective_damage` 30, `proj.speed = GameConfig.mortar_launch_speed`
-  12); a movement key exits aiming with no shot. The aiming reticle is a **3D ring lying on the
-  ground** at the predicted impact point (`_reticle_ring`, `TorusMesh`, `top_level`) — it slides
-  over the surface with the mouse; no screen crosshair in this mode. Bots both pick up **and use**
-  the mortar via `TankAIController` (`MOD_SEEK`/`MOD_RETRIEVE`/`MORTAR_ATTACK`):
+- `ModificationController` — the single pickup-modification **slot**, now a generic host (full
+  detail: `Tank_Prop_Hunt_Modifications.md`). One slot per tank; pick up only when empty
+  (`can_pick_up()`), both teams, no drop — `clear_slot()` on use (the modification calls it) or on
+  respawn (`RespawnController`). A `Modification` `Resource` (`id`/`display_name`/`hud_short` +
+  `behavior_scene: PackedScene`) carries no logic; `install()` instances its `behavior_scene` as a
+  child, `setup(tank)` + `on_installed()`, and the controller **forwards a fixed contract**
+  (`intercepts_fire`/`on_fire_pressed`/`blocks_hull_movement`/`hides_crosshair` +
+  `ai_usable`/`ai_engage_range`/`ai_prep_sec`/`ai_aim_solution`/`ai_fire_at`) to it, null-safe.
+  Base contract: `scenes/modifications/modification_behavior.gd` (`extends Node3D`, no `class_name`,
+  all methods no-op by default). No `id == &"mortar"` branches or private reach-ins anywhere else —
+  `weapon_controller`/`tank_movement`/`hud`/`tank_ai_controller` all talk to the contract.
+  First (and only) behavior = **mortar** (`scenes/modifications/mortar/{mortar_behavior.gd,Mortar.tscn}`,
+  `mortar.tres` points at it): red barrel cylinder + a two-press lobbed special shot. Player presses
+  `fire` (→ `_mod.intercepts_fire()` → `on_fire_pressed()` → `mortar_behavior._begin_aiming()`):
+  hull frozen via `TankMovement`'s `_mod.blocks_hull_movement()` gate, view swaps to
+  `Turret/MortarCamera` (the one mortar-specific node still in `Tank.tscn`), screen crosshair hidden
+  (`_mod.hides_crosshair()`), barrel elevates, mouse X = turret yaw / mouse Y = reticle distance in
+  `[2 .. GameConfig.mortar_range]`; `fire` again → `mortar_behavior._launch()` →
+  `WeaponController.fire_special(dir, speed, damage)` (generic; mortar supplies the high-arc
+  ballistic `dir`, `GameConfig.mortar_objective_damage` 30, `GameConfig.mortar_launch_speed` 12) →
+  `_mod.clear_slot()`; a movement key exits aiming with no shot. The aiming reticle is a **3D ring
+  lying on the ground** at the predicted impact point (`_reticle_ring`, `TorusMesh`, `top_level`) —
+  slides over the surface with the mouse; no screen crosshair in this mode. Bots both pick up **and
+  use** the mortar via `TankAIController` (`MOD_SEEK`/`MOD_RETRIEVE`/`MORTAR_ATTACK`, the latter
+  driving convergence from `_mod.ai_aim_solution()` and firing via `_mod.ai_fire_at()`):
   attackers head for a drop zone only within a 10 s window after a mortar drop (`_should_seek_mortar()`;
   `mortar_taken` per zone + live occupancy check keep multiple bots from chasing one zone; no crate
   on arrival → back to normal, no loitering) and lob at the objective while avoiding tank fights —
@@ -391,11 +402,31 @@ player respawn countdown (`Респаун через N с`, `RespawnLabel`) show
 `RoundTimer`/`ScoreManager`/objective **lazily** and polls them, because `map_scene.gd` creates
 those nodes in code *after* the HUD's own `_ready()`.
 
-Player invincibility is a debug toggle button (`Игрок: бессмертие ON/OFF`, bottom-right, **default
-ON**), same pattern as `Objective: ON/OFF` / bot reaction toggles. Both default-ON toggles were
-tuned for iterating on bot behavior without player death/respawn getting in the way — worth
-revisiting the *default* (not the toggle itself) now that these maps are the real game, not a
-sandbox.
+### Debug mode
+
+All debug scaffolding is gated behind a single session flag, **`MatchState.debug_enabled`**
+(autoload, so it's readable in every `_ready()`; survives `reload_current_scene()`;
+`reset_series()` does **not** touch it). Set by a checkbox in the map-select menu
+(`main_menu.gd` → `_go()`, before `change_scene_to_file`), **default checked / ON**. Launching a
+map scene directly (editor / `run_project` with `scene:`, bypassing the menu) leaves it at its
+`true` default, so the dev workflow stays debuggy with no extra step.
+
+What the flag gates (each also keeps its finer per-instance filter, e.g. the bot's `show_*_debug`
+`@export`s, `SpawnZone.show_debug_circle`):
+- `map_scene.gd` — the `Игрок: бессмертие ON/OFF` button *and* the forced `_player_health.invincible
+  = true` it sets (so with debug OFF the player is mortal); the `Objective: ON/OFF` button; the
+  1/2/3 observer-camera keys (`_unhandled_input`).
+- `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays and the
+  per-bot reaction-toggle button (setup **and** the `_physics_process` update calls, so the
+  overlay meshes/labels are never touched when null).
+- `spawn_zone.gd` — the on-ground debug circle (spawn zones **and** ammo/mod drop-zone circles,
+  since `AmmoDropZone/DropArea` reuses this script).
+
+**RELEASE TODO (Steam / release prep):** the menu checkbox is a *development-stage* entry point —
+it's in the normal player-facing menu. Before release, change how debug mode is entered: drop it
+from the visible menu and gate it behind a command-line flag / dev build / debug export instead
+(or strip it entirely). This note is duplicated in `MatchState.debug_enabled`'s doc-comment and in
+a `project` memory — do not silently ship the visible checkbox.
 
 ### `scenes/tank/tank_ai_controller.gd` — the one universal bot brain (`TankAIController`)
 

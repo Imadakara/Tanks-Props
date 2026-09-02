@@ -1,8 +1,7 @@
 extends Control
-## MortarReticle — прицел режима прицеливания мортиры: кружок (не перекрестие), обозначающий
-## точку падения навесного снаряда на полу. Позицию на экране выставляет hud.gd каждый кадр
-## проекцией ModificationController.get_reticle_world_point() через активную камеру. Виден только
-## пока игрок в режиме прицеливания (hud.gd/_update_crosshair), иначе показан штатный Crosshair.
+## MortarReticle — экранный кружок для точки падения навесного снаряда. НЕ ИСПОЛЬЗУЕТСЯ: после
+## перехода на кольцо-на-земле (mortar_behavior._reticle_ring) hud.gd в режиме прицеливания
+## прячет все экранные прицелы. Узел оставлен в HUD.tscn мёртвым (см. Tank_Prop_Hunt_Modifications.md §5).
 
 func _draw() -> void:
 	var c := size * 0.5
