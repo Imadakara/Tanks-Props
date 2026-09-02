@@ -267,18 +267,20 @@ func _on_objective_toggle_pressed() -> void:
 func _update_objective_toggle_button() -> void:
 	_objective_toggle_button.text = "Objective: %s" % ("OFF" if _objective_health.invincible else "ON")
 
-## Камеры-клавиши 1/2/3 (наблюдение за ботом от третьего лица) — только debug-режим.
+## Камеры-клавиши: "1" (вернуть камеру своего танка) работает всегда; статичные ракурсы "2"/"3"
+## (ObjectiveCamera/OverviewCamera) — ТОЛЬКО в debug-режиме. Обзор с 2/3 не игровой: расчёт
+## «видит ли бота игрок» для маскировки ботов их не учитывает (см. tank_ai_controller._player_sees_me).
 func _unhandled_input(event: InputEvent) -> void:
-	if not MatchState.debug_enabled:
-		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	match event.keycode:
 		KEY_1:
 			_player_camera_rig.activate()
 		KEY_2:
-			_player_camera_rig.deactivate()
-			_objective_camera.current = true
+			if MatchState.debug_enabled:
+				_player_camera_rig.deactivate()
+				_objective_camera.current = true
 		KEY_3:
-			_player_camera_rig.deactivate()
-			_overview_camera.current = true
+			if MatchState.debug_enabled:
+				_player_camera_rig.deactivate()
+				_overview_camera.current = true

@@ -4,7 +4,10 @@
     "count": 1,
     "waypoint_name_prefix": "Waypoint",
     "hunt_area_center": [0, -0.25, 0],
-    "hunt_area_half_extents": [36, 36]
+    "hunt_area_half_extents": [36, 36],
+    "disguise_bot_enabled": true,
+    "disguise_s2_enabled": true,
+    "disguise_s2_kill_latch_ttl_sec": 30.0
   },
   {
     "team": 0,
@@ -14,6 +17,10 @@
     "forward_look_bias": 0.8,
     "debug_ui_slot": 1,
     "hunt_area_center": [0, -0.25, 0],
-    "hunt_area_half_extents": [36, 36]
+    "hunt_area_half_extents": [36, 36],
+    "disguise_bot_enabled": true,
+    "disguise_s1_enabled": true,
+    "disguise_s1_predrop_window_sec": 25.0,
+    "disguise_s1_min_round_time_left_sec": 10.0
   }
 ]

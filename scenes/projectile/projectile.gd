@@ -24,6 +24,9 @@ func launch(from: Vector3, direction: Vector3, shooter: Node) -> void:
 	_shooter = shooter
 
 func _ready() -> void:
+	# Группа — MatchManager ждёт приземления всех снарядов в полёте, прежде чем засчитать
+	# защите победу по таймауту («баскетбольное» правило, см. match_manager._on_round_timeout).
+	add_to_group("projectiles")
 	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:

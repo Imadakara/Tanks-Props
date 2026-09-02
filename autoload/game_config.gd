@@ -19,6 +19,14 @@ extends Node
 ## на препятствие. Для дефолтного объекта имитации (больше танка по всем осям) это правило спит,
 ## работает правило «враг въехал в объём объекта имитации» (см. disguise_controller.gd).
 @export var disguise_enemy_proximity_break_dist: float = 1.8
+## Маскировка ИГРОКА доступна на любой карте по умолчанию (ботам — отдельно, через
+## TankAIController.disguise_bot_enabled в ростере карты). false — глобально отнять у игрока
+## клавишу M.
+@export var disguise_player_enabled: bool = true
+## В debug-режиме (MatchState.debug_enabled) объект имитации маскировки красится ЭТИМ цветом
+## вместо disguise_prop_color — чтобы на глаз отличать замаскированный танк от статичного
+## Obstacle на карте. В релизе (debug off) не применяется.
+@export var disguise_debug_prop_color: Color = Color(0.65, 0.1, 0.9)
 ## Кулдаун на выстрел — общий дефолт для всех танков (игрок + боты). Каждый выстрел уводит
 ## TankStateMachine в RELOAD на это время.
 @export var reload_duration_sec: float = 3.0

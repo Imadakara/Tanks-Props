@@ -158,6 +158,22 @@ func _apply_squad_to_brain(brain: Node, squad: Dictionary) -> void:
 		brain.show_brain_debug = bool(squad["show_brain_debug"])
 	if squad.has("show_reaction_toggle_button"):
 		brain.show_reaction_toggle_button = bool(squad["show_reaction_toggle_button"])
+	# Маскировка бота (см. vault Tank_Prop_Hunt_Disguise.md) — мастер-тумблер + по-сценарные
+	# флаги/пороги. Всё дефолтно выкл, включается только тут.
+	if squad.has("disguise_bot_enabled"):
+		brain.disguise_bot_enabled = bool(squad["disguise_bot_enabled"])
+	if squad.has("disguise_prep_timeout_sec"):
+		brain.disguise_prep_timeout_sec = float(squad["disguise_prep_timeout_sec"])
+	if squad.has("disguise_s1_enabled"):
+		brain.disguise_s1_enabled = bool(squad["disguise_s1_enabled"])
+	if squad.has("disguise_s1_predrop_window_sec"):
+		brain.disguise_s1_predrop_window_sec = float(squad["disguise_s1_predrop_window_sec"])
+	if squad.has("disguise_s1_min_round_time_left_sec"):
+		brain.disguise_s1_min_round_time_left_sec = float(squad["disguise_s1_min_round_time_left_sec"])
+	if squad.has("disguise_s2_enabled"):
+		brain.disguise_s2_enabled = bool(squad["disguise_s2_enabled"])
+	if squad.has("disguise_s2_kill_latch_ttl_sec"):
+		brain.disguise_s2_kill_latch_ttl_sec = float(squad["disguise_s2_kill_latch_ttl_sec"])
 
 func _role_from_string(s: String) -> int:
 	match s:

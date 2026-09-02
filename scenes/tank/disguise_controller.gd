@@ -99,8 +99,15 @@ func _on_health_damaged(_current_hits: int, _max_hits: int, _killer: Node) -> vo
 func _unhandled_input(event: InputEvent) -> void:
 	if not is_player_controlled:
 		return
+	if not GameConfig.disguise_player_enabled:
+		return
 	if event.is_action_pressed("toggle_disguise"):
 		try_enter_disguise()
+
+## Цвет объекта имитации: в debug-режиме — контрастный фиолетовый (отличать замаскированный танк
+## от статичного Obstacle), иначе — штатный GameConfig.disguise_prop_color.
+func _prop_albedo() -> Color:
+	return GameConfig.disguise_debug_prop_color if MatchState.debug_enabled else GameConfig.disguise_prop_color
 
 ## Публичный вход. Игрок — из _unhandled_input; тест/будущий код — напрямую. Точки входа для ботов
 ## сознательно нет.
@@ -162,17 +169,18 @@ func _enemy_triggers_break(other: Node3D) -> bool:
 func _build_prop_if_needed() -> void:
 	var size: Vector3 = GameConfig.disguise_prop_size
 	if _prop_mesh != null:
-		# Объект имитации может смениться в мета-гейме между активациями — обновляем размер/цвет.
+		# Объект имитации может смениться в мета-гейме между активациями — обновляем размер/цвет
+		# (цвет ещё и от debug-режима, см. _prop_albedo()).
 		(_prop_mesh.mesh as BoxMesh).size = size
 		_prop_mesh.position.y = size.y * 0.5
-		(_prop_mesh.material_override as StandardMaterial3D).albedo_color = GameConfig.disguise_prop_color
+		(_prop_mesh.material_override as StandardMaterial3D).albedo_color = _prop_albedo()
 		(_obstacle_shape.shape as BoxShape3D).size = size
 		_obstacle_area.position.y = size.y * 0.5
 		return
 	var box := BoxMesh.new()
 	box.size = size
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = GameConfig.disguise_prop_color
+	mat.albedo_color = _prop_albedo()
 	_prop_mesh = MeshInstance3D.new()
 	_prop_mesh.name = "DisguiseProp"
 	_prop_mesh.mesh = box

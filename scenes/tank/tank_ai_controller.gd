@@ -221,7 +221,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_PREP, DISGUISE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -540,6 +540,26 @@ const _DIFFICULTY_PRESETS := {
 ## конкретного ящика под рукой нет) — общее правило механики, не тюнинг сложности.
 @export var ammo_pickup_scan_threshold: int = 5
 
+## --- Маскировка бота (см. vault Tank_Prop_Hunt_Disguise.md) ------------------------------------
+## Мастер-тумблер: умеет ли бот сам уходить в маскировку. Дефолт false — фича дормантна, пока
+## squad в config/roster_*.json не включит её И хотя бы один сценарий ниже. К игроку отношения
+## не имеет (у него маскировка всегда доступна — GameConfig.disguise_player_enabled). Задаётся из
+## ростера через _apply_squad_to_brain(), как остальные @export этого файла.
+@export var disguise_bot_enabled: bool = false
+## Потолок фазы DISGUISE_PREP (доворот КОРПУСА и БАШНИ на сторожевой угол перед входом) — если обе
+## оси не свелись за это время, входим как есть, заморозившись на достигнутом угле.
+@export var disguise_prep_timeout_sec: float = 2.5
+## Сценарий 1 — атакующий у objective пережидает маскировкой последние секунды перед сбросом
+## мортиры (см. vault-план). Условия жёсткие: при disguise_s1_enabled и их совпадении бот уходит
+## в маскировку ГАРАНТИРОВАННО (без вероятностной ставки).
+@export var disguise_s1_enabled: bool = false
+@export var disguise_s1_predrop_window_sec: float = 10.0  # входим, если до сброса мортиры осталось <= столько
+@export var disguise_s1_min_round_time_left_sec: float = 25.0  # ...и до конца раунда осталось >= столько
+## Сценарий 2 — защитник после убийства уходит в засаду-маскировку на очередной точке маршрута
+## (см. vault-план). Тоже гарантия при совпадении условий, не вероятность.
+@export var disguise_s2_enabled: bool = false
+@export var disguise_s2_kill_latch_ttl_sec: float = 10.0  # латч «только что убил врага» горит столько секунд
+
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
@@ -550,6 +570,9 @@ const _DIFFICULTY_PRESETS := {
 @onready var _respawn_controller: Node = get_parent().get_node("RespawnController")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
 @onready var _mod: Node = get_parent().get_node("ModificationController")
+## СВОЙ TankStateMachine (для _can_see() чужого он читается отдельно; свой раньше боту не был
+## нужен). Используется маскировкой бота — can_enter_disguise() / state / break_disguise().
+@onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
 
 var state: State = State.IDLE
 var _initialized: bool = false
@@ -648,6 +671,16 @@ var _mod_target_crate: Node = null
 var _mod_zone: Node = null
 var _mortar_target_node: Node = null
 var _mortar_prep_timer: float = 0.0
+
+## Маскировка бота — см. секцию функций «Маскировка бота» и ветки DISGUISE_PREP/DISGUISE в
+## _physics_process(). _disguise_prep_yaw — мировой угол доворота башни перед входом;
+## _disguise_prep_timer — потолок фазы PREP; _kill_latch_timer > 0 — недавно убил врага
+## (сценарий 2), тикает вниз в _physics_process(); _just_reached_waypoint — одноразовый флаг
+## «дошёл до маркера маршрута», потребляется в _ensure_home_state() (сценарий 2).
+var _disguise_prep_yaw: float = 0.0
+var _disguise_prep_timer: float = 0.0
+var _kill_latch_timer: float = 0.0
+var _just_reached_waypoint: bool = false
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
 ## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
@@ -795,6 +828,15 @@ func _initialize() -> void:
 	# использования) — не через обычную _ensure_home_state()'s лестницу (та вызывается ТОЛЬКО когда
 	# цель не видна, а тут нужно перебить и видимую тоже).
 	_ammo.ammo_depleted.connect(_on_ammo_depleted)
+	# Сценарий 2 маскировки бота: латч «только что убил врага». Подписка на destroyed каждого
+	# вражеского танка (аналог ScoreManager.begin_match), фильтр killer == _body — в обработчике.
+	# Враги не freed (free_on_destroy=false) — подписка живёт весь матч; новых танков посреди
+	# матча ни одна карта не спавнит.
+	for _enemy in get_tree().get_nodes_in_group("tanks"):
+		if is_instance_valid(_enemy) and _enemy != _body and _enemy.team != _body.team:
+			var _eh: Node = _enemy.get_node_or_null("HealthComponent")
+			if _eh != null and not _eh.destroyed.is_connected(_on_enemy_destroyed):
+				_eh.destroyed.connect(_on_enemy_destroyed)
 	# [ИЗМЕНЕНО, по прямому запросу — "ALERT не срабатывает у уже имеющегося танка, тревога должна
 	# быть ОБЩЕЙ у уже существующих на карте И у новых спавнящихся"] Раньше здесь подписывался НА
 	# СИГНАЛ Objective/HealthComponent.damaged НАПРЯМУЮ, храня СВОЙ personal-таймер — теперь таймер
@@ -912,6 +954,8 @@ func _physics_process(delta: float) -> void:
 	if not _initialized:
 		_initialize()
 	_total_time_sec += delta
+	if _kill_latch_timer > 0.0:
+		_kill_latch_timer -= delta  # латч засады сценария 2 (см. _on_enemy_destroyed)
 	_think_timer -= delta
 	if _think_timer <= 0.0:
 		_think_timer = think_interval_sec
@@ -983,6 +1027,13 @@ func _physics_process(delta: float) -> void:
 			elif _should_seek_mortar():
 				state = State.MOD_SEEK
 				_pick_mod_zone()
+			elif _should_disguise_s1():
+				# Сценарий 1 маскировки: ATTACK_OBJECTIVE самоуправляем (оверлей _ensure_home_state
+				# до него не доходит — тот для этого состояния делает ранний return), поэтому вход
+				# в маскировку инициируем здесь, рядом с MOD_SEEK.
+				_disguise_prep_yaw = _s1_watch_yaw()
+				_disguise_prep_timer = disguise_prep_timeout_sec
+				state = State.DISGUISE_PREP
 			else:
 				# Тот же паттерн, что и в DEFEND (см. её комментарий) — едем к objective и стреляем
 				# всю дорогу, не замирая на границе fire_range; останавливаемся явно только по
@@ -1139,6 +1190,29 @@ func _physics_process(delta: float) -> void:
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.MORTAR_ATTACK:
 			_process_mortar_attack(delta)
+		State.DISGUISE_PREP:
+			# Стоим на месте, доворачиваем И КОРПУС, И БАШНЮ на _disguise_prep_yaw (сценарий 2 —
+			# всегда центр objective: вейпоинты стоят треугольником по краю круга вокруг цели,
+			# смотреть при засаде имеет смысл строго в центр). Вход в маскировку — когда обе оси
+			# в пороге ЛИБО вышел потолок фазы (disguise_prep_timeout_sec).
+			_movement.ai_move_input = 0.0
+			var hull_err: float = wrapf(_disguise_prep_yaw - _body.rotation.y, -PI, PI)
+			_movement.ai_turn_input = -clampf(hull_err / deg_to_rad(25.0), -1.0, 1.0)
+			_look_yaw = _disguise_prep_yaw
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+			_disguise_prep_timer -= delta
+			var turret_gap: float = absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI))
+			var hull_ok: bool = absf(hull_err) <= deg_to_rad(6.0)
+			var turret_ok: bool = turret_gap <= deg_to_rad(2.0)
+			if (hull_ok and turret_ok) or _disguise_prep_timer <= 0.0:
+				_movement.ai_turn_input = 0.0
+				_enter_disguise()
+		State.DISGUISE:
+			# Замаскирован — полная неподвижность. НИЧЕГО не пишем в _turret.target_yaw: любой
+			# доворот сверх 2° сам вызовет break_disguise (turret_controller.gd). Выходы —
+			# в _think() (активные по сценарию + «спалился») и пассивные компонентные триггеры.
+			_movement.ai_move_input = 0.0
+			_movement.ai_turn_input = 0.0
 
 	# Обновляем оверлеи только если их setup реально прошёл (debug-режим + per-instance show_*-флаг,
 	# см. _initialize()) — иначе _fov_debug_mesh/_path_debug_mesh/_brain_debug_label == null.
@@ -1162,6 +1236,40 @@ func _think() -> void:
 	# без этой ранней проверки продолжил бы думать как ни в чём не бывало).
 	if state == State.DEAD:
 		return
+
+	# --- Маскировка бота: обслуживание стейтов DISGUISE / DISGUISE_PREP -------------------------
+	# (полное описание сценариев — vault Tank_Prop_Hunt_Disguise.md).
+	if state == State.DISGUISE and _state_machine.state != TankStateMachineScript.State.DISGUISED:
+		# Маскировка снята ИЗВНЕ (касание движущимся танком / прямое попадание / истёк
+		# DisguiseTimer), пока _think() не участвовал — иначе бот навсегда завис бы в DISGUISE
+		# (guard в _ensure_home_state не даёт пересчитать). Сброс в IDLE, дальше обычный поток
+		# тем же тиком (не return).
+		state = State.IDLE
+	elif state == State.DISGUISE:
+		# Активные выходы по сценарию (пассивные — таймер/касание/выстрел — срабатывают сами):
+		# атакующий (сценарий 1) — упал ящик мортиры; защитник (сценарий 2) — objective под
+		# атакой. break_disguise здесь → на следующем тике ветка выше уводит state в IDLE.
+		if _body.is_attacker():
+			if _time_since_mortar_drop() < GameConfig.mortar_fresh_window_sec:
+				_state_machine.break_disguise("mortar_dropped")
+		elif _alert_is_active():
+			_state_machine.break_disguise("objective_under_attack")
+		# «Спалился, пока прятался» — заметил врага обычным сканом → в бой (доворот башни/движение
+		# в DEFEND сам уронит маскировку). Уважает тумблер enemy_reaction_enabled.
+		if state == State.DISGUISE and enemy_reaction_enabled:
+			var seen: Node = _scan_for_target()
+			if seen != null:
+				_enter_defend(seen)
+		return
+	elif state == State.DISGUISE_PREP:
+		# Фаза доворота башни (сам доворот — в _physics_process). Здесь только отмена, если за это
+		# время появилась видимая цель — прятаться уже поздно.
+		if enemy_reaction_enabled:
+			var seen_prep: Node = _scan_for_target()
+			if seen_prep != null:
+				_enter_defend(seen_prep)
+		return
+
 	# [ИСПРАВЛЕНО, живьём] Пустой боезапас — драться нечем, ПОЛНОСТЬЮ пропускаем сканирование/
 	# DEFEND, пока не подберём патроны. Не только в момент, когда патроны кончились (см.
 	# _on_ammo_depleted() — тот сигнал даёт мгновенную реакцию РОВНО один раз), а КАЖДЫЙ think-тик,
@@ -1293,13 +1401,164 @@ func _is_within_objective_circle() -> bool:
 	var dist: float = Vector2(_body.global_position.x - zone_pos.x, _body.global_position.z - zone_pos.z).length()
 	return dist <= radius
 
+## --- Маскировка бота (State.DISGUISE_PREP / State.DISGUISE) --------------------------------------
+## Полное описание сценариев — vault Tank_Prop_Hunt_Disguise.md. Мастер-тумблер disguise_bot_enabled
+## + по-сценарные disguise_sN_enabled (@export, задаются из ростера). Никаких вероятностей: при
+## совпадении условий бот уходит в маскировку гарантированно. Вход двухфазный: сценарий-триггер в
+## _ensure_home_state() выставляет desired = DISGUISE_PREP и _disguise_prep_yaw; ветка
+## DISGUISE_PREP в _physics_process() доворачивает башню на этот угол и зовёт _enter_disguise().
+
+## Вход в саму маскировку из фазы DISGUISE_PREP (башня уже наведена на _disguise_prep_yaw).
+func _enter_disguise() -> void:
+	# Гарантируем нулевое расхождение прицела на входе: turret_controller.gd роняет маскировку,
+	# если |target_yaw - rotation.y| > freeze_epsilon_deg. По таймауту фазы башня могла не
+	# довернуться до конца — замораживаемся на достигнутом угле, а не отменяем маскировку.
+	_turret.target_yaw = _turret.rotation.y
+	if not _disguise.try_enter_disguise():
+		state = State.IDLE  # отказ (не NORMAL / кулдаун) — тихо в домашнее поведение
+		return
+	state = State.DISGUISE
+	_current_target = null
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
+	_kill_latch_timer = 0.0  # засада начата — латч сценария 2 погашен
+
+## Сценарий 1 маскировки — вызывается из ветки State.ATTACK_OBJECTIVE в _physics_process() (там
+## state самоуправляемый, оверлей _ensure_home_state() до него не доходит). Полный список условий
+## входа (все И):
+##  - disguise_bot_enabled И disguise_s1_enabled И enemy_reaction_enabled;
+##  - машина состояний танка в NORMAL (can_enter_disguise — не кулдаун/перезарядка);
+##  - бот атакующий, слот модификации ПУСТ (can_pick_up), мортиры в руках НЕТ;
+##  - objective жив и ещё крепкий (remaining HP > objective_priority_hp_threshold);
+##  - до следующего сброса мортиры осталось <= disguise_s1_predrop_window_sec;
+##  - до конца раунда осталось >= disguise_s1_min_round_time_left_sec;
+##  - на бота прямо сейчас НЕ смотрит никто из врагов (боты — их _can_see; игрок — фрустум).
+## Плюс неявное: бот в State.ATTACK_OBJECTIVE (значит физически у цели и видимой танк-цели нет —
+## иначе _think увёл бы в DEFEND).
+func _should_disguise_s1() -> bool:
+	if not disguise_bot_enabled or not disguise_s1_enabled or not enemy_reaction_enabled:
+		return false
+	if not _state_machine.can_enter_disguise():
+		return false
+	if not _body.is_attacker() or not _mod.can_pick_up() or _has_mortar():
+		return false
+	if _objective_node == null or not is_instance_valid(_objective_node) or _objective_low_health():
+		return false
+	if _time_until_mortar_drop() > disguise_s1_predrop_window_sec:
+		return false
+	if _round_time_left() < disguise_s1_min_round_time_left_sec:
+		return false
+	return not _is_observed_by_enemy()
+
+## Сценарий 2 маскировки — сторожевой угол (мировой), если защитник сейчас должен уйти в засаду;
+## NAN — не должен. Вызывается из оверлея в _ensure_home_state(). reached_wp — бот прямо сейчас
+## дошёл до точки маршрута. Угол — ВСЕГДА на центр objective (см. ветку DISGUISE_PREP: вейпоинты
+## треугольником по краю круга вокруг цели, смотреть при засаде имеет смысл строго в центр).
+func _disguise_s2_prep_yaw(reached_wp: bool) -> float:
+	if disguise_s2_enabled and not _body.is_attacker() and role == Role.ACHIEVER \
+			and not _waypoints.is_empty() and _kill_latch_timer > 0.0 and reached_wp \
+			and not _alert_is_active() \
+			and _objective_node != null and is_instance_valid(_objective_node) \
+			and not _is_observed_by_enemy():
+		return _yaw_to_world_point(_body.global_position, _objective_node.global_position)
+	return NAN
+
+## Сторожевой угол сценария 1: на ближайшего живого врага в пределах vision_range*2, иначе —
+## «наружу от центра objective» (защита приходит снаружи круга).
+func _s1_watch_yaw() -> float:
+	var nearest: Node3D = null
+	var nd: float = INF
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other) or other.team == _body.team or not other.visible:
+			continue
+		var d: float = _body.global_position.distance_to(other.global_position)
+		if d < nd:
+			nd = d
+			nearest = other
+	if nearest != null and nd <= vision_range * 2.0:
+		return _yaw_to_world_point(_turret.global_position, nearest.global_position)
+	return _yaw_to_world_point(_objective_node.global_position, _body.global_position)
+
+## Тревога вокруг objective активна (недавно получал урон ИЛИ враг в alert-зоне) — то же
+## ИЛИ-условие, что держит State.ALERT в _ensure_home_state().
+func _alert_is_active() -> bool:
+	if _arena == null:
+		return false
+	return _arena.time_since_objective_hit() < alert_timeout_sec or _arena.enemy_in_alert_zone()
+
+## Секунд до конца ОСНОВНОГО таймера раунда. INF — узла нет (не боевая карта). Тот же приём, что
+## _time_since_mortar_drop(): читаем дочерний Timer MatchManager напрямую.
+func _round_time_left() -> float:
+	var mm: Node = get_tree().current_scene.get_node_or_null("MatchManager")
+	if mm == null:
+		return INF
+	var rt: Timer = mm.get_node_or_null("RoundTimer")
+	if rt == null or rt.is_stopped():
+		return INF
+	return rt.time_left
+
+## Секунд до СЛЕДУЮЩЕГО сброса мортиры (MortarDropTimer у зоны-лидера, repeating). INF — нет
+## лидера/таймера (напр. режим TEAM_ARENA). Зеркало _time_since_mortar_drop().
+func _time_until_mortar_drop() -> float:
+	var leader: Node = _mortar_drop_leader()
+	if leader == null:
+		return INF
+	var timer: Timer = leader.get_node_or_null("MortarDropTimer")
+	if timer == null or timer.is_stopped():
+		return INF
+	return timer.time_left
+
+## true — прямо сейчас на этого бота смотрит кто-то из противника: вражеский бот (его _can_see())
+## либо игрок (фрустум активной камеры его танка + луч без преград). Отладочные камеры 2/3
+## (ObjectiveCamera/OverviewCamera) НЕ учитываются — считаем, что игрок в них не смотрит.
+## Снимок на момент решения, не пер-кадр.
+func _is_observed_by_enemy() -> bool:
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other) or other.team == _body.team or not other.visible:
+			continue
+		var brain: Node = other.get_node_or_null("TankAIController")
+		if brain != null and brain.enabled and brain._can_see(_body):
+			return true
+	return _player_sees_me()
+
+## Игрок «видит» бота: танк игрока на вражеской стороне, его CameraRig-камера активна (не
+## переключились на отладочные 2/3), корпус бота в её фрустуме и не заслонён геометрией/танком.
+func _player_sees_me() -> bool:
+	var pt: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
+	if pt == null or not is_instance_valid(pt) or not pt.has_method("is_attacker"):
+		return false
+	if pt.team == _body.team:
+		return false
+	var rig: Node = pt.get_node_or_null("CameraRig")
+	if rig == null:
+		return false
+	var cam: Camera3D = rig.get_node_or_null("Camera3D")
+	if cam == null or not cam.current:
+		return false
+	var hull: Vector3 = _body.global_position + Vector3.UP * 0.3
+	if cam.is_position_behind(hull) or not cam.is_position_in_frustum(hull):
+		return false
+	var q := PhysicsRayQueryParameters3D.create(cam.global_position, hull)
+	q.exclude = [_body, pt]
+	q.collision_mask = 1 | 2  # environment + tanks
+	var hit: Dictionary = _body.get_world_3d().direct_space_state.intersect_ray(q)
+	return hit.is_empty() or hit.get("collider") == _body
+
+## Сценарий 2: подписка на destroyed каждого вражеского танка заведена в _initialize(). Взводим
+## латч засады, только если килл наш и механика включена.
+func _on_enemy_destroyed(killer: Node) -> void:
+	if killer == _body and disguise_s2_enabled:
+		_kill_latch_timer = disguise_s2_kill_latch_ttl_sec
+
 func _ensure_home_state() -> void:
 	# AMMO_SEEK/AMMO_RETRIEVE/AMMO_WAIT — та же логика исключения, что у PURSUE/SEARCH/
 	# ATTACK_OBJECTIVE: управляют своими переходами САМИ (см. State.AMMO_* в _physics_process()),
 	# не должны молча перезатираться каждый think-тик, пока цель не видна.
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE \
 			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT \
-			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK:
+			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK \
+			or state == State.DISGUISE or state == State.DISGUISE_PREP:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -1396,6 +1655,25 @@ func _ensure_home_state() -> void:
 		desired = State.HUNT
 	else:
 		desired = State.IDLE
+
+	# --- Оверлей маскировки бота (см. vault Tank_Prop_Hunt_Disguise.md) — поверх СПОКОЙНОГО
+	# домашнего поведения (IDLE/PATROL/HUNT/ATTACK_OBJECTIVE), не поверх ALERT/AMMO_*/MOD_* (дела
+	# важнее пряток). Момент прибытия на вейпоинт — одноразовый, потребляем ВСЕГДА, не только при
+	# срабатывании сценария. Гейт enemy_reaction_enabled: с выключенной реакцией бот отлаживает
+	# пути, а не исчезает в коробку.
+	# Сценарий 2 (защитник в засаде). Сценарий 1 (атакующий у objective) сюда НЕ попадает —
+	# State.ATTACK_OBJECTIVE самоуправляем, guard выше делает ранний return; его вход — в ветке
+	# State.ATTACK_OBJECTIVE в _physics_process() через _should_disguise_s1().
+	var reached_wp: bool = _just_reached_waypoint
+	_just_reached_waypoint = false
+	if disguise_bot_enabled and enemy_reaction_enabled and _state_machine.can_enter_disguise() \
+			and (desired == State.IDLE or desired == State.PATROL or desired == State.HUNT):
+		var prep_yaw: float = _disguise_s2_prep_yaw(reached_wp)
+		if not is_nan(prep_yaw):
+			_disguise_prep_yaw = prep_yaw
+			_disguise_prep_timer = disguise_prep_timeout_sec
+			desired = State.DISGUISE_PREP
+
 	if state != desired:
 		# [ДОБАВЛЕНО] entering_attack_objective считается ДО присвоения state=desired — тот же
 		# side-эффект входа, что и у штатного пути (1) в _advance_waypoint() (_reroll_aim_offset() +
@@ -1688,6 +1966,8 @@ func _on_respawned() -> void:
 	_stuck_reverse_timer = 0.0
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
+	_kill_latch_timer = 0.0        # маскировка (сценарий 2) — новая жизнь без старого латча засады
+	_just_reached_waypoint = false
 	if waypoints_one_way:
 		_waypoint_index = 0
 	# Ammo-стейты (см. заголовок файла) — respawn уже полностью восполняет боезапас
@@ -1826,6 +2106,7 @@ func _enter_defend(target: Node) -> void:
 		_reroll_aim_offset()
 	state = State.DEFEND
 	_current_target = target
+	_just_reached_waypoint = false  # маскировка (сценарий 2): «момент вейпоинта» протух — бой важнее
 	_last_known_target_pos = target.global_position
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = target.global_position
@@ -1932,6 +2213,8 @@ func _on_destroyed(_killer: Node) -> void:
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
+	_kill_latch_timer = 0.0
+	_just_reached_waypoint = false
 	# Смерть в MOD_SEEK — сразу освобождаем зону для других ботов нашей стороны
 	# (state == DEAD и так исключает бота из _zone_taken_by_other_bot, это дубль-страховка).
 	_mod_zone = null
@@ -2350,6 +2633,7 @@ func _advance_waypoint() -> void:
 	_max_leg_time_sec = max(_max_leg_time_sec, _leg_timer)  # рекорд — только обновляется, никогда не сбрасывается
 	_leg_timer = 0.0
 	_has_waypoint_target = false
+	_just_reached_waypoint = true  # одноразовый — маскировка (сценарий 2) потребляет в _ensure_home_state()
 	if waypoints_one_way and _waypoint_index >= _waypoints.size() - 1:
 		state = State.ATTACK_OBJECTIVE
 		_reroll_aim_offset()
@@ -2619,6 +2903,8 @@ func _local_point(local_deg: float, radius: float, height: float) -> Vector3:
 func _update_fov_debug_draw() -> void:
 	var mesh: ImmediateMesh = _fov_debug_mesh.mesh
 	mesh.clear_surfaces()
+	if state == State.DISGUISE or state == State.DISGUISE_PREP:
+		return  # конусы обзора заморожены — рисовать их как активные вводит в заблуждение
 
 	const SEGMENTS := 16
 	const HEIGHT := 0.55  # чуть выше корпуса — видно поверх HullMesh, не тонет в земле
@@ -2978,6 +3264,11 @@ func _update_brain_debug_label() -> void:
 				var dist: float = _body.global_position.distance_to(_mortar_target_node.global_position)
 				lines.append("mortar → %s (%.1fm, prep %.1fs)" % [String(_mortar_target_node.name), dist, max(0.0, _mortar_prep_timer)])
 			_append_nav_debug_lines(lines)
+		State.DISGUISE_PREP:
+			lines.append("pre-hide: aiming watch dir (%.1fs)" % max(0.0, _disguise_prep_timer))
+		State.DISGUISE:
+			var _dt: Node = _state_machine.get_node_or_null("DisguiseTimer")
+			lines.append("HIDDEN — %.1fs left" % (_dt.time_left if _dt != null else 0.0))
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

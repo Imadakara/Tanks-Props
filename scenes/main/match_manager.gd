@@ -35,6 +35,15 @@ var _round_timer: Timer
 var _final_stage_timer: Timer
 var _score_manager: Node
 
+## «Баскетбольное» правило для TARGET_OBJECTIVE: основное время вышло, objective цел, но в
+## воздухе ещё есть снаряды — ждём их приземления, и только потом засчитываем защите победу.
+## Если долетевший последним снаряд взорвёт objective уже ПОСЛЕ сигнала таймера — это победа
+## атаки (_on_objective_destroyed → _end_round("attack")). Потолок ожидания — на случай снаряда,
+## который завис / улетел в никуда и не самоуничтожился вовремя.
+var _settling_last_shots: bool = false
+var _settle_time: float = 0.0
+const _SETTLE_MAX_SEC := 4.0
+
 ## Вызывается из map_scene.gd._setup_match_context() сразу после add_child() — не _ready(): явным
 ## вызовом из оркестратора в корне сцены, тот же порядок, что и у ScoreManager.begin_match().
 ## objective_health = null для режима TEAM_ARENA (цели на карте нет).
@@ -56,12 +65,14 @@ func setup(mode: int, round_sec: float, score_manager: Node, objective_health: N
 	if _mode == MatchState.Mode.TARGET_OBJECTIVE and objective_health != null:
 		objective_health.destroyed.connect(_on_objective_destroyed)
 
+	set_process(false)  # _process нужен только на фазе «ждём приземления снарядов», см. ниже
+
 func _on_objective_destroyed(_killer: Node) -> void:
-	_end_round("attack")  # цель уничтожена — победа атакующих
+	_end_round("attack")  # цель уничтожена — победа атакующих (в т.ч. снарядом, долетевшим уже после таймера)
 
 func _on_round_timeout() -> void:
-	if _final_stage_active:
-		return  # финальная стадия уже идёт своим отдельным таймером — обычный таймаут не решает
+	if _final_stage_active or _round_over:
+		return  # финальная стадия / раунд уже закрыт — обычный таймаут не решает
 	# Основное время вышло. Финальная стадия — только если карта её включила И бой зашёл в тупик
 	# (все живые танки без боеприпасов). Иначе раунд решается сразу по обычному условию режима.
 	if _final_stage_enabled and _alive_tanks_all_out_of_ammo():
@@ -69,8 +80,36 @@ func _on_round_timeout() -> void:
 		return
 	if _mode == MatchState.Mode.TEAM_ARENA:
 		_end_round(_winner_by_kills())
-	else:
-		_end_round("defense")  # цель уцелела к концу таймера — победа защиты
+		return
+	# TARGET_OBJECTIVE — «баскетбол»: пока в воздухе есть снаряды, ждём их приземления и только
+	# потом засчитываем защите победу. Долетевший последним снаряд, взорвавший objective уже
+	# после сигнала таймера, разрешит раунд победой атаки (_on_objective_destroyed).
+	_settling_last_shots = true
+	_settle_time = 0.0
+	set_process(true)
+	_try_resolve_after_settle()  # снарядов в полёте нет — решаем сразу, без ожидания кадра
+
+func _process(delta: float) -> void:
+	if not _settling_last_shots:
+		return
+	_settle_time += delta
+	_try_resolve_after_settle()
+
+## Завершить фазу ожидания и засчитать защите победу, когда все снаряды приземлились ЛИБО вышел
+## потолок ожидания. Если objective за это время уже взорвался — _round_over выставлен
+## _on_objective_destroyed'ом, просто останавливаемся.
+func _try_resolve_after_settle() -> void:
+	if _round_over:
+		_settling_last_shots = false
+		set_process(false)
+		return
+	if _projectiles_in_flight() == 0 or _settle_time >= _SETTLE_MAX_SEC:
+		_settling_last_shots = false
+		set_process(false)
+		_end_round("defense")  # objective уцелел после падения всех снарядов
+
+func _projectiles_in_flight() -> int:
+	return get_tree().get_nodes_in_group("projectiles").size()
 
 ## Все ЖИВЫЕ (не на респавне) танки без боезапаса — и хотя бы один живой танк есть. Проверяется
 ## РОВНО в момент истечения основного таймера раунда (см. _on_round_timeout).
