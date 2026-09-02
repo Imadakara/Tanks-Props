@@ -524,6 +524,13 @@ const _DIFFICULTY_PRESETS := {
 ## конкретного difficulty-пресета, а правило самого механизма тревоги.
 @export var alert_timeout_sec: float = 10.0
 
+## [ДОБАВЛЕНО, по прямому запросу — "если HP objective 3 и менее и на карте есть живые
+## противники, атакующий должен добивать objective обычным оружием — приоритетная цель"] Порог
+## оставшегося HP objective (max_hits - current_hits), ниже/равно которому включается приоритет
+## добивания (см. _think()/_objective_low_health()). Общее правило механики, не тюнинг сложности —
+## как и alert_timeout_sec выше.
+@export var objective_priority_hp_threshold: int = 3
+
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
@@ -575,6 +582,10 @@ var _has_hunt_target: bool = false
 ## перезапустить те же (уже пройденные) вейпоинты по новой (waypoints_one_way не знает "уже
 ## приходил сюда", каждый заход в PATROL с непустым _waypoints обычно ведёт к тому же исходу).
 var _objective_node: Node3D = null
+## [ДОБАВЛЕНО — приоритет добивания objective] Сам HealthComponent objective (не только его
+## родитель, как _objective_node) — нужен читать current_hits/max_hits в _objective_low_health(),
+## найден той же группой "objective_health" за один заход, не отдельным поиском каждый think-тик.
+var _objective_health: Node = null
 var _objective_mission_complete: bool = false
 var _hunt_target_timer: float = 0.0
 
@@ -867,6 +878,7 @@ func _detect_hunt_area() -> void:
 func _find_objective() -> void:
 	var health: Node = get_tree().get_first_node_in_group("objective_health")
 	_objective_node = health.get_parent() if health != null else null
+	_objective_health = health
 
 ## См. @export-блок про ALERT выше. Тот же рекурсивный find_child, что и у Objective/Ground —
 ## ObjectiveAlertZone теперь дочерний узел самого Objective (часть его «префаба»), рекурсивный
@@ -1162,6 +1174,18 @@ func _think() -> void:
 		_enter_mortar_attack(_objective_node)
 		return
 
+	# [ДОБАВЛЕНО, по прямому запросу — "если HP objective 3 и менее и на карте есть живые
+	# противники, атакующий должен стрелять прежде всего в objective обычным оружием — приоритетная
+	# цель"] Симметрично мортирной ветке выше (та уже всегда так делает, просто мортирой — здесь для
+	# бота БЕЗ мортиры в слоте, обычным орудием). Objective почти уничтожен — дожать его дешевле и
+	# надёжнее, чем ввязываться в танковую дуэль по пути; "есть живые противники" проверяем явно,
+	# ровно по формулировке запроса (без противников это и так единственная разумная цель).
+	# TEAM_ARENA сюда не попадает — там _objective_node всегда null (см. _find_objective()).
+	if _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node) \
+			and _objective_low_health() and _any_enemy_alive():
+		_enter_attack_objective_priority()
+		return
+
 	var visible_target: Node = null
 	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из DEFEND не
 	# выпадает — бот продолжает огонь по «имитации» (см. _can_see()). Первичное обнаружение ниже
@@ -1199,6 +1223,49 @@ func _think() -> void:
 ## — тот же паттерн дистанции, посчитан здесь на СВОЙ _body, а не в цикле по всем танкам) — это
 ## единственное существующее в проекте понятие "окружность objective", симметрично реакции
 ## защитников на тот же круг с противоположной стороны.
+## [ДОБАВЛЕНО — приоритет добивания objective, см. _think()] Осталось <= objective_priority_hp_
+## threshold ударов до уничтожения. _objective_health ищется один раз в _find_objective(), null на
+## картах без objective (TEAM_ARENA) — вызывающий код уже гарантирует _objective_node валиден
+## (та же группа "objective_health"), но проверяем ещё раз defensive-паттерном, как остальные
+## подобные геттеры в файле.
+func _objective_low_health() -> bool:
+	if _objective_health == null or not is_instance_valid(_objective_health):
+		return false
+	var remaining: int = int(_objective_health.get("max_hits")) - int(_objective_health.get("current_hits"))
+	return remaining <= objective_priority_hp_threshold
+
+## [ДОБАВЛЕНО — приоритет добивания objective, см. _think()] Хотя бы один вражеский танк ещё жив
+## (не на респауне — RespawnController прячет труп через visible=false, см. _set_frozen()) — где-то
+## на карте, не обязательно в поле зрения ЭТОГО бота. Тот же паттерн обхода группы "tanks", что и
+## _scan_for_target(), но без конусов/raycast — важен сам факт "бой ещё не выигран", не видимость.
+func _any_enemy_alive() -> bool:
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other):
+			continue
+		if other.team == _body.team:
+			continue
+		if other.visible:
+			return true
+	return false
+
+## [ДОБАВЛЕНО — приоритет добивания objective, см. _think()] Форсированный вход в ATTACK_OBJECTIVE
+## из ЛЮБОГО текущего стейта (в т.ч. прямо из DEFEND — видимый вражеский танк теряет приоритет перед
+## почти уничтоженным objective). Идемпотентен — _think() зовёт это каждый тик, пока условие
+## держится; side-эффекты входа (реролл прицела, сброс driving-полей) только на настоящей смене
+## стейта, симметрично _enter_defend()/_enter_mortar_attack(). Сброс _current_target/_has_*_target —
+## тот же набор полей, что у _on_target_lost() (без её KILLER-ветки в PURSUE: конечная цель уже
+## известна, objective, не последняя позиция врага).
+func _enter_attack_objective_priority() -> void:
+	if state != State.ATTACK_OBJECTIVE:
+		_current_target = null
+		_has_waypoint_target = false
+		_has_hunt_target = false
+		_has_alert_target = false
+		_reroll_aim_offset()
+		state = State.ATTACK_OBJECTIVE
+	if _nav_agent.is_inside_tree():
+		_nav_agent.target_position = _objective_node.global_position
+
 func _is_within_objective_circle() -> bool:
 	# is_instance_valid: ObjectiveAlertZone — дочерний узел Objective, освобождается вместе с ним
 	# (после уничтожения ссылка висячая, != null). Обычно сюда не доходит (вызывается под guard
