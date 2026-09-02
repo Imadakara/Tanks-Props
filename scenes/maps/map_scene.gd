@@ -40,6 +40,10 @@ const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_st
 ## карты: TeamArenaMap = true, TargetObjectiveMap = false. Условие/логику см. match_manager.gd.
 @export var final_stage_enabled: bool = false
 
+## Опция карты: строить ли непроходимую красную границу по периметру пола (см. _build_map_borders).
+## ПО УМОЛЧАНИЮ ВКЛ. Выключить имеет смысл только для карты со своими границами/геометрией края.
+@export var map_border_enabled: bool = true
+
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
 @onready var _player_health: Node = $PlayerTank/HealthComponent
 @onready var _objective_camera: Camera3D = $ObjectiveCamera
@@ -65,11 +69,74 @@ var _alert_state := ObjectiveAlertStateScript.new()
 ## через ScoreManager/MatchManager.begin_match()/setup(), должна видеть уже полный состав (см.
 ## корневой CLAUDE.md, "Scene bring-up ordering").
 func _ready() -> void:
+	_build_map_borders()
 	_setup_invincibility_toggle_button()
 	$TeamSpawner.spawn_team()
 	_setup_match_context()
 	_objective_camera.look_at(Vector3(0, 1, -21), Vector3.UP)
 	_setup_objective_ui()
+
+## Непроходимая красная граница по периметру карты — 4 стены-коробки вокруг узла `Ground`.
+## Строится ИЗ КОДА (не в .tscn каждой карты): размеры берутся из коллайдера `Ground`, работает
+## для любой карты без ручной правки. Физическая (StaticBody3D, слой environment) — бот не может
+## выехать за край, даже если driving-стек толкнёт его туда (навмеш этого не гарантирует). Танк,
+## всё же оказавшийся ниже пола — принудительно убивается (respawn_controller.gd). Контейнер
+## кладётся ПОД NavigationRegion3D — при ручной перепечке навмеша (см. Obstacles_Navmesh_Guide)
+## стены вырежут края навмеша, и боты будут держаться от них дальше; до перепечки физическая
+## стена всё равно не даёт выехать.
+const _BORDER_HEIGHT := 3.0
+const _BORDER_THICKNESS := 1.0
+
+func _build_map_borders() -> void:
+	if not map_border_enabled:
+		return
+	var ground: Node3D = find_child("Ground", true, false)
+	if ground == null:
+		return
+	var shape: BoxShape3D = ground.get_node("CollisionShape3D").shape
+	var half_x: float = shape.size.x * 0.5
+	var half_z: float = shape.size.z * 0.5
+	var top_y: float = ground.global_position.y + shape.size.y * 0.5  # верх пола (обычно y = 0)
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.95, 0.15, 0.05, 0.5)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	var container := Node3D.new()
+	container.name = "MapBorders"
+	ground.get_parent().add_child(container)  # под NavigationRegion3D, рядом с Ground
+
+	var t: float = _BORDER_THICKNESS
+	var span_x: float = half_x * 2.0 + t * 2.0  # длиннее пола на толщину — углы стыкуются без щели
+	var span_z: float = half_z * 2.0 + t * 2.0
+	# [центр по XZ, размер коробки] — внутренняя грань каждой стены заподлицо с краем Ground
+	var specs := [
+		[Vector2(0.0, half_z + t * 0.5), Vector3(span_x, _BORDER_HEIGHT, t)],
+		[Vector2(0.0, -half_z - t * 0.5), Vector3(span_x, _BORDER_HEIGHT, t)],
+		[Vector2(half_x + t * 0.5, 0.0), Vector3(t, _BORDER_HEIGHT, span_z)],
+		[Vector2(-half_x - t * 0.5, 0.0), Vector3(t, _BORDER_HEIGHT, span_z)],
+	]
+	for i in specs.size():
+		var xz: Vector2 = specs[i][0]
+		var size: Vector3 = specs[i][1]
+		var body := StaticBody3D.new()
+		body.name = "Border%d" % (i + 1)
+		body.collision_mask = 0  # стена ничего не детектит; слой оставляем дефолтный (1 = environment)
+		var col := CollisionShape3D.new()
+		col.name = "CollisionShape3D"
+		var box := BoxShape3D.new()
+		box.size = size
+		col.shape = box
+		body.add_child(col)
+		var mesh_inst := MeshInstance3D.new()
+		mesh_inst.name = "Mesh"
+		var box_mesh := BoxMesh.new()
+		box_mesh.size = size
+		mesh_inst.mesh = box_mesh
+		mesh_inst.material_override = mat
+		body.add_child(mesh_inst)
+		container.add_child(body)
+		body.global_position = Vector3(xz.x, top_y + _BORDER_HEIGHT * 0.5, xz.y)
 
 ## Заводит ScoreManager/MatchManager из кода (не статичными узлами сцены — обе карты используют
 ## один и тот же общий оркестратор). Режим берётся из @export match_mode (задан в .tscn — «настройка

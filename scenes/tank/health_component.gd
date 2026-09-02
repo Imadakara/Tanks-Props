@@ -62,3 +62,16 @@ func take_hit(killer: Node = null, damage: int = 1) -> void:
 		destroyed.emit(killer)
 		if free_on_destroy:
 			get_parent().queue_free()
+
+## Принудительное уничтожение В ОБХОД invincible / attackers_only — для нештатных ситуаций, где
+## танк надо убрать из игры независимо от дебаг-бессмертия (провал за пределы карты, см.
+## respawn_controller.gd). Идёт по тому же пути, что обычная смерть: is_alive=false + сигнал
+## destroyed (+ free_on_destroy) — подписчики (RespawnController) отрабатывают как всегда.
+func force_destroy(killer: Node = null) -> void:
+	if not is_alive:
+		return
+	is_alive = false
+	current_hits = max_hits
+	destroyed.emit(killer)
+	if free_on_destroy:
+		get_parent().queue_free()

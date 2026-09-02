@@ -37,11 +37,23 @@ signal respawned
 @onready var _detector_collision: CollisionShape3D = get_parent().get_node("CollisionDetector/CollisionShape3D")
 @onready var _respawn_timer: Timer = $RespawnTimer
 
+## Танк, каким-то образом оказавшийся НИЖЕ поверхности карты (провалился сквозь пол / выдавлен
+## за красную границу и упал в пустоту), принудительно уничтожается — включая бессмертного
+## игрока (тумблер бессмертия на этот случай не действует, см. HealthComponent.force_destroy).
+## Верх пола у обеих карт — y ≈ 0; ничего штатного ниже ~y=-1 не бывает.
+const _FELL_BELOW_Y := -3.0
+
 func _ready() -> void:
 	_respawn_timer.one_shot = true
 	_respawn_timer.wait_time = GameConfig.respawn_cooldown_sec
 	_respawn_timer.timeout.connect(_on_respawn_timeout)
 	_health.destroyed.connect(_on_destroyed)
+
+## Этот узел — одно из исключений заморозки (см. _set_frozen), его _physics_process() работает
+## всегда, в т.ч. пока танк «мёртв» на кулдауне (там _health.is_alive == false → выходим).
+func _physics_process(_delta: float) -> void:
+	if _health.is_alive and _tank.global_position.y < _FELL_BELOW_Y:
+		_health.force_destroy()
 
 func _on_destroyed(_killer: Node) -> void:
 	_set_frozen(true)

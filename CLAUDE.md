@@ -156,10 +156,16 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   `free_on_destroy=false` on tanks hands cleanup to `RespawnController` instead of freeing the node;
   `invincible` is a point override (see the debug toggle buttons under "Game modes"), not part of
   normal balance. The "red paint" on a non-fatal hit is `tank.gd._on_damaged()` (material swap on
-  `HullMesh`/turret mesh).
+  `HullMesh`/turret mesh). `force_destroy(killer := null)` bypasses `invincible`/`attackers_only`
+  but still routes through `destroyed` — for "removed from play regardless of debug immortality"
+  cases (only caller today: fell below the map, see `RespawnController`).
 - `RespawnController` — on death, disables the tank in place (hidden, colliders off,
   `process_mode = DISABLED` on every sibling except itself and `HealthComponent`) instead of
-  freeing it, then teleports/resets it after `GameConfig.respawn_cooldown_sec`.
+  freeing it, then teleports/resets it after `GameConfig.respawn_cooldown_sec`. Its
+  `_physics_process` (this node is never frozen) also **force-kills any tank whose
+  `global_position.y` drops below `_FELL_BELOW_Y` = -3** (fell through the floor / squeezed past
+  the map border into the void) via `HealthComponent.force_destroy()` — works on the invincible
+  player too; the normal respawn cycle then brings it back at its spawn zone.
 - `TankAIController` — the single AI brain for the whole project. Present on every `Tank.tscn`
   instance but inert (`enabled=false`) unless a spawner turns it on; when enabled it flips every
   sibling's `is_player_controlled` to `false` and drives them through the same public contract the
@@ -174,8 +180,16 @@ activity, see below) before the instance is meaningfully alive in the tree.
 ### Scene bring-up ordering
 
 Every map's root script (`scenes/maps/map_scene.gd`) explicitly sequences
-`TeamSpawner.spawn_team() → MatchManager.setup(...) → ScoreManager.begin_match()` in its own
-`_ready()`, rather than letting each manager act in its own `_ready()`. Two reasons this matters
+`_build_map_borders() → TeamSpawner.spawn_team() → MatchManager.setup(...) →
+ScoreManager.begin_match()` in its own `_ready()`, rather than letting each manager act in its own
+`_ready()`. (`_build_map_borders()` — a per-map `@export var map_border_enabled` toggle, **default
+on**, set in each map's `.tscn` like `match_mode`/`final_stage_enabled` — reads the `Ground`
+collision box and adds a 4-wall solid red `MapBorders` ring, thickness 1 / height 3, flush with the
+ground edge, under `NavigationRegion3D` — an impassable perimeter so bots can't drive off the map;
+code-generated so it fits any map's ground size with no per-`.tscn` geometry work. It's a physical
+block regardless of navmesh; a manual navmesh re-bake would additionally carve the edges. The rare
+tank that still slips past — or a map that opts out of the border — is caught by the fell-below
+force-kill in `RespawnController`, above.) Two reasons this matters
 when adding new per-match setup code: (1) `add_child()` on `current_scene` from *inside* a
 sibling's own `_ready()` fails ("Parent node is busy setting up children") — the tree is still
 being built; the root's `_ready()` runs last, after all declared children, so it's the safe place.
