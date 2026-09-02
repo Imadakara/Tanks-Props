@@ -46,7 +46,6 @@ extends Node
 @export var mortar_objective_damage: int = 30  # урон навесного выстрела мортиры (по objective — из 100 HP; по танку 30 >= max_hits → one-shot)
 @export var mortar_drop_interval_sec: float = 30.0  # раз в столько секунд боя красный ящик падает ОДНОВРЕМЕННО в каждой зоне сброса (только режим TARGET_OBJECTIVE)
 @export var mortar_fresh_window_sec: float = 10.0  # сколько секунд ПОСЛЕ сброса атакующий бот считает мортиру «свежей» и едет за ней (иначе продолжает атаковать objective)
-@export var mod_zone_wait_sec: float = 5.0  # сколько атакующий бот ждёт у зоны сброса появления ящика мортиры, прежде чем вернуться к атаке
 @export var mortar_prep_sec: float = 1.5  # «фаза подготовки» бота перед навесным выстрелом: сколько держать сведённый прицел до залпа
 @export var respawn_cooldown_sec: float = 10.0  # уничтоженный танк возвращается в игру через столько сек (пост-ревью, см. respawn_controller.gd)
 @export var defense_wins_ties: bool = true

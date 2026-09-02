@@ -35,7 +35,7 @@ what the code does, including reasoning behind changes that were tried and rever
   red `ModCrate` (spawned by the ammo drop-zone leader, both zones at once, `TARGET_OBJECTIVE`
   only), and the first modification, the **mortar** — barrel attachment, two-press lobbed special
   shot with its own aiming camera + ground-ring reticle, +30 to the 100-HP objective / one-shot
-  vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_WAIT`/`MOD_RETRIEVE`/
+  vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_RETRIEVE`/
   `MORTAR_ATTACK`): attackers only within a 10 s window after each mortar drop (and coordinating so
   two bots don't chase the same zone), defenders only on a crate they can see.
 - `Tank_Prop_Hunt_Map_Creation_Guide.md` — **step-by-step how-to for designers** (assumes no
@@ -138,11 +138,13 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   12); a movement key exits aiming with no shot. The aiming reticle is a **3D ring lying on the
   ground** at the predicted impact point (`_reticle_ring`, `TorusMesh`, `top_level`) — it slides
   over the surface with the mouse; no screen crosshair in this mode. Bots both pick up **and use**
-  the mortar via `TankAIController` (`MOD_SEEK`/`MOD_WAIT`/`MOD_RETRIEVE`/`MORTAR_ATTACK`):
+  the mortar via `TankAIController` (`MOD_SEEK`/`MOD_RETRIEVE`/`MORTAR_ATTACK`):
   attackers head for a drop zone only within a 10 s window after a mortar drop (`_should_seek_mortar()`;
-  `mortar_bot_took` per zone + live occupancy check keep multiple bots from chasing one zone) and
-  lob at the objective while avoiding tank fights; defenders grab a crate only if it enters their
-  view and lob at enemy tanks. Full detail:
+  `mortar_taken` per zone + live occupancy check keep multiple bots from chasing one zone; no crate
+  on arrival → back to normal, no loitering) and lob at the objective while avoiding tank fights —
+  but once the mortar is spent, a visible tank shooting them takes priority (→ `DEFEND`). Defenders
+  grab a crate only if it enters their view and lob at enemy tanks; a bot seeking ammo grabs a
+  mortar if that's all the zone has. Full detail:
   `Tank_Prop_Hunt_Modifications.md`.
 - `HealthComponent` — `take_hit(killer, damage := 1)`; `current_hits += damage`, `destroyed` at
   `current_hits >= max_hits`. Tanks use `max_hits` **3** (`config/*_tank_config.json`, script
@@ -376,17 +378,19 @@ sandbox.
 Single AI system for the whole project — every map deploys the exact same node/script, not a
 per-map or per-context system. Lives as a dormant sibling on every `Tank.tscn` instance (including
 the player's, see "Tank as a composed entity" above) and lazily self-inits on first enabled
-`_physics_process()` tick. A 16-state priority engine
+`_physics_process()` tick. A 15-state priority engine
 (`IDLE/PATROL/DEFEND/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
-AMMO_WAIT/MOD_SEEK/MOD_WAIT/MOD_RETRIEVE/MORTAR_ATTACK`) with a NavMesh-based driving stack (pure
+AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK`) with a NavMesh-based driving stack (pure
 pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
 `ACHIEVER` self-degrades to `KILLER` behavior at init if the map has no objective), three difficulty
 tiers, and integrations with the shared
 `RespawnController`/`HealthComponent`/`AmmoComponent`/`ModificationController` (death state,
 alert-on-hit, ballistic aim, ammo-crate seeking, plus mortar pickup **and use** — attackers head
 for a drop zone only in a 10 s window after a mortar drop (coordinating so two bots take different
-zones) and lob at the objective while avoiding tank fights, defenders grab a seen crate and lob at
-tanks; full detail in `Tank_Prop_Hunt_Modifications.md`). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
+zones; nothing there → straight back to normal) and lob at the objective while not seeking fights,
+though a visible tank shooting them after the shot takes priority; defenders grab a seen crate and
+lob at tanks; a low-ammo bot grabs a mortar if the zone has no ammo crate; full detail in
+`Tank_Prop_Hunt_Modifications.md`). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
 name- or scene-structure-specific, so the same file works unmodified on any map. Bots don't activate
 or seek disguise; `_can_see()` hides a `DISGUISED` enemy from *acquisition* but not from a bot
 already fighting it (`ignore_disguise` param — see `DisguiseController` above and
