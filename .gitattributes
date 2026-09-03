@@ -1,2 +1,12 @@
 # Normalize EOL for all files that Git considers text files.
 * text=auto eol=lf
+
+# Godot text formats — pin as text so an embedded base64 blob in a .tres never
+# makes text=auto guess "binary" (which would kill line diffs / merges).
+*.gd      text eol=lf
+*.tscn    text eol=lf
+*.tres    text eol=lf
+*.godot   text eol=lf
+*.import  text eol=lf
+*.cfg     text eol=lf
+*.json    text eol=lf

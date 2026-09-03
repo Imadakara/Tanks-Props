@@ -1,0 +1,18 @@
+{
+  "editor.detectIndentation": false,
+
+  "[json]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.formatOnSave": false
+  },
+  "[jsonc]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+
+  "[gdscript]": {
+    "editor.insertSpaces": false,
+    "editor.tabSize": 4
+  }
+}

@@ -2,3 +2,25 @@ root = true
 
 [*]
 charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# GDScript — Godot uses tabs.
+[*.gd]
+indent_style = tab
+indent_size = 4
+
+# JSON config (rosters, tank configs) — 2-space, matches committed style.
+# Keeps a text editor (VS Code, Godot's built-in editor) from re-tabbing these
+# and producing a whitespace-only git diff every time the file is opened + saved.
+[*.json]
+indent_style = space
+indent_size = 2
+
+# Godot serializer-owned files. The Godot editor and the godot-runtime MCP write
+# their own canonical format and ignore this file; these rules only bite if a
+# human opens one in a text editor — keep such a save from reformatting it.
+[*.{tscn,tres,godot,import}]
+indent_style = tab
+trim_trailing_whitespace = false
