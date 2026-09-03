@@ -244,6 +244,13 @@ instantiating `Tank.tscn`; no map has static bot nodes.
 `@export var roster_config_path` (same per-instance-config pattern as `map_scene.gd`'s
 `match_mode`) — `config/roster_target_objective.json`/`config/roster_team_arena.json`. A roster is
 an array of "squad" dicts:
+
+> If a roster (or any `config/*.json`) shows a whitespace-only diff after a Godot editor
+> session, it's Godot's `text_editor/behavior/files/convert_indent_on_save` (default on)
+> reindenting the file while it sits open in a script-editor tab — a per-machine editor
+> setting, fixed by turning it off; see the `godot-editor-convert-indent` memory. Not a code
+> issue; `git checkout -- config/<file>.json`.
+
 - `team` (0/1) — which `SpawnZone` the squad spawns from.
 - `count` — bots in this squad; `0`/absent → `GameConfig.team_size` (the one place team size is
   ever read; both current rosters instead give a fixed explicit count, e.g. `1`, since neither map
