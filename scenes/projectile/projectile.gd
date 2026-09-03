@@ -10,7 +10,7 @@ signal hit_tank(tank: Node)
 @export var fall_acceleration: float = 9.8
 @export var max_lifetime_sec: float = 8.0
 ## Урон, передаётся в HealthComponent.take_hit(). Обычный выстрел = 1; спец-выстрел модификации
-## (WeaponController.fire_special; мортира ставит GameConfig.mortar_objective_damage = 30) —
+## (WeaponController.fire_special; мортира ставит GameConfig.mortar_objective_damage = 20) —
 ## этого хватает и на one-shot по танку (max_hits 3), и на кусок 100-HP objective.
 @export var damage: int = 1
 

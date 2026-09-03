@@ -14,7 +14,7 @@ extends Node
 signal damaged(current_hits: int, max_hits: int, killer: Node)
 signal destroyed(killer: Node)
 
-## Танки — 3 HP (config/*_tank_config.json + этот дефолт): мортира (30 ≥ 3) гарантированно
+## Танки — 3 HP (config/*_tank_config.json + этот дефолт): мортира (20 ≥ 3) гарантированно
 ## one-shot, обычный снаряд — 3 попадания. Objective перетирается на 100 (см. objective_hits_required).
 @export var max_hits: int = 3
 ## true только на HealthComponent узла Objective (задано прямо в .tscn каждой карты) — оборона
@@ -33,8 +33,8 @@ var current_hits: int = 0
 var is_alive: bool = true
 
 ## damage — сколько единиц урона снимает это попадание (обычный снаряд = 1, спец-выстрел мортиры =
-## GameConfig.mortar_objective_damage 30). current_hits/max_hits для цели трактуются как HP; для
-## танков (max_hits = 3) мортира (30) — гарантированный one-shot, отдельной ветки не нужно.
+## GameConfig.mortar_objective_damage 20). current_hits/max_hits для цели трактуются как HP; для
+## танков (max_hits = 3) мортира (20) — гарантированный one-shot, отдельной ветки не нужно.
 func take_hit(killer: Node = null, damage: int = 1) -> void:
 	if invincible:
 		return

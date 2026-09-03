@@ -267,6 +267,15 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var fire_range: float = 15.0
 @export var fire_aim_tolerance_deg: float = 5.0
 
+## Дистанция, на которой DEFEND перестаёт сближаться с целью-танком, как доля `fire_range`. НЕ
+## фиксированная: на каждый новый заход в бой (смена цели в `_enter_defend()`) выбирается случайно
+## в диапазоне `[defend_reach_frac_min, 1.0] * fire_range` и держится весь этот бой. Смысл —
+## боты не сбиваются в кучу на одной и той же дистанции, часть держит бой у самой границы
+## стрельбы. Нижняя доля 0.85 = прежнее фиксированное значение (запас, чтобы гарантированно
+## оказаться ВНУТРИ радиуса стрельбы, а не топтаться ровно на границе). Верхняя = 1.0 (ровно
+## `fire_range`).
+@export var defend_reach_frac_min: float = 0.85
+
 ## [ДОБАВЛЕНО, по прямому запросу — "текущая реализация стрельбы не учитывает параболическую
 ## траекторию снарядов, боты должны приподнимать дуло на нужный угол для гарантированного попадания"]
 ## Снаряд падает под гравитацией (см. projectile.gd/fall_acceleration) — прицел точно в центр цели
@@ -717,6 +726,10 @@ var _current_target: Node = null
 ## как валидный стейт). Потребляется ОДИН раз в _try_resume_pre_combat_state(), вызывается из
 ## _think() сразу после _on_target_lost().
 var _pre_combat_state: int = -1
+## Доля `fire_range`, на которой DEFEND останавливает сближение в ТЕКУЩЕМ бою. Рероллится в
+## `randf_range(defend_reach_frac_min, 1.0)` на смену цели в `_enter_defend()` (не на каждый
+## think-тик — иначе дистанция боя дёргалась бы). Дефолт = нижняя граница (0.85).
+var _defend_reach_frac: float = 0.85
 ## Решение "упреждать ли следующий выстрел" (см. @export lead_chance_min/max и
 ## _reroll_lead_decision()) — рерольнуто заранее (заход прицеливания / сразу после предыдущего
 ## выстрела), не в момент самого выстрела: иначе точка прицеливания дёргалась бы именно в момент
@@ -1168,17 +1181,19 @@ func _physics_process(delta: float) -> void:
 				# [ИЗМЕНЕНО, по прямому запросу — "стрелять на ходу, если цель в зоне досягаемости
 				# стрельбы"] Раньше дистанция гейтилась ЖЁСТКО по fire_range: вошёл в радиус —
 				# движение обнулялось целиком, бот превращался в неподвижную турель. Теперь бот
-				# ВСЕГДА продолжает ехать к цели (reach_dist = fire_range*0.85 — запас, чтобы
-				# гарантированно оказаться ВНУТРИ радиуса стрельбы, не топтаться ровно на границе,
-				# где float-погрешность может дать dist чуть больше fire_range на отдельных
-				# кадрах), стреляя всю дорогу — `_aim_and_fire()` сама решает, готов ли выстрел
+				# ВСЕГДА продолжает ехать к цели (reach_dist = fire_range * _defend_reach_frac —
+				# случайная на этот бой доля в [defend_reach_frac_min, 1.0], рероллится на смену
+				# цели в _enter_defend(); нижняя доля 0.85 — прежний запас, чтобы гарантированно
+				# оказаться ВНУТРИ радиуса стрельбы, а не топтаться ровно на границе, где
+				# float-погрешность может дать dist чуть больше fire_range на отдельных кадрах),
+				# стреляя всю дорогу — `_aim_and_fire()` сама решает, готов ли выстрел
 				# (dist<=fire_range), движение сближения этому не мешает. Останавливается ТОЛЬКО
 				# по факту реального прибытия (`arrived`), явно — не полагаемся на то, что
 				# _drive_to_point() сама не трогает inputs после arrived (см. её комментарий):
 				# при живой, двигающейся цели это оставило бы старый ненулевой газ навсегда,
 				# бот продолжал бы упираться в цель без тормоза/антизастряла (те тоже не
 				# выполняются в её ветке "уже приехали").
-				var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * 0.85)
+				var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * _defend_reach_frac)
 				if arrived:
 					_movement.ai_move_input = 0.0
 					_movement.ai_turn_input = 0.0
@@ -1582,6 +1597,21 @@ func _think() -> void:
 		visible_target = _current_target
 	else:
 		visible_target = _scan_for_target()
+
+	# [ДОБАВЛЕНО, по прямому запросу — "если замечен атакующий бот с мортирой — он приоритетная
+	# цель для защитника, на другие активности не отвлекаться, кроме подбора боеприпасов по
+	# существующим правилам"] Только TARGET_OBJECTIVE (`_objective_node` — тот же гейт, что уже
+	# использует _enter_attack_objective_priority() выше, TEAM_ARENA сюда не попадает). Не заменяет
+	# visible_target выше, а ПЕРЕОПРЕДЕЛЯЕТ его — сработает даже если защитник уже держит DEFEND на
+	# ДРУГОМ, обычном танке (см. ветку `_current_target` строкой выше — та без этой проверки
+	# держала бы менее опасную цель, пока сама не потеряется) или уже собрался в засаду/патруль
+	# (_ensure_home_state() ниже до неё не дойдёт, раз visible_target не null). "Существующие правила
+	# подбора боеприпасов" не трогаем — AMMO_SEEK по пустому боезапасу гейтится РАНЬШЕ (см. проверку
+	# `_ammo.has_ammo()` в начале этой функции) и сюда не доходит вообще.
+	if not _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node):
+		var mortar_carrier: Node = _scan_for_mortar_carrier()
+		if mortar_carrier != null:
+			visible_target = mortar_carrier
 
 	if visible_target != null:
 		# [ДОБАВЛЕНО — система модификаций] ЗАЩИТНИК с мортирой применяет её по вражескому танку
@@ -2515,6 +2545,26 @@ func _scan_for_target() -> Node:
 			return other
 	return null
 
+## [ДОБАВЛЕНО, по прямому запросу — см. её вызов в _think()] Ищет СРЕДИ ВСЕХ видимых вражеских
+## танков того, кто прямо сейчас несёт готовую к применению модификацию (в игре сейчас только
+## мортира — то же самое `ai_usable()`, что и у _has_mortar() для СВОЕГО слота, здесь читается на
+## ЧУЖОМ ModificationController, тем же паттерном, что _enemy_is_disguised() читает чужой
+## TankStateMachine). В отличие от _scan_for_target() (первый попавшийся видимый враг по порядку
+## группы "tanks", без приоритета) — идёт по ВСЕМ видимым, не останавливаясь на первом без мортиры,
+## иначе мортироносец, стоящий в группе позже, остался бы незамеченным, пока виден кто-то ещё.
+func _scan_for_mortar_carrier() -> Node:
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other):
+			continue
+		if other.team == _body.team:
+			continue
+		if not _can_see(other):
+			continue
+		var enemy_mod: Node = other.get_node_or_null("ModificationController")
+		if enemy_mod != null and enemy_mod.ai_usable():
+			return other
+	return null
+
 ## Замаскирован ли этот вражеский танк под объект-препятствие прямо сейчас (см. disguise_controller.gd).
 ## GameConfig.ai_can_see_disguised_tanks=true — гейт отключён, всегда false.
 func _enemy_is_disguised(t: Node) -> bool:
@@ -2598,10 +2648,14 @@ func _can_see(target: Node3D, ignore_disguise: bool = false) -> bool:
 ## repath 60 раз/сек без реальной пользы.
 func _enter_defend(target: Node) -> void:
 	# Переустановка решений точности (упреждение/шанс попасть/промах, см. _reroll_accuracy_decisions())
-	# только на смену цели — _enter_defend() вызывается КАЖДЫЙ think-тик, пока цель видна (см.
-	# _think()), рероллить на каждый такой вызов заставляло бы прицел дёргаться внутри одного боя.
+	# и дистанции сближения — только на смену цели — _enter_defend() вызывается КАЖДЫЙ think-тик,
+	# пока цель видна (см. _think()), рероллить на каждый такой вызов заставляло бы прицел дёргаться,
+	# а дистанцию боя — гулять внутри одного боя.
 	if _current_target != target:
 		_reroll_accuracy_decisions()
+		# Случайная дистанция сближения на этот бой — от defend_reach_frac_min до ровно fire_range
+		# (см. @export-блок), чтобы боты не сходились в кучу на одном и том же расстоянии.
+		_defend_reach_frac = randf_range(defend_reach_frac_min, 1.0)
 	# «Спалился» из APPROACH/PREP/DISGUISE (единственные вызывающие пути сюда из маскировки) —
 	# hide-зона больше не занята нами, другой бот нашей стороны может её выбрать (см.
 	# _hide_zone_taken_by_other_bot()). Безусловно и безопасно — no-op, если не прятались.

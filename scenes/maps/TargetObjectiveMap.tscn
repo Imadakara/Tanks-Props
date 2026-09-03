@@ -123,7 +123,7 @@ attackers_only = true
 [node name="ObjectiveAlertZone" type="Node3D" parent="NavigationRegion3D/Objective" unique_id=1340384586]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0)
 script = ExtResource("8_execi")
-radius = 12.0
+radius = 12.6
 
 [node name="Obstacle1" parent="NavigationRegion3D" unique_id=1939478267 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.625, -13.5)

@@ -34,8 +34,8 @@ what the code does, including reasoning behind changes that were tried and rever
   the single HUD slot (pick up only when empty, both teams, no drop — use or lose on death), the
   red `ModCrate` (spawned by the ammo drop-zone leader, both zones at once, `TARGET_OBJECTIVE`
   only), and the first modification, the **mortar** — barrel attachment, two-press lobbed special
-  shot with its own aiming camera + ground-ring reticle, +30 to the 100-HP objective / one-shot
-  vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_RETRIEVE`/
+  shot with its own aiming camera + ground-ring reticle, `GameConfig.mortar_objective_damage`
+  to the 100-HP objective / one-shot vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_RETRIEVE`/
   `MORTAR_ATTACK`): attackers only within a 10 s window after each mortar drop (and coordinating so
   two bots don't chase the same zone), defenders only on a crate they can see.
 - `Tank_Prop_Hunt_Map_Creation_Guide.md` — **step-by-step how-to for designers** (assumes no
@@ -150,7 +150,7 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   default also 3 — raised from 2 so the mortar has a point vs tanks; normal `Projectile.damage` is
   1; a non-fatal hit updates only the debug HP `Label3D`, no mesh repaint). The objective uses this as an **HP pool** — `match_manager.gd` sets its
   `max_hits = GameConfig.objective_hits_required` (**100**), a normal shell does 1, the mortar
-  special does `GameConfig.mortar_objective_damage` (30). `attackers_only` lets an objective ignore
+  special does `GameConfig.mortar_objective_damage`. `attackers_only` lets an objective ignore
   friendly fire;
   `free_on_destroy=false` on tanks hands cleanup to `RespawnController` instead of freeing the node;
   `invincible` is a point override (see the debug toggle buttons under "Game modes"), not part of
@@ -553,10 +553,12 @@ its own. Launch either map directly via `run_project`'s `scene:` param (or repoi
 to skip the menu:
 
 - `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
-  centre `(0,1,0)` (no central wall), the `Waypoint1..4` defender diamond recentred on it
-  (vertices at `±17` on each axis, so the r=12 `ObjectiveAlertZone` circle inscribes), one defense
+  centre `(0,1,0)` (no central wall), the `Waypoint1..4` defender diamond around it, one defense
   bot (`ACHIEVER`, patrols/defends around it) and one attack bot (`ACHIEVER`, one-way route to the
-  objective), both `TankAIController`.
+  objective), both `TankAIController`. Balance knobs stay single-sourced: mortar damage is
+  `GameConfig.mortar_objective_damage`, the alert-circle radius is `ObjectiveAlertZone.radius` in
+  the `.tscn` — docs cite them by name, values live only in the two param tables
+  (`Tank_Prop_Hunt_Modifications.md` §8, `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.4).
 - `scenes/maps/TeamArenaMap.tscn` — TEAM_ARENA template: one `KILLER` bot roaming the whole map,
   described above.
 

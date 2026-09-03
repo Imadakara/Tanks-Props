@@ -46,7 +46,7 @@ extends Node
 @export var round_timer_sec: float = 180.0  # режим TARGET_OBJECTIVE (Destroy Target) — 3 мин на раунд
 @export var team_arena_round_sec: float = 180.0  # режим TEAM_ARENA — командный бой, 3 мин на раунд
 ## ПОЛНОЕ ЗДОРОВЬЕ objective-цели (HP-модель, см. Tank_Prop_Hunt_Modifications.md): обычный снаряд
-## снимает 1 (Projectile.damage), спец-выстрел мортиры — mortar_objective_damage (30).
+## снимает 1 (Projectile.damage), спец-выстрел мортиры — mortar_objective_damage (20).
 ## HealthComponent.current_hits для цели трактуется как HP. match_manager.gd проставляет это в
 ## objective_health.max_hits при setup().
 @export var objective_hits_required: int = 100  # режим "Destroy Target" — HP объекта-цели для победы атаки
@@ -55,7 +55,7 @@ extends Node
 ## Первая модификация — «мортира»: одноразовая насадка на дуло, навесной спец-выстрел.
 @export var mortar_range: float = 9.0  # макс. вынос кружка-прицела и дальность навесного выстрела (половина базового vision_range бота)
 @export var mortar_launch_speed: float = 12.0  # начальная скорость навесного снаряда мортиры — заметно ниже обычной (~30), чтобы mortar_range был близок к пределу дальности и дуга реально менялась ближе/дальше
-@export var mortar_objective_damage: int = 30  # урон навесного выстрела мортиры (по objective — из 100 HP; по танку 30 >= max_hits → one-shot)
+@export var mortar_objective_damage: int = 20  # урон навесного выстрела мортиры (по objective — из 100 HP; по танку 20 >= max_hits(3) → one-shot)
 @export var mortar_drop_interval_sec: float = 30.0  # раз в столько секунд боя красный ящик падает ОДНОВРЕМЕННО в каждой зоне сброса (только режим TARGET_OBJECTIVE)
 @export var mortar_fresh_window_sec: float = 10.0  # сколько секунд ПОСЛЕ сброса атакующий бот считает мортиру «свежей» и едет за ней (иначе продолжает атаковать objective)
 @export var mortar_prep_sec: float = 1.5  # «фаза подготовки» бота перед навесным выстрелом: сколько держать сведённый прицел до залпа
