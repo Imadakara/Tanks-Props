@@ -250,12 +250,24 @@ func _apply_squad_to_brain(brain: Node, squad: Dictionary) -> void:
 		brain.disguise_s1_enabled = bool(squad["disguise_s1_enabled"])
 	if squad.has("disguise_s1_predrop_window_sec"):
 		brain.disguise_s1_predrop_window_sec = float(squad["disguise_s1_predrop_window_sec"])
+	# [ДОБАВЛЕНО, по прямому запросу — "не всегда фиксированное окно, а от MIN до MAX случайно"]
+	if squad.has("disguise_s1_predrop_window_min_sec"):
+		brain.disguise_s1_predrop_window_min_sec = float(squad["disguise_s1_predrop_window_min_sec"])
 	if squad.has("disguise_s1_min_round_time_left_sec"):
 		brain.disguise_s1_min_round_time_left_sec = float(squad["disguise_s1_min_round_time_left_sec"])
 	if squad.has("disguise_s2_enabled"):
 		brain.disguise_s2_enabled = bool(squad["disguise_s2_enabled"])
 	if squad.has("disguise_s2_kill_latch_ttl_sec"):
 		brain.disguise_s2_kill_latch_ttl_sec = float(squad["disguise_s2_kill_latch_ttl_sec"])
+	# [ДОБАВЛЕНО, по прямому запросу — "в противовес атакующим — засада защитника у зоны мортиры"]
+	if squad.has("disguise_s3_enabled"):
+		brain.disguise_s3_enabled = bool(squad["disguise_s3_enabled"])
+	if squad.has("disguise_s3_predrop_window_min_sec"):
+		brain.disguise_s3_predrop_window_min_sec = float(squad["disguise_s3_predrop_window_min_sec"])
+	if squad.has("disguise_s3_predrop_window_max_sec"):
+		brain.disguise_s3_predrop_window_max_sec = float(squad["disguise_s3_predrop_window_max_sec"])
+	if squad.has("disguise_s3_timeout_after_drop_sec"):
+		brain.disguise_s3_timeout_after_drop_sec = float(squad["disguise_s3_timeout_after_drop_sec"])
 
 func _role_from_string(s: String) -> int:
 	match s:

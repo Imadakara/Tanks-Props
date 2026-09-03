@@ -569,12 +569,33 @@ const _DIFFICULTY_PRESETS := {
 ## мортиры (см. vault-план). Условия жёсткие: при disguise_s1_enabled и их совпадении бот уходит
 ## в маскировку ГАРАНТИРОВАННО (без вероятностной ставки).
 @export var disguise_s1_enabled: bool = false
-@export var disguise_s1_predrop_window_sec: float = 10.0  # входим, если до сброса мортиры осталось <= столько
+## [ИЗМЕНЕНО, по прямому запросу — "не всегда фиксированное окно, а от MIN до MAX случайно"]
+## Входим, если до сброса мортиры осталось <= порогу, случайно выбранному в [MIN, MAX] — порог
+## перевыбирается РАЗ ЗА ЦИКЛ сброса (не каждый think-тик, иначе мог бы "уехать" уже после того,
+## как сценарий начал срабатывать, — см. _s1_current_predrop_threshold()). MAX сохранил старое имя
+## поля (обратная совместимость с уже настроенными ростерами — раньше единственное значение).
+@export var disguise_s1_predrop_window_sec: float = 15.0  # MAX
+@export var disguise_s1_predrop_window_min_sec: float = 10.0  # MIN
 @export var disguise_s1_min_round_time_left_sec: float = 25.0  # ...и до конца раунда осталось >= столько
 ## Сценарий 2 — защитник после убийства уходит в засаду-маскировку на очередной точке маршрута
 ## (см. vault-план). Тоже гарантия при совпадении условий, не вероятность.
 @export var disguise_s2_enabled: bool = false
 @export var disguise_s2_kill_latch_ttl_sec: float = 10.0  # латч «только что убил врага» горит столько секунд
+## [ДОБАВЛЕНО, по прямому запросу — "в противовес атакующим — засада защитника у зоны мортиры,
+## раньше атакующего по таймингу"] Сценарий 3 — ОДИН защитник (см. условие "минимум 2 живых бота
+## обороны" в _should_ambush_mortar_zone_s3()) заранее выезжает к зоне сброса мортиры и
+## маскируется там в ожидании атакующего, который туда поедет. Окно [MIN, MAX] секунд до сброса —
+## СТРОГО РАНЬШЕ окна сценария 1 у атакующего (тот теперь 10-15, значит здесь минимум должен быть
+## больше 15, дефолт 20-25 — защитник уже сидит в засаде, когда атакующий только начинает
+## собираться), тот же приём случайного порога за цикл, что и у сценария 1.
+@export var disguise_s3_enabled: bool = false
+@export var disguise_s3_predrop_window_min_sec: float = 20.0
+@export var disguise_s3_predrop_window_max_sec: float = 25.0
+## Если за это время после РЕАЛЬНОГО сброса (не после входа в засаду — см.
+## _s3_drops_done_at_ambush_start) никто не появился — выходим из маскировки, возвращаемся к своим
+## делам (см. её проверку в _think(), ветка State.DISGUISE). ALERT — отдельное, уже существующее
+## условие выхода (elif _alert_is_active(), общее для любой защитной маскировки), не дублируем.
+@export var disguise_s3_timeout_after_drop_sec: float = 10.0
 ## После попадания по боту — столько секунд НЕ начинаем прятаться (ни сценарий 1, ни 2): по нам
 ## ведут огонь, сначала разберись со стрелком. Гасит и повторный уход в укрытие под обстрелом.
 @export var disguise_no_hide_after_hit_sec: float = 5.0
@@ -717,6 +738,26 @@ var _current_hide_zone: Node = null
 var _disguise_prep_yaw: float = 0.0
 var _disguise_prep_timer: float = 0.0
 var _kill_latch_timer: float = 0.0
+## [ДОБАВЛЕНО, по прямому запросу] Случайный порог сценария 1 ("за сколько секунд до сброса
+## начинать") — перевыбирается раз за цикл сброса, не каждый think-тик (см.
+## _s1_current_predrop_threshold()). _cycle — номер цикла (mortar_drops_done зоны-лидера), на
+## котором порог был выбран в последний раз; смена номера = новый бросок.
+var _s1_predrop_threshold: float = 0.0
+var _s1_predrop_threshold_cycle: int = -1
+## [ДОБАВЛЕНО, по прямому запросу — "в противовес атакующим — засада защитника у зоны мортиры"]
+## Сценарий 3: тот же приём случайного порога за цикл, что у сценария 1, но свой (окно другое и
+## наступает раньше). _is_s3_ambush — маркер "это ИМЕННО сценарий 3" (отличает от сценария 2,
+## который тоже прячет защитника, но у objective, без переезда) — читается другими защитниками
+## (см. _another_defender_ambushing_s3()) и своим же выходом по таймауту (см. State.DISGUISE в
+## _think()). _drops_done_at_ambush_start — снимок счётчика реальных сбросов НА МОМЕНТ входа в
+## засаду — таймаут "10с после сброса, никто не приехал" стартует только когда счётчик реально
+## увеличился ОТНОСИТЕЛЬНО этого снимка (иначе _time_since_mortar_drop()==INF, пока сброса ещё не
+## было ни разу за карту, читалось бы как "прошло больше 10с" и мгновенно рвало заслеженную засаду
+## ещё до самого первого сброса).
+var _s3_predrop_threshold: float = 0.0
+var _s3_predrop_threshold_cycle: int = -1
+var _is_s3_ambush: bool = false
+var _s3_drops_done_at_ambush_start: int = -1
 var _hit_recently_timer: float = 0.0  # > 0 — по боту недавно попали, укрытие пока не начинаем (см. _on_damaged)
 var _just_reached_waypoint: bool = false
 
@@ -1280,6 +1321,7 @@ func _physics_process(delta: float) -> void:
 			# DEFEND" сработает сам в _think() (эта ветка ничего не трогает у _scan_for_target()).
 			if _should_seek_mortar():
 				_current_hide_zone = null  # мортира упала — hide-зона больше не занята нами
+				_is_s3_ambush = false  # defensive — атакующего сюда не заводит, но симметрично
 				state = State.MOD_SEEK
 				_pick_mod_zone()
 			elif _drive_to_point(delta, _disguise_hide_pos, waypoint_reach_dist):
@@ -1344,15 +1386,29 @@ func _think() -> void:
 		# тем же тиком (не return). Hide-зона больше не занята нами (см. её doc-comment).
 		state = State.IDLE
 		_current_hide_zone = null
+		_is_s3_ambush = false
 	elif state == State.DISGUISE:
 		# Активные выходы по сценарию (пассивные — таймер/касание/выстрел — срабатывают сами):
 		# атакующий (сценарий 1) — упал ящик мортиры; защитник (сценарий 2) — objective под
-		# атакой. break_disguise здесь → на следующем тике ветка выше уводит state в IDLE.
+		# атакой; защитник (сценарий 3) — ALERT ИЛИ никто не приехал за мортирой за отведённое
+		# время. break_disguise здесь → на следующем тике ветка выше уводит state в IDLE.
 		if _body.is_attacker():
 			if _time_since_mortar_drop() < GameConfig.mortar_fresh_window_sec:
 				_state_machine.break_disguise("mortar_dropped")
 		elif _alert_is_active():
 			_state_machine.break_disguise("objective_under_attack")
+		# [ДОБАВЛЕНО, по прямому запросу — "если за мортирой никто не приехал спустя 10 сек после
+		# сброса — выходить из маскировки"] Только сценарий 3 (см. _is_s3_ambush); ALERT-выход выше
+		# уже общий для любой защитной маскировки, в т.ч. этой — здесь только доп. условие
+		# "истёк таймаут ожидания". drops_now > _s3_drops_done_at_ambush_start — счётчик реально
+		# ВЫРОС относительно снимка на момент входа в засаду (сам сброс уже случился, пока мы
+		# ждали), иначе _time_since_mortar_drop()==INF (если карта вообще без единого сброса за всю
+		# игру) читалось бы как "прошло больше таймаута" и рвало засаду мгновенно, до первого сброса.
+		elif _is_s3_ambush:
+			var s3_leader: Node = _mortar_drop_leader()
+			var s3_drops_now: int = int(s3_leader.get("mortar_drops_done")) if s3_leader != null else 0
+			if s3_drops_now > _s3_drops_done_at_ambush_start and _time_since_mortar_drop() >= disguise_s3_timeout_after_drop_sec:
+				_state_machine.break_disguise("mortar_ambush_timeout")
 		# «Спалился, пока прятался» — заметил врага обычным сканом → в бой (доворот башни/движение
 		# в DEFEND сам уронит маскировку). Уважает тумблер enemy_reaction_enabled.
 		if state == State.DISGUISE and enemy_reaction_enabled:
@@ -1535,7 +1591,8 @@ func _enter_disguise() -> void:
 ##  - машина состояний танка в NORMAL (can_enter_disguise — не кулдаун/перезарядка);
 ##  - бот атакующий, слот модификации ПУСТ (can_pick_up), мортиры в руках НЕТ;
 ##  - objective жив и ещё крепкий (remaining HP > objective_priority_hp_threshold);
-##  - до следующего сброса мортиры осталось <= disguise_s1_predrop_window_sec;
+##  - до следующего сброса мортиры осталось <= случайному порогу в [MIN, MAX] (см.
+##    _s1_current_predrop_threshold(), перевыбирается раз за цикл сброса, не всегда одно число);
 ##  - до конца раунда осталось >= disguise_s1_min_round_time_left_sec;
 ##  - на бота прямо сейчас НЕ смотрит никто из врагов (боты — их _can_see; игрок — фрустум).
 ## Плюс неявное: бот в State.ATTACK_OBJECTIVE (значит физически у цели и видимой танк-цели нет —
@@ -1551,11 +1608,92 @@ func _should_disguise_s1() -> bool:
 		return false  # по нам недавно попали — сначала бой, не прятки
 	if _objective_node == null or not is_instance_valid(_objective_node) or _objective_low_health():
 		return false
-	if _time_until_mortar_drop() > disguise_s1_predrop_window_sec:
+	if _time_until_mortar_drop() > _s1_current_predrop_threshold():
 		return false
 	if _round_time_left() < disguise_s1_min_round_time_left_sec:
 		return false
 	return not _is_observed_by_enemy()
+
+## [ДОБАВЛЕНО, по прямому запросу — "не всегда фиксированное окно, а от MIN до MAX случайно"]
+## Случайный порог сценария 1 — новый бросок РАЗ ЗА ЦИКЛ сброса мортиры (не каждый think-тик:
+## иначе порог мог бы "уехать" уже ПОСЛЕ того как условие однажды стало истинным, включая-выключая
+## сценарий дребезгом на границе). Цикл — mortar_drops_done зоны-лидера (общий, реальный счётчик
+## сбросов): при его изменении порог перевыбирается, иначе отдаётся закэшированный.
+func _s1_current_predrop_threshold() -> float:
+	var leader: Node = _mortar_drop_leader()
+	var cycle: int = int(leader.get("mortar_drops_done")) if leader != null else -1
+	if cycle != _s1_predrop_threshold_cycle:
+		_s1_predrop_threshold_cycle = cycle
+		_s1_predrop_threshold = randf_range(disguise_s1_predrop_window_min_sec, disguise_s1_predrop_window_sec)
+	return _s1_predrop_threshold
+
+## [ДОБАВЛЕНО, по прямому запросу — "в противовес атакующим — засада защитника у зоны мортиры,
+## раньше атакующего по таймингу"] Сценарий 3: ОДИН защитник заранее выезжает к зоне сброса
+## мортиры и маскируется там, поджидая атакующего, который туда поедет позже (окно [MIN, MAX] —
+## дефолт 20-25с — строго раньше окна сценария 1 у атакующего, 10-15с, так что защитник всегда
+## успевает залечь первым). Условия входа (все И):
+##  - disguise_bot_enabled И disguise_s3_enabled И enemy_reaction_enabled;
+##  - машина состояний в NORMAL (can_enter_disguise);
+##  - бот защитник, тревога НЕ активна (нельзя бросать objective ради засады, пока он под атакой);
+##  - по нам недавно не стреляли (тот же _hit_recently_timer, что у сценариев 1/2);
+##  - в живых СЕЙЧАС минимум 2 бота обороны (см. _alive_defense_bot_count()) — один остаётся у
+##    objective, другой уходит в засаду, единственного защитника не оголяем;
+##  - ни один ДРУГОЙ наш защитник уже не занят этим же сценарием (см.
+##    _another_defender_ambushing_s3()) — только ОДИН одновременно;
+##  - до следующего сброса осталось <= случайному порогу в [MIN, MAX] (тот же приём, что у
+##    сценария 1, свой независимый бросок — см. _s3_current_predrop_threshold()).
+## Вызывается из оверлея _ensure_home_state() (см. её код), не гейтится "видит ли враг" (в отличие
+## от сценариев 1/2) — вход намеренно РАНЬШЕ, чем противник вообще может там появиться.
+func _should_ambush_mortar_zone_s3() -> bool:
+	if not disguise_bot_enabled or not disguise_s3_enabled or not enemy_reaction_enabled:
+		return false
+	if not _state_machine.can_enter_disguise():
+		return false
+	if _body.is_attacker() or _alert_is_active():
+		return false
+	if _hit_recently_timer > 0.0:
+		return false
+	if _alive_defense_bot_count() < 2:
+		return false
+	if _another_defender_ambushing_s3():
+		return false
+	return _time_until_mortar_drop() <= _s3_current_predrop_threshold()
+
+## Зеркало _s1_current_predrop_threshold() для сценария 3 — свой независимый бросок, свои
+## MIN/MAX, тот же приём "раз за цикл сброса".
+func _s3_current_predrop_threshold() -> float:
+	var leader: Node = _mortar_drop_leader()
+	var cycle: int = int(leader.get("mortar_drops_done")) if leader != null else -1
+	if cycle != _s3_predrop_threshold_cycle:
+		_s3_predrop_threshold_cycle = cycle
+		_s3_predrop_threshold = randf_range(disguise_s3_predrop_window_min_sec, disguise_s3_predrop_window_max_sec)
+	return _s3_predrop_threshold
+
+## Живые (visible, не DEAD) БОТЫ обороны нашей команды — ИМЕННО боты (TankAIController.enabled),
+## не игрок: сценарий 3 координирует поведение ИИ-ботов между собой, присутствие защищающегося
+## игрока не должно "освобождать" единственного бота для похода в засаду.
+func _alive_defense_bot_count() -> int:
+	var n: int = 0
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if not is_instance_valid(t) or t.team != _body.team or not t.visible:
+			continue
+		var brain: Node = t.get_node_or_null("TankAIController")
+		if brain != null and brain.enabled:
+			n += 1
+	return n
+
+## true — другой ЖИВОЙ бот нашей стороны уже в сценарии 3 (см. _is_s3_ambush) — не важно, на какой
+## именно зоне: держим "только один одновременно", а не "один на зону" (в отличие от
+## _hide_zone_taken_by_other_bot(), которая ниже сама разведёт их по разным зонам, если бы их
+## одновременно оказалось несколько — здесь же в принципе не даём начать второму).
+func _another_defender_ambushing_s3() -> bool:
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if t == _body or not is_instance_valid(t) or t.team != _body.team:
+			continue
+		var brain: Node = t.get_node_or_null("TankAIController")
+		if brain != null and brain.enabled and brain._is_s3_ambush:
+			return true
+	return false
 
 ## Сценарий 2 маскировки — сторожевой угол (мировой), если защитник сейчас должен уйти в засаду;
 ## NAN — не должен. Вызывается из оверлея в _ensure_home_state(). reached_wp — бот прямо сейчас
@@ -1846,6 +1984,23 @@ func _ensure_home_state() -> void:
 			_disguise_prep_yaw = prep_yaw
 			_disguise_prep_timer = disguise_prep_timeout_sec
 			desired = State.DISGUISE_PREP
+		# [ДОБАВЛЕНО, по прямому запросу — "в противовес атакующим — засада защитника у зоны
+		# мортиры"] Сценарий 3 — проверяем, только если сценарий 2 в этот тик не сработал (elif —
+		# оба одновременно смысла не имеют, сценарий 2 — прямо на месте, сценарий 3 требует переезда
+		# к зоне мортиры, DISGUISE_APPROACH). В отличие от сценария 2 (сразу PREP, без переезда),
+		# нужна САМА зона (тот же поиск/координация, что у сценария 1 атакующего, см.
+		# _nearest_mortar_hide_spot()/_current_hide_zone — team-scoped, атакующему не мешает).
+		elif _should_ambush_mortar_zone_s3():
+			var s3_zone: Node3D = _nearest_mortar_hide_spot()
+			if s3_zone != null:
+				_disguise_hide_pos = s3_zone.pick_spawn_position()
+				_current_hide_zone = s3_zone
+				_is_s3_ambush = true
+				var s3_leader: Node = _mortar_drop_leader()
+				_s3_drops_done_at_ambush_start = int(s3_leader.get("mortar_drops_done")) if s3_leader != null else 0
+				desired = State.DISGUISE_APPROACH
+				if _nav_agent.is_inside_tree():
+					_nav_agent.target_position = _disguise_hide_pos
 
 	if state != desired:
 		# [ДОБАВЛЕНО] entering_attack_objective считается ДО присвоения state=desired — тот же
@@ -2158,6 +2313,7 @@ func _on_respawned() -> void:
 	_mortar_target_node = null
 	_mortar_prep_timer = 0.0
 	_current_hide_zone = null  # новая жизнь без старой заявки на hide-зону (координация ботов)
+	_is_s3_ambush = false
 	_pre_combat_state = -1  # новая жизнь без памяти о прерванном в прошлой жизни поручении
 
 func _on_target_lost() -> void:
@@ -2341,6 +2497,7 @@ func _enter_defend(target: Node) -> void:
 	# hide-зона больше не занята нами, другой бот нашей стороны может её выбрать (см.
 	# _hide_zone_taken_by_other_bot()). Безусловно и безопасно — no-op, если не прятались.
 	_current_hide_zone = null
+	_is_s3_ambush = false
 	# [ДОБАВЛЕНО, по прямому запросу — "бот вступает в бой посреди поручения (например едет за
 	# мортирой), после боя должен постараться вернуться к нему, а не просто патрулировать"] Снимок
 	# ТОЛЬКО на настоящий вход в бой (state ещё не DEFEND) и ТОЛЬКО если снимка ещё нет — если бот
@@ -2444,6 +2601,7 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	if state == State.DISGUISE_APPROACH or state == State.DISGUISE_PREP or state == State.DISGUISE:
 		state = State.IDLE
 		_current_hide_zone = null  # попали под обстрел, пока прятались — зона свободна для других
+		_is_s3_ambush = false
 	# [ДОБАВЛЕНО — система модификаций] Атакующий, НЕСУЩИЙ мортиру (ещё не выстрелил), не ввязывается
 	# в бой — «мортира = коммит», продолжает к objective. Разворот «камеры» на выстрел остаётся.
 	if _has_mortar() and _body.is_attacker():
@@ -2479,6 +2637,7 @@ func _on_destroyed(_killer: Node) -> void:
 	# (state == DEAD и так исключает бота из _zone_taken_by_other_bot, это дубль-страховка).
 	_mod_zone = null
 	_current_hide_zone = null  # то же самое для hide-зоны, дубль-страховка
+	_is_s3_ambush = false
 	_pre_combat_state = -1
 
 ## Блуждание БАШНИ в IDLE/PATROL (v2 — только башня, см. заголовок файла) — то вперёд, то в
@@ -3544,7 +3703,8 @@ func _update_brain_debug_label() -> void:
 			lines.append("pre-hide: aiming watch dir (%.1fs)" % max(0.0, _disguise_prep_timer))
 		State.DISGUISE:
 			var _dt: Node = _state_machine.get_node_or_null("DisguiseTimer")
-			lines.append("HIDDEN — %.1fs left" % (_dt.time_left if _dt != null else 0.0))
+			var _scenario_tag: String = " [S3 ambush]" if _is_s3_ambush else ""
+			lines.append("HIDDEN%s — %.1fs left" % [_scenario_tag, _dt.time_left if _dt != null else 0.0])
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:
