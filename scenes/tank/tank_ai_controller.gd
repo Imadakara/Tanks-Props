@@ -575,6 +575,9 @@ const _DIFFICULTY_PRESETS := {
 ## (см. vault-план). Тоже гарантия при совпадении условий, не вероятность.
 @export var disguise_s2_enabled: bool = false
 @export var disguise_s2_kill_latch_ttl_sec: float = 10.0  # латч «только что убил врага» горит столько секунд
+## После попадания по боту — столько секунд НЕ начинаем прятаться (ни сценарий 1, ни 2): по нам
+## ведут огонь, сначала разберись со стрелком. Гасит и повторный уход в укрытие под обстрелом.
+@export var disguise_no_hide_after_hit_sec: float = 5.0
 
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
@@ -701,6 +704,7 @@ var _disguise_hide_pos: Vector3 = Vector3.ZERO
 var _disguise_prep_yaw: float = 0.0
 var _disguise_prep_timer: float = 0.0
 var _kill_latch_timer: float = 0.0
+var _hit_recently_timer: float = 0.0  # > 0 — по боту недавно попали, укрытие пока не начинаем (см. _on_damaged)
 var _just_reached_waypoint: bool = false
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
@@ -990,6 +994,8 @@ func _physics_process(delta: float) -> void:
 	_total_time_sec += delta
 	if _kill_latch_timer > 0.0:
 		_kill_latch_timer -= delta  # латч засады сценария 2 (см. _on_enemy_destroyed)
+	if _hit_recently_timer > 0.0:
+		_hit_recently_timer -= delta  # окно «недавно попали» — не уходим в укрытие (см. _on_damaged)
 	_think_timer -= delta
 	if _think_timer <= 0.0:
 		_think_timer = think_interval_sec
@@ -1520,6 +1526,8 @@ func _should_disguise_s1() -> bool:
 		return false
 	if not _body.is_attacker() or not _mod.can_pick_up() or _has_mortar():
 		return false
+	if _hit_recently_timer > 0.0:
+		return false  # по нам недавно попали — сначала бой, не прятки
 	if _objective_node == null or not is_instance_valid(_objective_node) or _objective_low_health():
 		return false
 	if _time_until_mortar_drop() > disguise_s1_predrop_window_sec:
@@ -1535,6 +1543,7 @@ func _should_disguise_s1() -> bool:
 func _disguise_s2_prep_yaw(reached_wp: bool) -> float:
 	if disguise_s2_enabled and not _body.is_attacker() and role == Role.ACHIEVER \
 			and not _waypoints.is_empty() and _kill_latch_timer > 0.0 and reached_wp \
+			and _hit_recently_timer <= 0.0 \
 			and not _alert_is_active() \
 			and _objective_node != null and is_instance_valid(_objective_node) \
 			and not _is_observed_by_enemy():
@@ -2083,6 +2092,7 @@ func _on_respawned() -> void:
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
 	_kill_latch_timer = 0.0        # маскировка (сценарий 2) — новая жизнь без старого латча засады
+	_hit_recently_timer = 0.0
 	_just_reached_waypoint = false
 	if waypoints_one_way:
 		_waypoint_index = 0
@@ -2300,6 +2310,17 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
 	_wander_holding = false
+	_hit_recently_timer = disguise_no_hide_after_hit_sec  # по нам стреляют — укрытие откладываем
+
+	# По боту, ехавшему прятаться (сценарий 1: DISGUISE_APPROACH / DISGUISE_PREP) ИЛИ уже
+	# спрятавшемуся (DISGUISE), открыли огонь — прятаться поздно, план укрытия бросаем. Без этого
+	# DISGUISE_PREP каждый физ.кадр прибивает _look_yaw к сторожевому углу, и башня физически не
+	# может довернуться на стрелка сзади → бот не реагирует и всё равно уходит в маскировку под
+	# огнём (а из DISGUISE _think() и так выведет по sync-проверке, но раньше — тем же тиком).
+	# Сброс в IDLE: _look_yaw уже на стрелке (выше); _can_see-проверка ниже уведёт в DEFEND сразу,
+	# если он в конусе, иначе обычный _think() дотянет за тик-другой, пока башня доводится.
+	if state == State.DISGUISE_APPROACH or state == State.DISGUISE_PREP or state == State.DISGUISE:
+		state = State.IDLE
 	# [ДОБАВЛЕНО — система модификаций] Атакующий, НЕСУЩИЙ мортиру (ещё не выстрелил), не ввязывается
 	# в бой — «мортира = коммит», продолжает к objective. Разворот «камеры» на выстрел остаётся.
 	if _has_mortar() and _body.is_attacker():
