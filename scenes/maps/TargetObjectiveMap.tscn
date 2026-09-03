@@ -1,17 +1,15 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://bfcd3uxvc3ywg"]
 
 [ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_b63ln"]
-[ext_resource type="Script" path="res://scenes/maps/map_scene.gd" id="1_execi"]
-[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="2_2uusy"]
-[ext_resource type="Script" path="res://scenes/tank/tank.gd" id="2_7eip8"]
+[ext_resource type="Script" uid="uid://h5cc5gwhy7xj" path="res://scenes/maps/map_scene.gd" id="1_execi"]
+[ext_resource type="Script" uid="uid://r4v4kua3ghmo" path="res://scenes/tank/health_component.gd" id="2_2uusy"]
 [ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
-[ext_resource type="Script" path="res://scenes/hud/hud.gd" id="5_j8k2e"]
-[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="8_execi"]
+[ext_resource type="Script" uid="uid://dib6qgcxpuhxh" path="res://scenes/main/spawn_zone.gd" id="8_execi"]
 [ext_resource type="PackedScene" path="res://scenes/ammo_crate/AmmoDropZone.tscn" id="9_drop"]
-[ext_resource type="Script" path="res://scenes/main/team_spawner.gd" id="10_spawn"]
+[ext_resource type="Script" uid="uid://br27kfxmar2sd" path="res://scenes/main/team_spawner.gd" id="10_spawn"]
 [ext_resource type="PackedScene" path="res://scenes/obstacles/Obstacle.tscn" id="11_obst"]
 [ext_resource type="PackedScene" path="res://scenes/obstacles/HazardZone.tscn" id="12_haz"]
-[ext_resource type="Environment" path="res://scenes/maps/sky_environment.tres" id="13_env"]
+[ext_resource type="Environment" uid="uid://cmcelifda8lnj" path="res://scenes/maps/sky_environment.tres" id="13_env"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_2uusy"]
 vertices = PackedVector3Array(-10.75, 0.5, -23, -8.25, 0.5, -23.25, -7.75, 0.5, -24.5, -6, 0.5, -34.75, -6, 0.5, -24.75, -34.75, 0.5, -19.75, -11.25, 0.5, -19.75, -11.25, 0.5, -22.25, -34.75, 0.5, -34.75, -4, 0.5, -24.5, -3.5, 0.5, -22.5, 3.75, 0.5, -22.5, 4.25, 0.5, -24.5, 6.25, 0.5, -24.75, 6.25, 0.5, -34.75, 8, 0.5, -15.5, 8.5, 0.5, -14.25, 11, 0.5, -14, 8.5, 0.5, -21.25, 7.25, 0.5, -20, 6, 0.5, -20, 6.25, 0.5, -15.75, 8.25, 0.5, -24.25, 11.5, 0.5, -12, 34.75, 0.5, -12, 34.75, 0.5, -34.75, -7.25, 0.5, -18.75, -8, 0.5, -18.5, -7.5, 0.5, -15.5, -4.25, 0.5, -20.25, -6.5, 0.5, -20, -4.5, 0.5, -15.75, -3.5, 0.5, -14.75, -3.5, 0.5, -13.5, 3.75, 0.5, -13.25, 4.75, 0.5, -15.75, 4, 0.5, -15.25, 4, 0.5, -20.5, -3.5, 0.5, -21.25, -8.25, 0.5, -14.75, -10.25, 0.5, -18.5, -2.25, 0.5, -0.75, -2, 0.5, -1.5, -5.25, 0.5, -11, -7.25, 0.5, -11, -8.25, 0.5, -12, -34.75, 0.5, -0.5, -3.75, 0.5, -11.75, 4, 0.5, -11.75, -1.25, 0.5, -2.25, 1.25, 0.5, -2.25, 10.75, 0.5, -9.75, 7.5, 0.5, -9.75, 2.25, 0.5, -1.5, 2.25, 0.5, 1.75, 1.25, 0.5, 2.5, 0, 0.5, 34.75, 11.5, 0.5, -10.75, 34.75, 0.5, 34.75, 0, 0.5, 2.5, 6.75, 0.5, -11, 4.75, 0.5, -11, -2, 0.5, 2, -34.75, 0.5, 34.75)
@@ -41,9 +39,6 @@ size = Vector3(2, 2, 2)
 
 [node name="TargetObjectiveMap" type="Node3D" unique_id=281684750]
 script = ExtResource("1_execi")
-match_mode = 0
-final_stage_enabled = false
-map_border_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1900000001]
 environment = ExtResource("13_env")
@@ -53,18 +48,14 @@ transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49
 light_energy = 1.4
 shadow_enabled = true
 
-[node name="PlayerTank" type="CharacterBody3D" parent="." unique_id=677005994 instance=ExtResource("1_b63ln")]
+[node name="PlayerTank" parent="." unique_id=677005994 instance=ExtResource("1_b63ln")]
 transform = Transform3D(0.72427344, 0, 0.68951285, 0, 1, 0, -0.68951285, 0, 0.72427344, 27.250923, 0.00013023149, 28.624733)
-collision_layer = 2
-collision_mask = 3
-script = ExtResource("2_7eip8")
 
 [node name="TeamSpawner" type="Node" parent="." unique_id=2075500001]
 script = ExtResource("10_spawn")
 roster_config_path = "res://config/roster_target_objective.json"
 
-[node name="HUD" type="CanvasLayer" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
-script = ExtResource("5_j8k2e")
+[node name="HUD" parent="." unique_id=1886000725 instance=ExtResource("4_hud")]
 
 [node name="ObjectiveCamera" type="Camera3D" parent="." unique_id=1090300878]
 transform = Transform3D(1, 0, 0, 0, 0.78086877, 0.62469506, 0, -0.62469506, 0.78086877, 0, 13, -6)
@@ -121,22 +112,22 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0)
 script = ExtResource("8_execi")
 radius = 12.0
 
-[node name="Obstacle1" parent="NavigationRegion3D" instance=ExtResource("11_obst")]
+[node name="Obstacle1" parent="NavigationRegion3D" unique_id=1939478267 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.625, -13.5)
 
-[node name="Obstacle2" parent="NavigationRegion3D" instance=ExtResource("11_obst")]
+[node name="Obstacle2" parent="NavigationRegion3D" unique_id=676506792 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 0.625, -12)
 
-[node name="Obstacle3" parent="NavigationRegion3D" instance=ExtResource("11_obst")]
+[node name="Obstacle3" parent="NavigationRegion3D" unique_id=2023947804 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.625, -22.5)
 
-[node name="Obstacle4" parent="NavigationRegion3D" instance=ExtResource("11_obst")]
+[node name="Obstacle4" parent="NavigationRegion3D" unique_id=813157430 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9, 0.625, -21)
 
-[node name="Obstacle5" parent="NavigationRegion3D" instance=ExtResource("11_obst")]
+[node name="Obstacle5" parent="NavigationRegion3D" unique_id=1759585456 instance=ExtResource("11_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.625, -13.5)
 
-[node name="HazardZone1" parent="NavigationRegion3D" instance=ExtResource("12_haz")]
+[node name="HazardZone1" parent="NavigationRegion3D" unique_id=1661534308 instance=ExtResource("12_haz")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.625, -22.5)
 
 [node name="AttackWaypoint1" type="Node3D" parent="." unique_id=1592442195]
@@ -144,9 +135,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, 16)
 
 [node name="AttackWaypoint2" type="Node3D" parent="." unique_id=487532425]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 4)
-
-[node name="AttackWaypoint3" type="Node3D" parent="." unique_id=988336735]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, -8)
 
 [node name="AttackSpawnZone" type="Node3D" parent="." unique_id=1426286694]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 28)
@@ -159,16 +147,13 @@ script = ExtResource("8_execi")
 radius = 8.0
 
 [node name="DefenseWaypoint1" type="Node3D" parent="." unique_id=796650889]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21, 0, -26)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.393913, 0, -18.221859)
 
 [node name="DefenseWaypoint2" type="Node3D" parent="." unique_id=1636650743]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, -24)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11.777676, 0, -10.969086)
 
-[node name="DefenseWaypoint3" type="Node3D" parent="." unique_id=1517443530]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -22)
-
-[node name="AmmoDropZone" type="Node3D" parent="." unique_id=2075567286 instance=ExtResource("9_drop")]
+[node name="AmmoDropZone" parent="." unique_id=2075567286 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, -28)
 
-[node name="AmmoDropZone2" type="Node3D" parent="." unique_id=121503587 instance=ExtResource("9_drop")]
+[node name="AmmoDropZone2" parent="." unique_id=121503587 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28, 0, 28)
