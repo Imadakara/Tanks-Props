@@ -11,34 +11,23 @@ config_version=5
 [application]
 
 config/name="Tanks&Props"
+run/main_scene="res://scenes/main_menu/MainMenu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 
-run/main_scene="res://scenes/main_menu/MainMenu.tscn"
+[autoload]
+
+GameConfig="*res://autoload/game_config.gd"
+MatchState="*res://autoload/match_state.gd"
 
 [display]
 
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
-[physics]
+[editor_plugins]
 
-3d/physics_engine="Jolt Physics"
-
-[rendering]
-
-rendering_device/driver.windows="d3d12"
-renderer/rendering_method="forward_plus"
-
-[layer_names]
-
-3d_physics/layer_1="environment"
-3d_physics/layer_2="tanks"
-3d_physics/layer_3="projectiles"
-3d_physics/layer_4="disguise_obstacle"
-3d_physics/layer_5="objective_zone"
-3d_physics/layer_6="ammo_crates"
-3d_physics/layer_7="mod_crates"
+enabled=PackedStringArray("res://addons/zone_gizmos/plugin.cfg")
 
 [input]
 
@@ -64,7 +53,7 @@ turn_right={
 }
 fire={
 "deadzone": 0.5,
-"events": [Object(InputEventMouseButton,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"button_mask":0,"position":Vector2(0, 0),"global_position":Vector2(0, 0),"factor":1.0,"button_index":1,"canceled":false,"double_click":false,"script":null)
+"events": [Object(InputEventMouseButton,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"button_mask":0,"position":Vector2(0, 0),"global_position":Vector2(0, 0),"factor":1.0,"button_index":1,"canceled":false,"pressed":false,"double_click":false,"script":null)
 ]
 }
 toggle_disguise={
@@ -73,6 +62,20 @@ toggle_disguise={
 ]
 }
 
-[autoload]
-GameConfig="*res://autoload/game_config.gd"
-MatchState="*res://autoload/match_state.gd"
+[layer_names]
+
+3d_physics/layer_1="environment"
+3d_physics/layer_2="tanks"
+3d_physics/layer_3="projectiles"
+3d_physics/layer_4="disguise_obstacle"
+3d_physics/layer_5="objective_zone"
+3d_physics/layer_6="ammo_crates"
+3d_physics/layer_7="mod_crates"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
+[rendering]
+
+rendering_device/driver.windows="d3d12"
