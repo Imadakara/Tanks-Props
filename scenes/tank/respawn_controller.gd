@@ -43,11 +43,22 @@ signal respawned
 ## Верх пола у обеих карт — y ≈ 0; ничего штатного ниже ~y=-1 не бывает.
 const _FELL_BELOW_Y := -3.0
 
+## Раунд закончился (см. map_scene.gd._on_round_ended_teardown) — до рестарта сцены танк больше не
+## должен воскресать. Ставится ДО того, как map_scene вызовет force_destroy() на этом же танке,
+## поэтому _on_destroyed увидит флаг и не запустит таймер респавна. Fall-check тоже гасим —
+## делать ему нечего, раунд заморожен.
+var _halted: bool = false
+
 func _ready() -> void:
 	_respawn_timer.one_shot = true
 	_respawn_timer.wait_time = GameConfig.respawn_cooldown_sec
 	_respawn_timer.timeout.connect(_on_respawn_timeout)
 	_health.destroyed.connect(_on_destroyed)
+
+func halt() -> void:
+	_halted = true
+	_respawn_timer.stop()
+	set_physics_process(false)
 
 ## Этот узел — одно из исключений заморозки (см. _set_frozen), его _physics_process() работает
 ## всегда, в т.ч. пока танк «мёртв» на кулдауне (там _health.is_alive == false → выходим).
@@ -56,8 +67,9 @@ func _physics_process(_delta: float) -> void:
 		_health.force_destroy()
 
 func _on_destroyed(_killer: Node) -> void:
-	_set_frozen(true)
-	_respawn_timer.start()
+	_set_frozen(true)  # труп прячем/замораживаем всегда
+	if not _halted:
+		_respawn_timer.start()
 
 func _on_respawn_timeout() -> void:
 	var zone: Node3D = _pick_spawn_zone()

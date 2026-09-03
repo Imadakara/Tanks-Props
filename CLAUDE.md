@@ -165,7 +165,9 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   `_physics_process` (this node is never frozen) also **force-kills any tank whose
   `global_position.y` drops below `_FELL_BELOW_Y` = -3** (fell through the floor / squeezed past
   the map border into the void) via `HealthComponent.force_destroy()` — works on the invincible
-  player too; the normal respawn cycle then brings it back at its spawn zone.
+  player too; the normal respawn cycle then brings it back at its spawn zone. `halt()` (called on
+  round end, see round loop) permanently stops it for this scene load — no more respawn, fall-check
+  off — so an already-dead tank's pending respawn is cancelled and a fresh kill doesn't schedule one.
 - `TankAIController` — the single AI brain for the whole project. Present on every `Tank.tscn`
   instance but inert (`enabled=false`) unless a spawner turns it on; when enabled it flips every
   sibling's `is_player_controlled` to `false` and drives them through the same public contract the
@@ -379,7 +381,13 @@ is not corruption, don't "restore" them.
 Both maps run the **same round loop**: `map_scene.gd._setup_match_context()` creates a `ScoreManager`
 + a node named `"MatchManager"` running `scenes/main/match_manager.gd`, which picks its end-of-round
 condition from `match_mode` (objective `destroyed` → attack / timeout → defense, vs. timeout →
-winner-by-kills) then `MatchState.record_round_result` → `round_ended`. The same script also owns
+winner-by-kills) then `MatchState.record_round_result` → `round_ended`. `map_scene.gd` also listens
+on `round_ended` (`_on_round_ended_teardown`): once a round is decided it **freezes the field for
+the result screen** (MVP) — `TeamSpawner.halt()` + every `RespawnController.halt()` (no more
+spawns / respawns until the scene reloads) + `HealthComponent.force_destroy()` on every tank
+including the player. Those deaths pass `killer = null`, so `ScoreManager._on_tank_destroyed`
+skips them — the displayed kill count (and, in TEAM_ARENA, the count the winner was derived from,
+already locked in `_end_round`) is untouched. The same script also owns
 the **final stage**: extra time (`GameConfig.final_stage_duration_sec` = 30s, HUD shows a
 countdown, ammo crates keep dropping, tanks respawn with ammo), then the round resolves by kill
 count. It is a **per-map opt-in** — `map_scene.gd` `@export var final_stage_enabled` (script

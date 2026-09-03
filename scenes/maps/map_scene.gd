@@ -10,6 +10,9 @@ extends Node3D
 ## - `_setup_match_context()` заводит из кода `ScoreManager` + узел `"MatchManager"` (см.
 ##   `scenes/main/match_manager.gd`) — полноценный постраундовый цикл. HUD находит
 ##   "MatchManager"/`RoundTimer`/`FinalStageTimer` одними и теми же лукапами на любой карте.
+## - По `MatchManager.round_ended` (чья-то победа) — `_on_round_ended_teardown()`: глушит
+##   `TeamSpawner` + все `RespawnController` и `force_destroy()` всем танкам (MVP-«заморозка поля»
+##   на экран результата). Эти смерти не идут в счёт убийств (killer=null).
 ## - Финальная стадия (доп. время после основного таймера, если бой в тупике) — ОПЦИЯ КАРТЫ:
 ##   `@export var final_stage_enabled`, задаётся в `.tscn`. По умолчанию вкл на `TeamArenaMap`,
 ##   выкл на `TargetObjectiveMap` (там время вышло → сразу победа защиты). Условие/поведение —
@@ -66,6 +69,7 @@ const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_st
 var _objective_health: Node = null
 var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
+var _bot_spawn_buttons: Array[Button] = []  # debug-кнопки «+ Бот», гасятся на конце раунда
 
 ## ALERT-таймер/гео-проверка живут ЗДЕСЬ (корень сцены) — никогда не замораживаются на респавне
 ## отдельных ботов (в отличие от них самих, см. respawn_controller.gd), копятся РОВНО ОДИН РАЗ на
@@ -196,6 +200,27 @@ func _setup_match_context() -> void:
 	match_manager.set_script(MatchManagerScript)
 	add_child(match_manager)
 	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled)
+	match_manager.round_ended.connect(_on_round_ended_teardown)
+
+## Конец раунда зафиксирован (чья-то победа) — в рамках MVP «замораживаем» поле: глушим спавнеры
+## обеих сторон (TeamSpawner + все RespawnController — новых/воскресших танков до рестарта не
+## будет) и принудительно убиваем все существующие танки, включая игрока. force_destroy() идёт с
+## killer=null → ScoreManager такие смерти НЕ засчитывает (важно для отображаемого счёта убийств и
+## для TEAM_ARENA, где раунд решается по нему — впрочем, победитель к этому моменту уже определён в
+## MatchManager._end_round). Порядок в цикле: halt() РАНЬШЕ force_destroy() того же танка, иначе
+## RespawnController._on_destroyed успеет запустить таймер респавна.
+func _on_round_ended_teardown(_winner: String) -> void:
+	$TeamSpawner.halt()
+	for button in _bot_spawn_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+	for tank in get_tree().get_nodes_in_group("tanks"):
+		var rc: Node = tank.get_node_or_null("RespawnController")
+		if rc != null:
+			rc.halt()
+		var hc: Node = tank.get_node_or_null("HealthComponent")
+		if hc != null:
+			hc.force_destroy()
 
 ## Бессмертие игрока — тумблер «Игрок: бессмертие ON/OFF» (низ-справа), ПО УМОЛЧАНИЮ ВКЛ. Тот же
 ## паттерн, что Objective On/Off и bot reaction (tank_ai_controller.gd). Низ-справа, на слот выше
@@ -250,6 +275,7 @@ func _setup_bot_spawn_buttons() -> void:
 	attack_button.offset_bottom = -112.0
 	attack_button.pressed.connect(spawner.spawn_one_bot.bind(0))
 	layer.add_child(attack_button)
+	_bot_spawn_buttons.append(attack_button)
 
 	var defense_button := Button.new()
 	defense_button.name = "SpawnDefenseBotButton"
@@ -261,6 +287,7 @@ func _setup_bot_spawn_buttons() -> void:
 	defense_button.offset_bottom = -160.0
 	defense_button.pressed.connect(spawner.spawn_one_bot.bind(1))
 	layer.add_child(defense_button)
+	_bot_spawn_buttons.append(defense_button)
 
 	# Без call_deferred — этот скрипт на корне сцены, его _ready() идёт последним (см. остальные
 	# _setup_*_button() в этом файле), дерево готово.

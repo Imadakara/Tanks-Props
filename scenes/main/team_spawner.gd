@@ -28,6 +28,14 @@ const BotConfigPath := "res://config/bot_tank_config.json"
 ## Дефолт пуст намеренно — карта без явно заданного пути не должна молча спавнить чужой ростер.
 @export var roster_config_path: String = ""
 
+## Раунд закончился (см. map_scene.gd._on_round_ended_teardown) — до рестарта сцены новых ботов не
+## спавним (debug-кнопки «+ Бот» становятся no-op). spawn_team() отрабатывает один раз при старте
+## сцены, до конца раунда, так что его этот флаг уже не касается.
+var _halted: bool = false
+
+func halt() -> void:
+	_halted = true
+
 ## Точки спавна лежат на y=0 (ровно на поверхности пола) — спавн ТОЧНО в этот y даёт
 ## вырожденный (нулевая глубина) контакт с полом, на котором move_and_slide() у Jolt
 ## ведёт себя нестабильно: тело проваливается сквозь пол вместо оседания (проверено
@@ -97,6 +105,8 @@ func spawn_team() -> void:
 ## группе "tanks", free_on_destroy=false, см. корневой CLAUDE.md) — уникален всегда, даже если
 ## кто-то уже погибал.
 func spawn_one_bot(team: int) -> void:
+	if _halted:
+		return  # раунд закончился — новых ботов не спавним
 	var zone: Node3D = _find_spawn_zone("AttackSpawnZone" if team == 0 else "DefenseSpawnZone")
 	var bot_config := _load_json_config(BotConfigPath)
 	var squad: Dictionary = {}
