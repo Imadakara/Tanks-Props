@@ -142,12 +142,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.625, -13.5)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.625, -22.5)
 
 [node name="AttackWaypoint1" type="Node3D" parent="." unique_id=1592442195]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, 16)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19.686806, 0, 19.737545)
 script = ExtResource("8_execi")
 radius = 7.5
 
 [node name="AttackWaypoint2" type="Node3D" parent="." unique_id=487532425]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 4)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11.373611, 0, 11.374084)
 script = ExtResource("8_execi")
 radius = 7.5
 
@@ -178,11 +178,11 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, -28)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28, 0, 28)
 
 [node name="MortarHideZone1" type="Node3D" parent="." unique_id=999888777]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, -20)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16.868546, 0, -16.565495)
 script = ExtResource("8_execi")
 radius = 5.0
 
 [node name="MortarHideZone2" type="Node3D" parent="." unique_id=999888778]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0, 20)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -16.161438, 0, 15.858389)
 script = ExtResource("8_execi")
 radius = 5.0
