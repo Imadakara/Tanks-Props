@@ -202,6 +202,14 @@ func _apply_squad_to_brain(brain: Node, squad: Dictionary) -> void:
 		brain.difficulty = _difficulty_from_string(String(squad["difficulty"]))
 	if squad.has("waypoint_name_prefix"):
 		brain.waypoint_name_prefix = String(squad["waypoint_name_prefix"])
+	# [ДОБАВЛЕНО, по прямому запросу — несколько маршрутов подряд одним ботом, см.
+	# TankAIController.waypoint_routes doc-comment] Массив строк-ролей в JSON — просто список,
+	# конвертер типов тот же, что у остальных Array-полей ниже (hunt_area_*).
+	if squad.has("waypoint_routes"):
+		var routes: Array[String] = []
+		for r in squad["waypoint_routes"]:
+			routes.append(String(r))
+		brain.waypoint_routes = routes
 	if squad.has("waypoints_one_way"):
 		brain.waypoints_one_way = bool(squad["waypoints_one_way"])
 	if squad.has("forward_look_bias"):

@@ -22,8 +22,10 @@ extends EditorNode3DGizmoPlugin
 ##   - имя содержит "Waypoint"   → ФОЛБЭК для маркера без скрипта. Радиус 7.5 (см.
 ##                                 TankAIController.waypoint_radius — тот же дефолт-фолбэк).
 ## Цвет — тот же, что в рантайм-дебаге (spawn_zone.gd._draw_debug_circle()): Attack* — красный,
-## Defense* — синий, MortarHide* — фиолетовый (зона ожидания маскировки), иначе — жёлтый
-## (ObjectiveAlertZone/DropArea/голый Waypoint* без командного префикса), Objective — пурпурный.
+## Defense* — синий, голый Waypoint* (диамант защитника без командного префикса в имени) — ТОЖЕ
+## синий (историческое соответствие: старая _build_waypoint_debug() трактовала любое имя без
+## "Attack" как оборону), MortarHide* — фиолетовый (зона ожидания маскировки), иначе — жёлтый
+## (истинно нейтральные ObjectiveAlertZone/DropArea), Objective — пурпурный.
 ##
 ## Ограничение: spawn_zone.gd не @tool, поэтому смена radius в инспекторе не перерисовывает
 ## кольцо сразу — перевыделить узел или перезагрузить сцену.
@@ -79,6 +81,8 @@ func _material_key(node: Node3D) -> String:
 			return "defense"
 		if n.begins_with("MortarHide"):
 			return "hide"
+		if n.begins_with("Waypoint"):
+			return "defense"  # голый "WaypointN" — исторически цвет обороны, см. spawn_zone.gd
 		return "neutral"
 	if n.contains("Waypoint"):
 		return "attack" if n.begins_with("Attack") else "defense"

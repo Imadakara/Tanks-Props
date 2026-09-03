@@ -288,15 +288,43 @@ any particular tree depth, so either stays correct even if some future map nests
 intermediate node (neither current map does).
 
 Zones default to opposite corners of the map — both maps (72×72): `AttackSpawnZone`/
-`DefenseSpawnZone` at `(28,28)`/`(-28,-28)`, radius 8. Each zone also gets 3
-`Attack/DefenseWaypointN` markers on a straight line toward the objective at 25/50/75% —
-`TargetObjectiveMap.tscn`'s roster points its attack/defense squads' `waypoint_name_prefix` at
-`AttackWaypointN` (one-way, ends in `ATTACK_OBJECTIVE`)/`WaypointN` (the defender's `Waypoint1..4`
-diamond around the centre objective, looping patrol — the defense squad predates the corner-zone
-waypoint work and still uses its own older markers, see "Map inventory"); the waypoint collector
-(`_collect_waypoints()`) searches the whole current scene recursively, not just root-level
-children, so it stays correct regardless of tree depth. In debug mode `map_scene.gd` draws a
-dashed team-coloured ring under every `*Waypoint*` node (see "Debug mode").
+`DefenseSpawnZone` at `(28,28)`/`(-28,-28)`, radius 8.
+
+**Zone "role" is a Godot group, not a name pattern.** Every `spawn_zone.gd`-scripted node has an
+`@export var zone_role: String` — non-empty, the node self-registers into that group in its own
+`_ready()` (`add_to_group(zone_role)`, the exact same idiom `ammo_drop_zone.gd` already used for
+`"ammo_drop_zones"` — not a new mechanism). A consumer asks for "every zone of role X" with one
+`get_nodes_in_group(X)`; node *names* are no longer load-bearing for lookup, only for
+human-readability and (for ordered patrol routes) sort order within the group. This replaced two
+previously-separate ad-hoc name-glob searches that used to be hand-rolled per feature
+(`tank_ai_controller.gd`'s waypoint collector, and its disguise hide-zone finder) with one shared
+mechanism, used the same way by both.
+
+`TankAIController.waypoint_routes: Array[String]` (falls back to the single legacy
+`waypoint_name_prefix` string field when empty — old rosters keep working unchanged) lists zone
+roles **in the order the bot walks them**, concatenated into one continuous patrol loop — not
+several independent cycles. `TargetObjectiveMap.tscn`'s roster
+(`config/roster_target_objective.json`) has exactly two squads (one bot each, `count: 1`): the
+attacker follows role `AttackWaypointN` alone (one-way, ends in `ATTACK_OBJECTIVE`); the defender
+follows `["DefenseWaypoint", "Waypoint"]` — its own corner-to-centre approach from `DefenseSpawnZone`
+first, then the `Waypoint1..4` diamond around the objective, looping forever as one combined
+6-point route (mirrors the attacker's corner-to-objective path, then adds the standing guard
+patrol) — `_advance_waypoint()`'s existing `%`-cycling logic needed no changes for this, a
+concatenated route is just a longer flat list to it. **A zone whose role no roster squad's
+`waypoint_routes` references is dead weight** — `TeamArenaMap.tscn` used to carry a full inherited
+`Waypoint*`/`AttackWaypoint*`/`DefenseWaypoint*` set nobody referenced (copied over when the map was
+duplicated from `TargetObjectiveMap.tscn`; its one roster squad is `role: "KILLER"`, which never
+reads `_waypoints` at all) — removed entirely, not re-added, since nothing on that map consumes
+patrol routes. See `Tank_Prop_Hunt_Map_Creation_Guide.md` §3.5 for the authoring rule (wire a new
+marker set's role to a roster squad immediately, or delete it — never leave it "just in case").
+
+The waypoint collector (`_collect_waypoints()`) and the disguise hide-zone finder
+(`_nearest_mortar_hide_spot()`, role `"MortarHideZone"`) both search the whole current scene via
+groups, not tied to tree depth or node naming. Every circular waypoint/zone marker (patrol, spawn,
+ammo/mod drop, `ObjectiveAlertZone`, the disguise `MortarHideZone1`/`2`) is the same
+`spawn_zone.gd`-scripted `Node3D` — see the `spawn_zone.gd` bullet under "Debug mode" for the one
+shared debug-circle visual all of them draw (that part stays keyed off node *name* prefix, purely
+cosmetic — unrelated to `zone_role`, which only ever affects behavioural wiring).
 
 `SpawnZone.face_center(tank)` (static, called via a `preload()`'d script reference — **not**
 `class_name`: headless `run_project` doesn't pick up a freshly-added `class_name` without an editor
@@ -434,11 +462,16 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
 - `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is now
   this one script/one visual** (per-instance `@export radius`, movable/scalable in the editor, no
   separate hardcoded radius anywhere): spawn zones, ammo/mod drop-zone circles (`AmmoDropZone/
-  DropArea` reuses this script), `ObjectiveAlertZone`, patrol/attack waypoints (`Waypoint*`/
-  `AttackWaypoint*`/`DefenseWaypoint*` — see "Патруль по вейпоинтам" in `tank_ai_controller.gd`'s
-  header), and the disguise-ambush `MortarHideZone1`/`MortarHideZone2` (see "Маскировка бота"
-  below). Color by name prefix: `Attack*`/`Defense*` — red/blue; `MortarHide*` — purple; anything
-  else — neutral yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
+  DropArea` reuses this script), `ObjectiveAlertZone`, patrol waypoints (`Waypoint*`/
+  `AttackWaypoint*`/`DefenseWaypoint*` on `TargetObjectiveMap.tscn`, each tagged with its
+  `zone_role` — see "Патруль по вейпоинтам" in `tank_ai_controller.gd`'s header; a role no roster
+  squad's `waypoint_routes` references is dead weight, delete it rather than leave it — see
+  `Tank_Prop_Hunt_Map_Creation_Guide.md` §3.5), and the
+  disguise-ambush `MortarHideZone1`/`MortarHideZone2` (see "Маскировка бота"
+  below). Color by name prefix: `Attack*`/`Defense*` — red/blue; a bare `Waypoint*` (the defender's
+  diamond, no team prefix in its name) is **also** blue, matching the old `_build_waypoint_debug()`
+  convention of "not Attack → defense colour"; `MortarHide*` — purple; genuinely team-neutral zones
+  (`ObjectiveAlertZone`/`DropArea`) — yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
   zone_gizmo_plugin.gd`, a `@tool` `EditorNode3DGizmoPlugin`) draws identical circles in the Godot
   viewport while placing/tuning a zone, reading the same `radius`/name convention — keep both in
   sync when touching either.

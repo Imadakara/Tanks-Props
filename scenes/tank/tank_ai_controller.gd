@@ -306,11 +306,22 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## поле работает, только если у вейпоинта НЕТ такого скрипта (немигрированная карта).
 @export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — фолбэк, если у узла нет radius
 @export var waypoint_reach_dist: float = 1.5
-## Префикс имени узла для _collect_waypoints() — РАЗНЫЙ на разных ботах одной карты (по прямому
-## запросу — второй ACHIEVER, атакующий, должен идти к objective по СВОИМ вейпоинтам, не по тем же
-## "WaypointN", что defense-бот патрулирует вокруг objective). "Waypoint" — оборона (дефолт, старое
-## поведение); "AttackWaypoint" — атака, см. waypoints_one_way ниже.
+## Роль (Godot group, см. spawn_zone.gd @export zone_role) вейпоинтов этого бота — РАЗНАЯ на
+## разных ботах одной карты (по прямому запросу — второй ACHIEVER, атакующий, должен идти к
+## objective по СВОИМ вейпоинтам, не по тем же, что defense-бот патрулирует вокруг objective).
+## "Waypoint" — оборона (дефолт, старое поведение); "AttackWaypoint" — атака, см. waypoints_one_way
+## ниже. Единственный маршрут — просто это одно имя роли; несколько маршрутов подряд —
+## waypoint_routes ниже (тот побеждает, если не пуст, см. _waypoint_routes()).
 @export var waypoint_name_prefix: String = "Waypoint"
+## [ДОБАВЛЕНО, по прямому запросу — "единый механизм, а не поиск по имени под каждый случай" +
+## симметрия защитника с атакующим: свой путь от спавна к objective, без второго бота и без мёртвых
+## маркеров] Несколько ролей ПОДРЯД, одна за другой, как ОДИН непрерывный маршрут — не несколько
+## отдельных циклов. Например защитник: сперва угловой подход от своего спавна ("DefenseWaypoint"),
+## потом бесконечный патруль вокруг objective ("Waypoint") — конкатенация просто удлиняет
+## _waypoints, обычная %-циклическая логика _advance_waypoint() дальше работает как и раньше, без
+## отдельного кода на "несколько маршрутов". Пусто (дефолт) — используется одиночный
+## waypoint_name_prefix выше, обратная совместимость со старым форматом ростера.
+@export var waypoint_routes: Array[String] = []
 ## false (дефолт, оборона) — бесконечный патруль по кругу, как раньше. true (по прямому запросу,
 ## атака) — вейпоинты проходятся ЛИНЕЙНО ОДИН РАЗ (1→2→…→N, без зацикливания на 1), по достижении
 ## ПОСЛЕДНЕГО — переход в State.ATTACK_OBJECTIVE (см. ниже и _advance_waypoint()). Соответствует
@@ -896,16 +907,30 @@ func _apply_difficulty_preset() -> void:
 
 ## Вейпоинты ищутся РЕКУРСИВНО по всей текущей сцене (find_children(), не только прямые дети
 ## корня — устойчиво к любой будущей карте, которая заведёт промежуточные узлы; ни одна текущая
-## этого не делает), по префиксу имени waypoint_name_prefix (см. @export-блок — РАЗНЫЙ для разных
-## ботов на одной карте, иначе оба ACHIEVER подобрали бы ЧУЖИЕ вейпоинты тоже: defense патрулирует
-## вокруг objective по "WaypointN", attack идёт К objective по "AttackWaypointN"), сортировка по
-## имени даёт стабильный порядок обхода (…Waypoint1 → …Waypoint2 → …Waypoint3 → снова …Waypoint1,
-## если не waypoints_one_way). Паттерн "prefix*" — glob-стиль begins_with через движковый матчер.
+## этого не делает), по РОЛИ (Godot group на каждом узле, см. spawn_zone.gd @export zone_role), не
+## по имени — РАЗНАЯ роль на разных ботах одной карты, иначе оба ACHIEVER подобрали бы ЧУЖИЕ
+## вейпоинты тоже: defense патрулирует вокруг objective по роли "Waypoint", attack идёт К objective
+## по роли "AttackWaypoint". Несколько ролей подряд (waypoint_routes) склеиваются в ОДИН
+## непрерывный маршрут — по каждой роли сортировка СВОЯ (по имени узла — то самое "…Waypoint1 →
+## …Waypoint2 → …"; имя теперь чисто для порядка/читаемости, не для поиска), затем ролевые куски
+## идут друг за другом в порядке списка. Циклическая логика _advance_waypoint() ничего не знает про
+## "несколько маршрутов" — для неё это просто более длинный один список, % уже работает как раньше.
 func _collect_waypoints() -> void:
 	_waypoints.clear()
-	for child in get_tree().current_scene.find_children(waypoint_name_prefix + "*", "", true, false):
-		_waypoints.append(child)
-	_waypoints.sort_custom(func(a, b): return String(a.name) < String(b.name))
+	for route_role in _waypoint_routes():
+		var route_nodes: Array = get_tree().get_nodes_in_group(route_role)
+		route_nodes.sort_custom(func(a, b): return String(a.name) < String(b.name))
+		for n in route_nodes:
+			_waypoints.append(n)
+
+## Список ролей маршрута этого бота, в порядке прохождения. waypoint_routes (несколько подряд),
+## если задан; иначе одиночный waypoint_name_prefix (обратная совместимость со старым форматом
+## ростера, где поле называлось "имя-префикс", а не "роль/группа" — семантика поля не изменилась
+## для существующих ростеров, только то, КАК под капотом ищутся узлы этой роли).
+func _waypoint_routes() -> Array:
+	if not waypoint_routes.is_empty():
+		return waypoint_routes
+	return [waypoint_name_prefix]
 
 ## Зона охоты для KILLER (см. @export-блок выше) — вручную заданный hunt_area_half_extents
 ## побеждает автодетект целиком (проверяется первым). Автодетект ищет узел "Ground" РЕКУРСИВНО по
@@ -1532,21 +1557,21 @@ func _s1_watch_yaw() -> float:
 		return _yaw_to_world_point(_turret.global_position, nearest.global_position)
 	return _yaw_to_world_point(_objective_node.global_position, _body.global_position)
 
-## [ИЗМЕНЕНО, по прямому запросу — "не видно маркеры в дебаг-режиме, и нужны не точки, а зона,
-## которую можно двигать и масштабировать, чтобы ожидание было в разных точках"] Ближайшая к боту
-## зона "MortarHideZoneN" — ручная разметка карты (см. TargetObjectiveMap.tscn, по одной рядом с
+## [ИЗМЕНЕНО, по прямому запросу — сперва "не видно маркеры в дебаг-режиме, нужна движимая/
+## масштабируемая зона", затем "единый общий механизм подсасывания вейпоинтов каждого типа, а не
+## поиск по имени под каждый случай"] Ближайшая к боту зона роли "MortarHideZone" (Godot group, см.
+## spawn_zone.gd @export zone_role — тот же механизм, что и у обычных патрульных вейпоинтов,
+## _collect_waypoints()) — ручная разметка карты (см. TargetObjectiveMap.tscn, по одной рядом с
 ## каждой AmmoDropZone, на диагонали между ними), тот же скрипт spawn_zone.gd, что у зон спавна/
 ## сброса патронов: движимый transform + масштабируемый radius, готовый дебаг-круг (свой цвет —
 ## см. spawn_zone.gd._draw_debug_circle()), pick_spawn_position() даёт РАЗНУЮ точку внутри круга
-## при каждом новом заходе в сценарий 1 (не одну и ту же координату каждый раз). Рекурсивный
-## find_children() по ИМЕНИ, тот же паттерн, что _collect_waypoints()/_find_alert_zone() — работает
-## для любой будущей карты, где такие зоны расставлены, независимо от структуры дерева. null — на
-## карте нет ни одной (вызывающий код делает defensive-фолбэк на старое поведение, см.
+## при каждом новом заходе в сценарий 1 (не одну и ту же координату каждый раз). null — на карте
+## нет ни одной (вызывающий код делает defensive-фолбэк на старое поведение, см.
 ## State.ATTACK_OBJECTIVE выше).
 func _nearest_mortar_hide_spot() -> Node3D:
 	var best: Node3D = null
 	var best_d: float = INF
-	for zone in get_tree().current_scene.find_children("MortarHideZone*", "Node3D", true, false):
+	for zone in get_tree().get_nodes_in_group("MortarHideZone"):
 		var d: float = _body.global_position.distance_to(zone.global_position)
 		if d < best_d:
 			best_d = d

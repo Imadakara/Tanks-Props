@@ -39,20 +39,29 @@ func _set_state(new_state: State) -> void:
 	state = new_state
 	state_changed.emit(old, new_state)
 
+## Огонь доступен во всём, кроме RELOAD. DISGUISE_COOLDOWN стрелять НЕ мешает: 10-с кулдаун
+## после сброса маскировки — это запрет ПОВТОРНОЙ маскировки (can_enter_disguise), не запрет
+## стрелять (см. Tank_Prop_Hunt_Disguise.md §2 — там про «повторная маскировка недоступна» и
+## «танк свободно двигается», про оружие ничего). Иначе танк, у которого маскировку сбили НЕ
+## выстрелом (касание / прострел / таймер / поворот башни при выходе в бой), на 10 с
+## превращался в беспомощную мишень — засадный сценарий бота терял смысл.
 func can_fire() -> bool:
-	return state == State.NORMAL or state == State.DISGUISED
+	return state != State.RELOAD
 
 func can_enter_disguise() -> bool:
 	return state == State.NORMAL
 
-## Выстрел. Вызывается WeaponController. Возвращает false, если выстрел сейчас недоступен
-## (RELOAD/DISGUISE_COOLDOWN). Выстрел из DISGUISED снимает маскировку в момент выстрела
-## и переводит сразу в RELOAD, минуя NORMAL (ТЗ §5.1, §7).
+## Выстрел. Вызывается WeaponController. Возвращает false только в RELOAD. Выстрел из DISGUISED
+## снимает маскировку в момент выстрела и переводит сразу в RELOAD, минуя NORMAL (ТЗ §5.1, §7).
+## Выстрел из DISGUISE_COOLDOWN досрочно завершает кулдаун (глушим CooldownTimer) и тоже уводит
+## в RELOAD — дальше обычная перезарядка, потом NORMAL.
 func request_fire() -> bool:
 	if not can_fire():
 		return false
 	if state == State.DISGUISED:
 		_disguise_timer.stop()
+	elif state == State.DISGUISE_COOLDOWN:
+		_cooldown_timer.stop()
 	_set_state(State.RELOAD)
 	_reload_timer.wait_time = GameConfig.reload_duration_sec
 	_reload_timer.start()

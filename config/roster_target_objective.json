@@ -2,7 +2,7 @@
   {
     "team": 1,
     "count": 1,
-    "waypoint_name_prefix": "Waypoint",
+    "waypoint_routes": ["DefenseWaypoint", "Waypoint"],
     "hunt_area_center": [0, -0.25, 0],
     "hunt_area_half_extents": [36, 36],
     "disguise_bot_enabled": true,
