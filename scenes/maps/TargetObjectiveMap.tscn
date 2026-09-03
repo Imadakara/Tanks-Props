@@ -39,6 +39,9 @@ size = Vector3(2, 2, 2)
 
 [node name="TargetObjectiveMap" type="Node3D" unique_id=281684750]
 script = ExtResource("1_execi")
+match_mode = 0
+final_stage_enabled = false
+map_border_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1900000001]
 environment = ExtResource("13_env")
