@@ -54,3 +54,9 @@ custom_minimum_size = Vector2(380, 40)
 layout_mode = 2
 button_pressed = true
 text = "Debug-режим (бессмертие, отладочные оверлеи)"
+
+[node name="SpawnBotsImmediatelyCheck" type="CheckBox" parent="VBoxContainer" unique_id=999888779]
+custom_minimum_size = Vector2(380, 40)
+layout_mode = 2
+button_pressed = true
+text = "  Спавнить ботов сразу (иначе — только кнопками в HUD)"

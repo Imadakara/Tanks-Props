@@ -406,17 +406,25 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
 `@export`s, `SpawnZone.show_debug_circle`):
 - `map_scene.gd` — the `Игрок: бессмертие ON/OFF` button *and* the forced `_player_health.invincible
   = true` it sets (so with debug OFF the player is mortal); the `Objective: ON/OFF` button; the
-  1/2/3 observer-camera keys (`_unhandled_input`); `_build_waypoint_debug()` — a dashed ground ring
-  (radius 7.5) under every `*Waypoint*` node, red for `Attack*` / blue otherwise (its mesh node is
-  named to dodge the bot's `find_children("Waypoint*")` collector).
+  1/2/3 observer-camera keys (`_unhandled_input`); the `+ Бот (атака)`/`+ Бот (оборона)` buttons
+  (`_setup_bot_spawn_buttons()`, calls `TeamSpawner.spawn_one_bot(team)`).
 - `tank.gd` — the billboard `Label3D` "HP N/M" above each tank (`_setup_hp_label()`), refreshed on
   `damaged`/`destroyed`/`on_respawned()`. The team-colour mesh tint (`apply_team_visuals()`) is
   **not** gated — it always applies.
 - `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays and the
   per-bot reaction-toggle button (setup **and** the `_physics_process` update calls, so the
   overlay meshes/labels are never touched when null).
-- `spawn_zone.gd` — the on-ground debug circle (spawn zones **and** ammo/mod drop-zone circles,
-  since `AmmoDropZone/DropArea` reuses this script).
+- `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is now
+  this one script/one visual** (per-instance `@export radius`, movable/scalable in the editor, no
+  separate hardcoded radius anywhere): spawn zones, ammo/mod drop-zone circles (`AmmoDropZone/
+  DropArea` reuses this script), `ObjectiveAlertZone`, patrol/attack waypoints (`Waypoint*`/
+  `AttackWaypoint*`/`DefenseWaypoint*` — see "Патруль по вейпоинтам" in `tank_ai_controller.gd`'s
+  header), and the disguise-ambush `MortarHideZone1`/`MortarHideZone2` (see "Маскировка бота"
+  below). Color by name prefix: `Attack*`/`Defense*` — red/blue; `MortarHide*` — purple; anything
+  else — neutral yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
+  zone_gizmo_plugin.gd`, a `@tool` `EditorNode3DGizmoPlugin`) draws identical circles in the Godot
+  viewport while placing/tuning a zone, reading the same `radius`/name convention — keep both in
+  sync when touching either.
 
 **RELEASE TODO (Steam / release prep):** the menu checkbox is a *development-stage* entry point —
 it's in the normal player-facing menu. Before release, change how debug mode is entered: drop it

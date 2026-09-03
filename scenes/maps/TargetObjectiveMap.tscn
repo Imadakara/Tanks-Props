@@ -70,15 +70,23 @@ size = 80.0
 
 [node name="Waypoint1" type="Node3D" parent="." unique_id=1802743095]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -17)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="Waypoint2" type="Node3D" parent="." unique_id=687408254]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 0, 0)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="Waypoint3" type="Node3D" parent="." unique_id=1082679058]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 17)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="Waypoint4" type="Node3D" parent="." unique_id=36124107]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -17, 0, 0)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=467223800]
 navigation_mesh = SubResource("NavigationMesh_2uusy")
@@ -135,9 +143,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.625, -22.5)
 
 [node name="AttackWaypoint1" type="Node3D" parent="." unique_id=1592442195]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, 16)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="AttackWaypoint2" type="Node3D" parent="." unique_id=487532425]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 4)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="AttackSpawnZone" type="Node3D" parent="." unique_id=1426286694]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 28)
@@ -151,12 +163,26 @@ radius = 8.0
 
 [node name="DefenseWaypoint1" type="Node3D" parent="." unique_id=796650889]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.393913, 0, -18.221859)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="DefenseWaypoint2" type="Node3D" parent="." unique_id=1636650743]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11.777676, 0, -10.969086)
+script = ExtResource("8_execi")
+radius = 7.5
 
 [node name="AmmoDropZone" parent="." unique_id=2075567286 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, -28)
 
 [node name="AmmoDropZone2" parent="." unique_id=121503587 instance=ExtResource("9_drop")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28, 0, 28)
+
+[node name="MortarHideZone1" type="Node3D" parent="." unique_id=999888777]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, -20)
+script = ExtResource("8_execi")
+radius = 5.0
+
+[node name="MortarHideZone2" type="Node3D" parent="." unique_id=999888778]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0, 20)
+script = ExtResource("8_execi")
+radius = 5.0

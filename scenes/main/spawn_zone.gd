@@ -107,6 +107,12 @@ func _draw_debug_circle() -> void:
 		color = Color(0.9, 0.2, 0.15, 0.85)
 	elif String(name).begins_with("Defense"):
 		color = Color(0.2, 0.45, 0.9, 0.85)
+	# [ДОБАВЛЕНО, по прямому запросу — "зона ожидания маскировки должна быть видна в дебаг-режиме"]
+	# Свой цвет, не жёлтый общий "else" — иначе неотличима от соседних жёлтых кругов ammo-зон/
+	# ObjectiveAlertZone на одном экране (MortarHideZoneN стоят рядом с AmmoDropZone, см.
+	# TargetObjectiveMap.tscn).
+	elif String(name).begins_with("MortarHide"):
+		color = Color(0.6, 0.25, 0.85, 0.85)
 	else:
 		color = Color(0.9, 0.85, 0.15, 0.85)
 

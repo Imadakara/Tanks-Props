@@ -156,9 +156,11 @@ extends Node
 ## одна текущая карта не заворачивает маркеры в промежуточный узел, но рекурсивный поиск остаётся
 ## корректным для любой будущей карты, которая станет — и сортируются по имени. РАЗНЫЙ префикс на
 ## разных ботах одной карты, см. @export-блок —
-## разделяет вейпоинты обороны от вейпоинтов атаки). Каждый вейпоинт — не точка, а круглая область
-## радиуса waypoint_radius: доехав до случайной точки внутри круга ТЕКУЩЕГО вейпоинта, бот выбирает
-## новую случайную точку в круге СЛЕДУЮЩЕГО и едет дальше. Дефолт (waypoints_one_way=false, оборона)
+## разделяет вейпоинты обороны от вейпоинтов атаки). Каждый вейпоинт — не точка, а круглая зона
+## (см. spawn_zone.gd — тот же скрипт, что у spawn/ammo/alert/hide-зон: движимый transform + СВОЙ
+## @export radius, единый дебаг-визуал; waypoint_radius на боте — только фолбэк для немигрированных
+## узлов, см. её doc-comment): доехав до случайной точки внутри круга ТЕКУЩЕГО вейпоинта
+## (pick_spawn_position()), бот выбирает новую случайную точку в круге СЛЕДУЮЩЕГО и едет дальше. Дефолт (waypoints_one_way=false, оборона)
 ## — по кругу бесконечно (индекс всегда % количество). waypoints_one_way=true (атака, по прямому
 ## запросу — "должен уничтожить objective, двигаясь по 3-м вейпоинтам... от спавна на другом конце
 ## карты") — ОДИН РАЗ 1→2→…→N, затем ATTACK_OBJECTIVE (см. выше), без зацикливания на 1.
@@ -221,7 +223,7 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_PREP, DISGUISE }
+enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -298,8 +300,11 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var forward_look_bias: float = 0.7
 @export var forward_look_cone_deg: float = 70.0
 
-## Патруль по вейпоинтам (см. заголовок файла).
-@export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — область вокруг маркера
+## Патруль по вейпоинтам (см. заголовок файла). [ИЗМЕНЕНО, по прямому запросу] Дефолт-фолбэк —
+## реальный радиус берётся с САМОГО узла вейпоинта (spawn_zone.gd @export radius, движимый и
+## масштабируемый в редакторе на каждом вейпоинте отдельно, см. _pick_new_waypoint_target()); это
+## поле работает, только если у вейпоинта НЕТ такого скрипта (немигрированная карта).
+@export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — фолбэк, если у узла нет radius
 @export var waypoint_reach_dist: float = 1.5
 ## Префикс имени узла для _collect_waypoints() — РАЗНЫЙ на разных ботах одной карты (по прямому
 ## запросу — второй ACHIEVER, атакующий, должен идти к objective по СВОИМ вейпоинтам, не по тем же
@@ -672,11 +677,16 @@ var _mod_zone: Node = null
 var _mortar_target_node: Node = null
 var _mortar_prep_timer: float = 0.0
 
-## Маскировка бота — см. секцию функций «Маскировка бота» и ветки DISGUISE_PREP/DISGUISE в
-## _physics_process(). _disguise_prep_yaw — мировой угол доворота башни перед входом;
-## _disguise_prep_timer — потолок фазы PREP; _kill_latch_timer > 0 — недавно убил врага
-## (сценарий 2), тикает вниз в _physics_process(); _just_reached_waypoint — одноразовый флаг
-## «дошёл до маркера маршрута», потребляется в _ensure_home_state() (сценарий 2).
+## Маскировка бота — см. секцию функций «Маскировка бота» и ветки DISGUISE_APPROACH/DISGUISE_PREP/
+## DISGUISE в _physics_process(). _disguise_hide_pos — точка, куда едет DISGUISE_APPROACH (сценарий
+## 1 — случайная точка в ближайшей MortarHideZoneN, см. _nearest_mortar_hide_spot(); по прямому
+## запросу — прятаться не на месте у objective, где часто ходят защитники, а у зоны сброса мортиры,
+## каждый раз в новой точке). _disguise_prep_yaw
+## — мировой угол доворота башни перед входом; _disguise_prep_timer — потолок фазы PREP;
+## _kill_latch_timer > 0 — недавно убил врага (сценарий 2), тикает вниз в _physics_process();
+## _just_reached_waypoint — одноразовый флаг «дошёл до маркера маршрута», потребляется в
+## _ensure_home_state() (сценарий 2).
+var _disguise_hide_pos: Vector3 = Vector3.ZERO
 var _disguise_prep_yaw: float = 0.0
 var _disguise_prep_timer: float = 0.0
 var _kill_latch_timer: float = 0.0
@@ -829,14 +839,13 @@ func _initialize() -> void:
 	# цель не видна, а тут нужно перебить и видимую тоже).
 	_ammo.ammo_depleted.connect(_on_ammo_depleted)
 	# Сценарий 2 маскировки бота: латч «только что убил врага». Подписка на destroyed каждого
-	# вражеского танка (аналог ScoreManager.begin_match), фильтр killer == _body — в обработчике.
-	# Враги не freed (free_on_destroy=false) — подписка живёт весь матч; новых танков посреди
-	# матча ни одна карта не спавнит.
+	# УЖЕ СУЩЕСТВУЮЩЕГО вражеского танка (аналог ScoreManager.begin_match), фильтр killer == _body —
+	# в обработчике. Враги не freed (free_on_destroy=false) — подписка живёт весь матч. Враг,
+	# заспавненный ПОЗЖЕ (см. TeamSpawner.spawn_one_bot() — дебаг-кнопки в HUD), сюда не попадает
+	# вообще (этот цикл — снимок на момент _initialize(), не подписка "на будущее") — тот путь сам
+	# зовёт watch_enemy_destroyed() на уже готовых ботов при спавне (см. её doc-comment).
 	for _enemy in get_tree().get_nodes_in_group("tanks"):
-		if is_instance_valid(_enemy) and _enemy != _body and _enemy.team != _body.team:
-			var _eh: Node = _enemy.get_node_or_null("HealthComponent")
-			if _eh != null and not _eh.destroyed.is_connected(_on_enemy_destroyed):
-				_eh.destroyed.connect(_on_enemy_destroyed)
+		watch_enemy_destroyed(_enemy)
 	# [ИЗМЕНЕНО, по прямому запросу — "ALERT не срабатывает у уже имеющегося танка, тревога должна
 	# быть ОБЩЕЙ у уже существующих на карте И у новых спавнящихся"] Раньше здесь подписывался НА
 	# СИГНАЛ Objective/HealthComponent.damaged НАПРЯМУЮ, храня СВОЙ personal-таймер — теперь таймер
@@ -1028,12 +1037,27 @@ func _physics_process(delta: float) -> void:
 				state = State.MOD_SEEK
 				_pick_mod_zone()
 			elif _should_disguise_s1():
-				# Сценарий 1 маскировки: ATTACK_OBJECTIVE самоуправляем (оверлей _ensure_home_state
-				# до него не доходит — тот для этого состояния делает ранний return), поэтому вход
-				# в маскировку инициируем здесь, рядом с MOD_SEEK.
-				_disguise_prep_yaw = _s1_watch_yaw()
-				_disguise_prep_timer = disguise_prep_timeout_sec
-				state = State.DISGUISE_PREP
+				# [ИЗМЕНЕНО, по прямому запросу — "ожидание маскировки у objective — угроза, там часто
+				# ходят защитники; пусть ждёт у ближайшей зоны сброса мортиры — зоной, которую можно
+				# двигать/масштабировать, в разных точках, не одной и той же"] Сценарий 1 маскировки:
+				# ATTACK_OBJECTIVE самоуправляем (оверлей _ensure_home_state до него не доходит — тот
+				# для этого состояния делает ранний return), поэтому вход инициируем здесь, рядом с
+				# MOD_SEEK. Сначала едем к случайной точке В ближайшей MortarHideZoneN
+				# (pick_spawn_position() — та же техника, что у SpawnZone/AmmoDropZone, разная точка
+				# при каждом новом заходе) — DISGUISE_APPROACH; сама фаза доворота/входа (PREP/DISGUISE)
+				# не двигается вообще, ей нужна уже финальная позиция. Зон на карте нет (старая карта
+				# без разметки) — defensive-фолбэк на прежнее поведение, маскируется прямо на месте у
+				# objective.
+				var hide_zone: Node3D = _nearest_mortar_hide_spot()
+				if hide_zone != null:
+					_disguise_hide_pos = hide_zone.pick_spawn_position()
+					state = State.DISGUISE_APPROACH
+					if _nav_agent.is_inside_tree():
+						_nav_agent.target_position = _disguise_hide_pos
+				else:
+					_disguise_prep_yaw = _s1_watch_yaw()
+					_disguise_prep_timer = disguise_prep_timeout_sec
+					state = State.DISGUISE_PREP
 			else:
 				# Тот же паттерн, что и в DEFEND (см. её комментарий) — едем к objective и стреляем
 				# всю дорогу, не замирая на границе fire_range; останавливаемся явно только по
@@ -1169,6 +1193,18 @@ func _physics_process(delta: float) -> void:
 							_nav_agent.target_position = crate.global_position
 					else:
 						_mark_mortar_taken()
+						# [ДОБАВЛЕНО, по прямому запросу — "спавнится в окне до сброса мортиры → сразу
+						# MOD_SEEK, это ок, но если ящика в зоне не оказалось — откатывается на PATROL
+						# с ПЕРВОГО вейпоинта, тактически некорректно"] Бот ещё НЕ сделал ни шагу по
+						# своему маршруту (_waypoint_index на старте, 0 — ровно случай "заспавнился и
+						# сразу ушёл в MOD_SEEK, PATROL ни разу не запускался") — вместо отката к началу
+						# маршрута сразу ставим индекс на ПОСЛЕДНИЙ вейпоинт (у одноразового маршрута
+						# атакующего он стоит рядом с objective, см. заголовок файла) — PATROL на
+						# следующем тике поедет прямиком туда, не через весь маршрут заново. Бота, уже
+						# прошедшего часть маршрута до отвлечения на MOD_SEEK (_waypoint_index > 0), не
+						# трогаем — его прогресс и так корректен, продолжит с текущей точки.
+						if waypoints_one_way and _waypoint_index == 0 and not _waypoints.is_empty():
+							_waypoint_index = _waypoints.size() - 1
 						state = State.IDLE
 				else:
 					_drive_to_point(delta, center, waypoint_reach_dist)
@@ -1190,6 +1226,22 @@ func _physics_process(delta: float) -> void:
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.MORTAR_ATTACK:
 			_process_mortar_attack(delta)
+		State.DISGUISE_APPROACH:
+			# [ДОБАВЛЕНО, по прямому запросу] Едем к _disguise_hide_pos (случайная точка в ближайшей
+			# MortarHideZoneN, см. _nearest_mortar_hide_spot()) тем же driving-стеком, что и остальные "доехать-потом-
+			# что-то-сделать" состояния (AMMO_SEEK/MOD_SEEK). Мортира упала РАНЬШЕ, чем добрались —
+			# смысла продолжать прятаться нет, идём забирать её (тот же выход, что и у самого
+			# ATTACK_OBJECTIVE выше). Заметили врага по дороге — обычный приоритет "видит →
+			# DEFEND" сработает сам в _think() (эта ветка ничего не трогает у _scan_for_target()).
+			if _should_seek_mortar():
+				state = State.MOD_SEEK
+				_pick_mod_zone()
+			elif _drive_to_point(delta, _disguise_hide_pos, waypoint_reach_dist):
+				_disguise_prep_yaw = _s1_watch_yaw()
+				_disguise_prep_timer = disguise_prep_timeout_sec
+				state = State.DISGUISE_PREP
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.DISGUISE_PREP:
 			# Стоим на месте, доворачиваем И КОРПУС, И БАШНЮ на _disguise_prep_yaw (сценарий 2 —
 			# всегда центр objective: вейпоинты стоят треугольником по краю круга вокруг цели,
@@ -1480,6 +1532,27 @@ func _s1_watch_yaw() -> float:
 		return _yaw_to_world_point(_turret.global_position, nearest.global_position)
 	return _yaw_to_world_point(_objective_node.global_position, _body.global_position)
 
+## [ИЗМЕНЕНО, по прямому запросу — "не видно маркеры в дебаг-режиме, и нужны не точки, а зона,
+## которую можно двигать и масштабировать, чтобы ожидание было в разных точках"] Ближайшая к боту
+## зона "MortarHideZoneN" — ручная разметка карты (см. TargetObjectiveMap.tscn, по одной рядом с
+## каждой AmmoDropZone, на диагонали между ними), тот же скрипт spawn_zone.gd, что у зон спавна/
+## сброса патронов: движимый transform + масштабируемый radius, готовый дебаг-круг (свой цвет —
+## см. spawn_zone.gd._draw_debug_circle()), pick_spawn_position() даёт РАЗНУЮ точку внутри круга
+## при каждом новом заходе в сценарий 1 (не одну и ту же координату каждый раз). Рекурсивный
+## find_children() по ИМЕНИ, тот же паттерн, что _collect_waypoints()/_find_alert_zone() — работает
+## для любой будущей карты, где такие зоны расставлены, независимо от структуры дерева. null — на
+## карте нет ни одной (вызывающий код делает defensive-фолбэк на старое поведение, см.
+## State.ATTACK_OBJECTIVE выше).
+func _nearest_mortar_hide_spot() -> Node3D:
+	var best: Node3D = null
+	var best_d: float = INF
+	for zone in get_tree().current_scene.find_children("MortarHideZone*", "Node3D", true, false):
+		var d: float = _body.global_position.distance_to(zone.global_position)
+		if d < best_d:
+			best_d = d
+			best = zone
+	return best
+
 ## Тревога вокруг objective активна (недавно получал урон ИЛИ враг в alert-зоне) — то же
 ## ИЛИ-условие, что держит State.ALERT в _ensure_home_state().
 func _alert_is_active() -> bool:
@@ -1545,8 +1618,26 @@ func _player_sees_me() -> bool:
 	var hit: Dictionary = _body.get_world_3d().direct_space_state.intersect_ray(q)
 	return hit.is_empty() or hit.get("collider") == _body
 
-## Сценарий 2: подписка на destroyed каждого вражеского танка заведена в _initialize(). Взводим
-## латч засады, только если килл наш и механика включена.
+## [ДОБАВЛЕНО, по прямому запросу — регрессия "защитник перестал прятаться после килла и спада
+## тревоги"] Подписка НА ОДИН конкретный вражеский танк — вынесена из цикла _initialize() отдельной
+## функцией, чтобы её мог дозвать TeamSpawner.spawn_one_bot() на УЖЕ инициализированных ботов
+## противоположной команды в момент спавна нового врага. Без этого поздно заспавненный (дебаг-
+## кнопкой в HUD) враг не подключён ни к чьему _on_enemy_destroyed() — убийство ЭТОГО конкретного
+## танка никогда не взводит _kill_latch_timer у уже готовых ботов, сценарий 2 молча не срабатывает
+## именно на него (для ростерных ботов, заспавненных ДО первого физ.тика любого другого бота,
+## разницы нет — они и так уже "существуют" к моменту чужого _initialize()). is_connected() —
+## идемпотентно, безопасно звать повторно (например из собственного _initialize() бота ПОСЛЕ того,
+## как его уже кто-то подписал заранее через этот же путь).
+func watch_enemy_destroyed(enemy: Node) -> void:
+	if enemy == _body or not is_instance_valid(enemy) or enemy.team == _body.team:
+		return
+	var eh: Node = enemy.get_node_or_null("HealthComponent")
+	if eh != null and not eh.destroyed.is_connected(_on_enemy_destroyed):
+		eh.destroyed.connect(_on_enemy_destroyed)
+
+## Сценарий 2: подписка на destroyed каждого вражеского танка заведена в _initialize() +
+## TeamSpawner (см. watch_enemy_destroyed()). Взводим латч засады, только если килл наш и механика
+## включена.
 func _on_enemy_destroyed(killer: Node) -> void:
 	if killer == _body and disguise_s2_enabled:
 		_kill_latch_timer = disguise_s2_kill_latch_ttl_sec
@@ -1558,7 +1649,7 @@ func _ensure_home_state() -> void:
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE \
 			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT \
 			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK \
-			or state == State.DISGUISE or state == State.DISGUISE_PREP:
+			or state == State.DISGUISE or state == State.DISGUISE_PREP or state == State.DISGUISE_APPROACH:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -2449,6 +2540,8 @@ func _current_drive_target() -> Vector3:
 			return _ammo_target_crate.global_position if is_instance_valid(_ammo_target_crate) else _body.global_position
 		State.AMMO_WAIT:
 			return _ammo_wait_target_pos if _has_ammo_wait_target else _body.global_position
+		State.DISGUISE_APPROACH:
+			return _disguise_hide_pos
 		_:
 			return _body.global_position
 
@@ -2614,14 +2707,23 @@ func _scan_gap() -> float:
 	var center_idx: float = (best_start + best_start + best_len - 1) / 2.0
 	return -half_span + center_idx * step
 
-## Случайная точка внутри круга (равномерно по площади — sqrt(randf()), не randf() напрямую,
-## иначе точки скучивались бы у центра).
+## [ИЗМЕНЕНО, по прямому запросу — "вейпоинты должны быть общей системой зон: движимых и
+## масштабируемых, с единым визуалом"] Вейпоинты теперь — те же узлы на spawn_zone.gd, что и
+## spawn/ammo/alert/hide-зоны (см. TargetObjectiveMap.tscn/TeamArenaMap.tscn): pick_spawn_position()
+## даёт случайную точку внутри РЕАЛЬНОГО radius ЭТОГО конкретного узла (не общий waypoint_radius на
+## боте — теперь каждый вейпоинт можно двигать/масштабировать по отдельности прямо в редакторе) и
+## сразу с раскастом на реальную землю под точкой (та же техника, что SpawnZone.pick_spawn_position()
+## уже использует для team_spawner.gd). waypoint_radius остаётся ТОЛЬКО дефолтным фолбэком — для
+## вейпоинта без этого скрипта (немигрированная будущая карта), тогда старая формула вручную.
 func _pick_new_waypoint_target() -> void:
 	var wp: Node3D = _waypoints[_waypoint_index]
-	var angle: float = randf() * TAU
-	var dist: float = sqrt(randf()) * waypoint_radius
-	var offset := Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
-	_waypoint_target_pos = wp.global_position + offset
+	if wp.has_method("pick_spawn_position"):
+		_waypoint_target_pos = wp.pick_spawn_position()
+	else:
+		var angle: float = randf() * TAU
+		var dist: float = sqrt(randf()) * waypoint_radius
+		var offset := Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+		_waypoint_target_pos = wp.global_position + offset
 	_has_waypoint_target = true
 
 ## waypoints_one_way (см. @export-блок) — на ПОСЛЕДНЕМ вейпоинте (index уже на последнем, ПЕРЕД
@@ -3263,6 +3365,9 @@ func _update_brain_debug_label() -> void:
 			if is_instance_valid(_mortar_target_node):
 				var dist: float = _body.global_position.distance_to(_mortar_target_node.global_position)
 				lines.append("mortar → %s (%.1fm, prep %.1fs)" % [String(_mortar_target_node.name), dist, max(0.0, _mortar_prep_timer)])
+			_append_nav_debug_lines(lines)
+		State.DISGUISE_APPROACH:
+			lines.append("heading to hideout: %.1fm" % _body.global_position.distance_to(_disguise_hide_pos))
 			_append_nav_debug_lines(lines)
 		State.DISGUISE_PREP:
 			lines.append("pre-hide: aiming watch dir (%.1fs)" % max(0.0, _disguise_prep_timer))

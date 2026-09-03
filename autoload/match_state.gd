@@ -41,6 +41,16 @@ var match_mode: int = Mode.TARGET_OBJECTIVE
 ## флагом командной строки / dev-билдом / debug-сборкой. См. корневой CLAUDE.md.
 var debug_enabled: bool = true
 
+## [ДОБАВЛЕНО, по прямому запросу — "галочка напротив кнопки запуска карты, если стоит галочка
+## дебаг-режима — спавнить сразу ботов или только по команде"] Читается ТОЛЬКО когда debug_enabled
+## (задаётся в меню синхронно с ним, см. main_menu.gd._go()) — вне debug-режима ростер всегда
+## спавнится сразу, значение этого поля не смотрится вообще. false — team_spawner.gd.spawn_team()
+## пропускает начальный спавн ростера ботов (позиции игрока/зон/конфиг всё равно настраиваются
+## как обычно); боты появляются по одному только по кнопкам HUD (см. hud.gd/TeamSpawner.
+## spawn_one_bot()). Тот же принцип живучести через reload_current_scene(), что у debug_enabled —
+## значение не должно молча откатываться на рестарте раунда; reset_series() его не трогает.
+var debug_spawn_bots_on_start: bool = true
+
 var total_rounds: int = 3
 var current_round_num: int = 1
 var series_wins_attack: int = 0

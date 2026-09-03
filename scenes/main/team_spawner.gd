@@ -65,6 +65,14 @@ func spawn_team() -> void:
 	# слот на стороне игрока" — JSON-поле squad'а (reserve_for_player), не ветка кода.
 	# Счётчик по команде (не по отряду) — сквозной, чтобы имена не повторялись, даже если у одной
 	# команды несколько отрядов с разными ролями (сейчас так не бывает, но не завязываемся на это).
+	# [ДОБАВЛЕНО, по прямому запросу — "галочка в меню: спавнить ботов сразу или только по
+	# команде"] Читается ТОЛЬКО в debug-режиме (см. MatchState.debug_spawn_bots_on_start doc-
+	# comment) — вне него всегда спавним ростер как раньше. Пропускаем ИМЕННО спавн ботов, а не
+	# всю функцию: позиция/визуал/конфиг игрока выше уже настроены и должны остаться настроенными
+	# независимо от этой галочки — она про ботов, не про игрока.
+	if MatchState.debug_enabled and not MatchState.debug_spawn_bots_on_start:
+		return
+
 	var team_bot_counts := {}
 	for squad in _load_roster(roster_config_path):
 		var team: int = int(squad.get("team", 0))
@@ -77,6 +85,30 @@ func spawn_team() -> void:
 		for i in range(count):
 			team_bot_counts[team] = team_bot_counts.get(team, 0) + 1
 			_spawn_bot(team, zone, bot_config, squad, team_bot_counts[team])
+
+## [ДОБАВЛЕНО, по прямому запросу — "2 кнопки в HUD для дебаг-режима для спавна ботов (на каждую
+## сторону) — клик спавнит бота"] Публичный вход для HUD: один бот заданной команды, поверх того,
+## что уже есть на карте (не связано с тем, спавнился ли ростер целиком при старте — работает
+## одинаково в обоих случаях, что при "спавнить сразу", что при "только по команде"). Настройки
+## роли/сложности/вейпоинтов — из ПЕРВОГО отряда ростера этой команды (тот же JSON, что и обычный
+## спавн, не отдельный "дебажный" набор параметров) — пустой словарь, если в ростере вообще нет
+## отряда этой команды (бот тогда просто использует собственные дефолты скрипта TankAIController).
+## Индекс имени — по количеству ЖИВЫХ И МЁРТВЫХ танков этой команды прямо сейчас (труп остаётся в
+## группе "tanks", free_on_destroy=false, см. корневой CLAUDE.md) — уникален всегда, даже если
+## кто-то уже погибал.
+func spawn_one_bot(team: int) -> void:
+	var zone: Node3D = _find_spawn_zone("AttackSpawnZone" if team == 0 else "DefenseSpawnZone")
+	var bot_config := _load_json_config(BotConfigPath)
+	var squad: Dictionary = {}
+	for s in _load_roster(roster_config_path):
+		if int(s.get("team", 0)) == team:
+			squad = s
+			break
+	var index: int = 1
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if is_instance_valid(t) and int(t.team) == team:
+			index += 1
+	_spawn_bot(team, zone, bot_config, squad, index)
 
 ## Ищется РЕКУРСИВНО по всей текущей сцене (find_child), не только среди прямых детей корня —
 ## тот же обобщённый приём, что respawn_controller.gd/tank_ai_controller.gd используют для
@@ -100,7 +132,18 @@ func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, 
 	# (тот же класс бага, что был с TankAIController.enabled, см. базу знаний Godot №36).
 	bot.team = team
 	bot.get_node("CameraRig").is_active = false
+	# [ДОБАВЛЕНО, по прямому запросу — микробаг "спавн бота дебаг-кнопкой в HUD сбрасывает активную
+	# камеру на игрока, даже если была включена обзорная/objective debug-камера (клавиши 2/3)"]
+	# Живьём подтверждено: сам факт add_child() новой Camera3D (внутри CameraRig нового бота) —
+	# ДАЖЕ С current=false у неё самой — сбивает Viewport.get_camera_3d() движком: та камера,
+	# что была активна ДО, теряет .current=true как побочный эффект входа ЛЮБОЙ новой Camera3D в
+	# дерево (is_active=false строкой выше это не спасает — дело не в новой камере бота, а в самом
+	# факте её появления в дереве). Фикс — запомнить активную камеру ДО add_child() и явно вернуть
+	# ей current=true сразу после.
+	var active_camera: Camera3D = get_viewport().get_camera_3d()
 	get_tree().current_scene.add_child(bot)
+	if active_camera != null:
+		active_camera.current = true
 	if zone != null:
 		bot.global_position = zone.pick_spawn_position() + _spawn_clearance
 		SpawnZoneScript.face_center(bot)
@@ -108,6 +151,26 @@ func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, 
 	_apply_squad_to_brain(brain, squad)
 	brain.enabled = true
 	_apply_tank_config(bot, config)
+	_notify_existing_bots_of_new_enemy(bot)
+
+## [ДОБАВЛЕНО, по прямому запросу — регрессия "защитник перестал прятаться после килла и спада
+## тревоги"] TankAIController подписывается на destroyed каждого ВРАГА, но ТОЛЬКО в момент своей
+## ленивой _initialize() (первый enabled физ.тик) — снимок состава на тот момент, не подписка "на
+## будущее" (см. её doc-comment). Раньше это было безопасно: весь ростер спавнился ЗА ОДИН вызов
+## spawn_team(), ДО первого физ.тика любого бота — к моменту любой _initialize() состав уже полный.
+## spawn_one_bot() (дебаг-кнопки HUD) это ломает — новый бот появляется ПОСЛЕ того, как остальные
+## уже давно тикают. Без этого вызова боты противоположной команды, уже прошедшие _initialize(),
+## никогда не подключаются к destroyed этого конкретного нового танка — убив его, они не взводят
+## _kill_latch_timer, сценарий 2 маскировки на него не срабатывает. watch_enemy_destroyed()
+## идемпотентна — не задваивает подписку, если бот НЕ инициализирован (сам подпишется на новичка
+## при своей ленивой _initialize(), раз он уже есть в группе "tanks" к тому моменту).
+func _notify_existing_bots_of_new_enemy(new_bot: Node) -> void:
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if t == new_bot or not is_instance_valid(t) or t.team == new_bot.team:
+			continue
+		var brain: Node = t.get_node_or_null("TankAIController")
+		if brain != null:
+			brain.watch_enemy_destroyed(new_bot)
 
 ## Ростер ("кто есть кто" — команда/роль/сложность/вейпоинты/дебаг-виджеты), в отличие от
 ## PlayerConfigPath/BotConfigPath (физические статы, не про поведение) — тот же общий загрузчик
