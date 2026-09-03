@@ -27,6 +27,13 @@ extends Node
 ## вместо disguise_prop_color — чтобы на глаз отличать замаскированный танк от статичного
 ## Obstacle на карте. В релизе (debug off) не применяется.
 @export var disguise_debug_prop_color: Color = Color(0.65, 0.1, 0.9)
+## Цвет мешей танка (корпус + башня + ствол) по его команде — единственная точка настройки
+## «подкраски танков цветом команды». Применяет tank.gd (apply_team_visuals()), вызывается
+## сразу после присвоения tank.team (team_spawner.gd) и на респавне. ATTACK (team 0) = Красные,
+## DEFENSE (team 1) = Синие — те же названия, что в HUD режима TEAM_ARENA.
+@export var team_attack_color: Color = Color(0.75, 0.2, 0.15)
+@export var team_defense_color: Color = Color(0.2, 0.4, 0.8)
+
 ## Кулдаун на выстрел — общий дефолт для всех танков (игрок + боты). Каждый выстрел уводит
 ## TankStateMachine в RELOAD на это время.
 @export var reload_duration_sec: float = 3.0

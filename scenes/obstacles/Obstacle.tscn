@@ -1,0 +1,26 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/obstacles/obstacle.gd" id="1_obst"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_obst"]
+resource_local_to_scene = true
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_obst"]
+resource_local_to_scene = true
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_obst"]
+resource_local_to_scene = true
+albedo_color = Color(0.6, 0.35, 0.15, 1)
+
+[node name="Obstacle" type="StaticBody3D"]
+collision_mask = 0
+script = ExtResource("1_obst")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_obst")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_obst")
+mesh = SubResource("BoxMesh_obst")

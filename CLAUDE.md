@@ -72,7 +72,12 @@ inventory" further down and point `run/main_scene` at a specific map (or pass `s
 
 `scenes/tank/Tank.tscn` is the single reusable scene for both the player's tank and every bot
 (`scenes/main/team_spawner.gd` instances it N times). All behavior lives in sibling components
-under the root (`tank.gd`, which only holds `team`/`is_attacker()`), each independently
+under the root (`tank.gd`, which holds `team`/`is_attacker()`, the **team-colour mesh tint**
+via `apply_team_visuals()` — `GameConfig.team_attack_color`/`team_defense_color` on
+`HullMesh`/turret/barrel, called by `team_spawner.gd` after `team` is assigned and by
+`RespawnController` via `on_respawned()` — and, **debug-mode only**, a billboard `Label3D` "HP
+N/M" above the tank updated on `damaged`/`destroyed`/respawn; this replaced the old red
+"подранок" material swap so it doesn't fight the team tint), each independently
 toggled between player and AI control via its own `is_player_controlled: bool`:
 
 - `TankMovement` — tracks, reads `Input` or `ai_move_input`/`ai_turn_input`. Only forward/back +
@@ -143,14 +148,15 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
 - `HealthComponent` — `take_hit(killer, damage := 1)`; `current_hits += damage`, `destroyed` at
   `current_hits >= max_hits`. Tanks use `max_hits` **3** (`config/*_tank_config.json`, script
   default also 3 — raised from 2 so the mortar has a point vs tanks; normal `Projectile.damage` is
-  1, red paint on hits 1–2). The objective uses this as an **HP pool** — `match_manager.gd` sets its
+  1; a non-fatal hit updates only the debug HP `Label3D`, no mesh repaint). The objective uses this as an **HP pool** — `match_manager.gd` sets its
   `max_hits = GameConfig.objective_hits_required` (**100**), a normal shell does 1, the mortar
   special does `GameConfig.mortar_objective_damage` (30). `attackers_only` lets an objective ignore
   friendly fire;
   `free_on_destroy=false` on tanks hands cleanup to `RespawnController` instead of freeing the node;
   `invincible` is a point override (see the debug toggle buttons under "Game modes"), not part of
-  normal balance. The "red paint" on a non-fatal hit is `tank.gd._on_damaged()` (material swap on
-  `HullMesh`/turret mesh). `force_destroy(killer := null)` bypasses `invincible`/`attackers_only`
+  normal balance. `tank.gd._on_damaged()` refreshes the debug-only HP `Label3D` above the tank
+  (billboard, `MatchState.debug_enabled` gate); the tank mesh keeps its team-colour tint at all
+  times (`apply_team_visuals()`), no damage repaint. `force_destroy(killer := null)` bypasses `invincible`/`attackers_only`
   but still routes through `destroyed` — for "removed from play regardless of debug immortality"
   cases (only caller today: fell below the map, see `RespawnController`).
 - `RespawnController` — on death, disables the tank in place (hidden, colliders off,
@@ -276,10 +282,12 @@ Zones default to opposite corners of the map — both maps (72×72): `AttackSpaw
 `DefenseSpawnZone` at `(28,28)`/`(-28,-28)`, radius 8. Each zone also gets 3
 `Attack/DefenseWaypointN` markers on a straight line toward the objective at 25/50/75% —
 `TargetObjectiveMap.tscn`'s roster points its attack/defense squads' `waypoint_name_prefix` at
-`AttackWaypointN` (one-way, ends in `ATTACK_OBJECTIVE`)/`WaypointN` (looping patrol — the defense
-squad predates the corner-zone waypoint work and still uses its own older markers, see "Map
-inventory"); the waypoint collector (`_collect_waypoints()`) searches the whole current scene
-recursively, not just root-level children, so it stays correct regardless of tree depth.
+`AttackWaypointN` (one-way, ends in `ATTACK_OBJECTIVE`)/`WaypointN` (the defender's `Waypoint1..4`
+diamond around the centre objective, looping patrol — the defense squad predates the corner-zone
+waypoint work and still uses its own older markers, see "Map inventory"); the waypoint collector
+(`_collect_waypoints()`) searches the whole current scene recursively, not just root-level
+children, so it stays correct regardless of tree depth. In debug mode `map_scene.gd` draws a
+dashed team-coloured ring under every `*Waypoint*` node (see "Debug mode").
 
 `SpawnZone.face_center(tank)` (static, called via a `preload()`'d script reference — **not**
 `class_name`: headless `run_project` doesn't pick up a freshly-added `class_name` without an editor
@@ -398,7 +406,12 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
 `@export`s, `SpawnZone.show_debug_circle`):
 - `map_scene.gd` — the `Игрок: бессмертие ON/OFF` button *and* the forced `_player_health.invincible
   = true` it sets (so with debug OFF the player is mortal); the `Objective: ON/OFF` button; the
-  1/2/3 observer-camera keys (`_unhandled_input`).
+  1/2/3 observer-camera keys (`_unhandled_input`); `_build_waypoint_debug()` — a dashed ground ring
+  (radius 7.5) under every `*Waypoint*` node, red for `Attack*` / blue otherwise (its mesh node is
+  named to dodge the bot's `find_children("Waypoint*")` collector).
+- `tank.gd` — the billboard `Label3D` "HP N/M" above each tank (`_setup_hp_label()`), refreshed on
+  `damaged`/`destroyed`/`on_respawned()`. The team-colour mesh tint (`apply_team_visuals()`) is
+  **not** gated — it always applies.
 - `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays and the
   per-bot reaction-toggle button (setup **and** the `_physics_process` update calls, so the
   overlay meshes/labels are never touched when null).
@@ -439,12 +452,32 @@ parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_P
 not here; read it before non-trivial work on this file.
 
 `scenes/maps/TeamArenaMap.tscn` is a separate scene (duplicated from `TargetObjectiveMap.tscn`)
-purpose-built for testing the `KILLER` role — its roster sets `role: "KILLER"`, has 6 extra
-`ObstacleN` static bodies spread across the map (vs. `TargetObjectiveMap.tscn`'s single cluster
-near the objective), and its own rebaked NavMesh. It has no objective node and runs the
+purpose-built for testing the `KILLER` role — its roster sets `role: "KILLER"`, has more
+`ObstacleN` bodies spread across the map (vs. `TargetObjectiveMap.tscn`'s single cluster on the
+defense approach), and its own rebaked NavMesh. It has no objective node and runs the
 **TEAM_ARENA** mode (see "Game modes" above). Launch it explicitly (`run_project` with
 `scene: "res://scenes/maps/TeamArenaMap.tscn"`, or point `run/main_scene` at it) — it's not the
 default scene, see below.
+
+### Obstacle prefab system — `scenes/obstacles/` (universal, every map)
+
+Map obstacles are **instances of two prefab scenes**, not hand-built `StaticBody3D` +
+`CollisionShape3D` + `MeshInstance3D` triples inside each map `.tscn`:
+
+- `Obstacle.tscn` (`obstacle.gd`, `@tool`, `extends StaticBody3D`) — any solid box: crate, block,
+  or wall-cover. `@export size: Vector3` / `@export color: Color` drive the child `BoxShape3D` +
+  `BoxMesh` + material in one place (defaults `2×1.25×2`, brown — matches `GameConfig.disguise_prop_*`).
+  `collision_layer=1` / `collision_mask=0` baked into the prefab so the NavMesh baker still sees it.
+  `TeamArenaMap.tscn`'s central `Wall` is just an instance with `size = 5.4×2.2×0.5` + grey; the
+  identical wall was **removed from `TargetObjectiveMap.tscn`** (its centre is the relocated
+  `Objective`).
+- `HazardZone.tscn` (`hazard_zone.gd`, `@tool`, `extends Area3D`) — impassable area, `@export size`,
+  fixed translucent-red material, `collision_layer=4`.
+
+All three sub-resources in each prefab are `resource_local_to_scene = true` so per-instance
+`size`/`color` don't bleed across instances. Nothing looks obstacles up by name. After
+add/move/resize/delete the per-map NavMesh still needs a manual re-bake
+(`Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md`).
 
 ### Map inventory
 
@@ -453,7 +486,9 @@ just calls `get_tree().change_scene_to_file()` at one of the maps below; carries
 its own. Launch either map directly via `run_project`'s `scene:` param (or repoint `run/main_scene`)
 to skip the menu:
 
-- `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective`, one defense
+- `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
+  centre `(0,1,0)` (no central wall), the `Waypoint1..4` defender diamond recentred on it
+  (vertices at `±17` on each axis, so the r=12 `ObjectiveAlertZone` circle inscribes), one defense
   bot (`ACHIEVER`, patrols/defends around it) and one attack bot (`ACHIEVER`, one-way route to the
   objective), both `TankAIController`.
 - `scenes/maps/TeamArenaMap.tscn` — TEAM_ARENA template: one `KILLER` bot roaming the whole map,

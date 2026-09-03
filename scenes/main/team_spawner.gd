@@ -53,6 +53,7 @@ func spawn_team() -> void:
 	var bot_config := _load_json_config(BotConfigPath)
 
 	player.team = player_team
+	player.apply_team_visuals()  # _ready() покрасил по дефолтной команде — перекрасить под выданную сторону
 	if player_zone != null:
 		player.global_position = player_zone.pick_spawn_position() + _spawn_clearance
 		SpawnZoneScript.face_center(player)

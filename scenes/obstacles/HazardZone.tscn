@@ -1,0 +1,28 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/obstacles/hazard_zone.gd" id="1_haz"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_haz"]
+resource_local_to_scene = true
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_haz"]
+resource_local_to_scene = true
+size = Vector3(2, 1.25, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_haz"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.95, 0.15, 0.05, 0.55)
+
+[node name="HazardZone" type="Area3D"]
+collision_layer = 4
+collision_mask = 0
+script = ExtResource("1_haz")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_haz")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_haz")
+mesh = SubResource("BoxMesh_haz")

@@ -73,7 +73,7 @@ func _on_respawn_timeout() -> void:
 	# Модификация теряется вместе с танком (сбросить/сохранить её нельзя, см.
 	# Tank_Prop_Hunt_Modifications.md) — слот освобождается на респавне.
 	_mod.clear_slot()
-	_tank.clear_damage_paint()
+	_tank.on_respawned()
 	_set_frozen(false)
 	respawned.emit()
 

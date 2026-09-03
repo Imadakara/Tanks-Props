@@ -71,6 +71,7 @@ var _alert_state := ObjectiveAlertStateScript.new()
 func _ready() -> void:
 	_build_map_borders()
 	if MatchState.debug_enabled:
+		_build_waypoint_debug()
 		_setup_invincibility_toggle_button()
 	$TeamSpawner.spawn_team()
 	_setup_match_context()
@@ -142,6 +143,48 @@ func _build_map_borders() -> void:
 		body.add_child(mesh_inst)
 		container.add_child(body)
 		body.global_position = Vector3(xz.x, top_y + _BORDER_HEIGHT * 0.5, xz.y)
+
+## Пунктирные окружности под каждой путевой точкой карты — ТОЛЬКО в debug-режиме. Универсально
+## для любой карты (обе используют этот скрипт): ищет узлы `*Waypoint*` рекурсивно
+## (`Waypoint*` / `AttackWaypoint*` / `DefenseWaypoint*`), рисует круг радиусом с зону разброса
+## бота вокруг маркера (`TankAIController.waypoint_radius`, дефолт 7.5). Цвет по команде из
+## имени: `Attack*` — красный (Красные / team 0), иначе — синий (Синие / team 1; сюда же голый
+## `Waypoint*`, которым патрулирует оборона). Маркеры остаются обычными `Node3D` — своей
+## настройки на экземпляр у них нет, в отличие от препятствий-префабов.
+const _WAYPOINT_DEBUG_RADIUS := 7.5
+
+func _build_waypoint_debug() -> void:
+	for wp in get_tree().current_scene.find_children("*Waypoint*", "Node3D", true, false):
+		var is_attack: bool = String(wp.name).contains("Attack")
+		var color := Color(0.9, 0.2, 0.15, 0.85) if is_attack else Color(0.2, 0.45, 0.9, 0.85)
+		var mesh_inst := MeshInstance3D.new()
+		# Имя НЕ начинается с "Waypoint" и не содержит "Waypoint" — иначе рекурсивный
+		# find_children(waypoint_name_prefix + "*") в tank_ai_controller._collect_waypoints()
+		# подберёт эти дочерние круги как «вейпоинты».
+		mesh_inst.name = "WpDebugRing"
+		mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var mesh := ImmediateMesh.new()
+		mesh_inst.mesh = mesh
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.vertex_color_use_as_albedo = true
+		mesh_inst.material_override = mat
+		# Пунктир: 48 дуг по кругу, рисуем каждую вторую парой вершин (ImmediateMesh не умеет
+		# штриховку сам).
+		const SEGMENTS := 48
+		const HEIGHT := 0.12
+		mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+		mesh.surface_set_color(color)
+		for i in range(SEGMENTS):
+			if i % 2 != 0:
+				continue
+			var a0: float = TAU * float(i) / float(SEGMENTS)
+			var a1: float = TAU * float(i + 1) / float(SEGMENTS)
+			mesh.surface_add_vertex(Vector3(cos(a0), 0.0, sin(a0)) * _WAYPOINT_DEBUG_RADIUS + Vector3(0.0, HEIGHT, 0.0))
+			mesh.surface_add_vertex(Vector3(cos(a1), 0.0, sin(a1)) * _WAYPOINT_DEBUG_RADIUS + Vector3(0.0, HEIGHT, 0.0))
+		mesh.surface_end()
+		wp.add_child(mesh_inst)
 
 ## Заводит ScoreManager/MatchManager из кода (не статичными узлами сцены — обе карты используют
 ## один и тот же общий оркестратор). Режим берётся из @export match_mode (задан в .tscn — «настройка
