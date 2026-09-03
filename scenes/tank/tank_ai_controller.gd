@@ -599,6 +599,13 @@ var _initialized: bool = false
 ## обзора больше не влияет, см. заголовок файла).
 var _look_yaw: float = 0.0
 var _current_target: Node = null
+## [ДОБАВЛЕНО, по прямому запросу — "бот вступает в бой посреди поручения, после боя должен
+## постараться вернуться к нему"] Снимок state ПЕРЕД входом в DEFEND (см. _enter_defend()) — какое
+## "поручение" (_is_resumable_task_state()) бой прервал. -1 — нет снимка (обычный State enum
+## начинается с 0, отдельный int вместо State — чтобы -1 однозначно читался как "не задано", не
+## как валидный стейт). Потребляется ОДИН раз в _try_resume_pre_combat_state(), вызывается из
+## _think() сразу после _on_target_lost().
+var _pre_combat_state: int = -1
 ## Случайное смещение точки прицеливания внутри хитбокса цели (см. @export-блок про
 ## aim_spread_horizontal/vertical) — берётся ОДИН РАЗ за заход прицеливания (см. _reroll_aim_offset(),
 ## вызывается из _enter_defend() и в момент входа в ATTACK_OBJECTIVE), не каждый кадр: иначе
@@ -695,12 +702,18 @@ var _mortar_prep_timer: float = 0.0
 ## DISGUISE в _physics_process(). _disguise_hide_pos — точка, куда едет DISGUISE_APPROACH (сценарий
 ## 1 — случайная точка в ближайшей MortarHideZoneN, см. _nearest_mortar_hide_spot(); по прямому
 ## запросу — прятаться не на месте у objective, где часто ходят защитники, а у зоны сброса мортиры,
-## каждый раз в новой точке). _disguise_prep_yaw
+## каждый раз в новой точке). _current_hide_zone — САМА зона (не точка), выбранная
+## _nearest_mortar_hide_spot() — держим ссылку, пока бот в APPROACH/PREP/DISGUISE, чтобы другие
+## боты нашей стороны видели её занятой (см. _hide_zone_taken_by_other_bot(), тот же паттерн, что
+## _mod_zone/_zone_taken_by_other_bot() уже используют для координации вокруг мортиры) — иначе
+## несколько атакующих ботов кучкуются в ОДНОЙ ближайшей зоне вместо того чтобы разойтись по
+## разным (мортира падает во ВСЕ зоны разом, см. ammo_drop_zone.gd). _disguise_prep_yaw
 ## — мировой угол доворота башни перед входом; _disguise_prep_timer — потолок фазы PREP;
 ## _kill_latch_timer > 0 — недавно убил врага (сценарий 2), тикает вниз в _physics_process();
 ## _just_reached_waypoint — одноразовый флаг «дошёл до маркера маршрута», потребляется в
 ## _ensure_home_state() (сценарий 2).
 var _disguise_hide_pos: Vector3 = Vector3.ZERO
+var _current_hide_zone: Node = null
 var _disguise_prep_yaw: float = 0.0
 var _disguise_prep_timer: float = 0.0
 var _kill_latch_timer: float = 0.0
@@ -1082,6 +1095,7 @@ func _physics_process(delta: float) -> void:
 				var hide_zone: Node3D = _nearest_mortar_hide_spot()
 				if hide_zone != null:
 					_disguise_hide_pos = hide_zone.pick_spawn_position()
+					_current_hide_zone = hide_zone
 					state = State.DISGUISE_APPROACH
 					if _nav_agent.is_inside_tree():
 						_nav_agent.target_position = _disguise_hide_pos
@@ -1265,6 +1279,7 @@ func _physics_process(delta: float) -> void:
 			# ATTACK_OBJECTIVE выше). Заметили врага по дороге — обычный приоритет "видит →
 			# DEFEND" сработает сам в _think() (эта ветка ничего не трогает у _scan_for_target()).
 			if _should_seek_mortar():
+				_current_hide_zone = null  # мортира упала — hide-зона больше не занята нами
 				state = State.MOD_SEEK
 				_pick_mod_zone()
 			elif _drive_to_point(delta, _disguise_hide_pos, waypoint_reach_dist):
@@ -1326,8 +1341,9 @@ func _think() -> void:
 		# Маскировка снята ИЗВНЕ (касание движущимся танком / прямое попадание / истёк
 		# DisguiseTimer), пока _think() не участвовал — иначе бот навсегда завис бы в DISGUISE
 		# (guard в _ensure_home_state не даёт пересчитать). Сброс в IDLE, дальше обычный поток
-		# тем же тиком (не return).
+		# тем же тиком (не return). Hide-зона больше не занята нами (см. её doc-comment).
 		state = State.IDLE
+		_current_hide_zone = null
 	elif state == State.DISGUISE:
 		# Активные выходы по сценарию (пассивные — таймер/касание/выстрел — срабатывают сами):
 		# атакующий (сценарий 1) — упал ящик мортиры; защитник (сценарий 2) — objective под
@@ -1413,6 +1429,11 @@ func _think() -> void:
 
 	if state == State.DEFEND:
 		_on_target_lost()
+		# [ДОБАВЛЕНО, по прямому запросу] Бой только что закончился — сначала пробуем вернуться к
+		# прерванному поручению (см. _try_resume_pre_combat_state()), и только если оно больше не
+		# актуально — падаем в обычную _ensure_home_state() ниже.
+		if _try_resume_pre_combat_state():
+			return
 	_ensure_home_state()
 
 ## "Домашнее" поведение роли, когда цель не видна (см. приоритет в заголовке файла). Атакующий
@@ -1577,15 +1598,42 @@ func _s1_watch_yaw() -> float:
 ## при каждом новом заходе в сценарий 1 (не одну и ту же координату каждый раз). null — на карте
 ## нет ни одной (вызывающий код делает defensive-фолбэк на старое поведение, см.
 ## State.ATTACK_OBJECTIVE выше).
+## [ДОБАВЛЕНО, по прямому запросу — "несколько атакующих ботов выбирают одну и ту же зону
+## маскировки, хотя мортиры падают в разные зоны одновременно"] Пропускаем зону, уже занятую
+## другим ботом нашей стороны (см. _hide_zone_taken_by_other_bot()) — тот же принцип координации,
+## что _pick_mortar_zone() уже применяет для MOD_SEEK, просто на уровне выбора hide-зоны, а не
+## зоны непосредственно за ящиком. Ни одной свободной — null (вызывающий код уходит в
+## defensive-фолбэк, маскируется на месте, см. State.ATTACK_OBJECTIVE выше).
 func _nearest_mortar_hide_spot() -> Node3D:
 	var best: Node3D = null
 	var best_d: float = INF
 	for zone in get_tree().get_nodes_in_group("MortarHideZone"):
+		if _hide_zone_taken_by_other_bot(zone):
+			continue
 		var d: float = _body.global_position.distance_to(zone.global_position)
 		if d < best_d:
 			best_d = d
 			best = zone
 	return best
+
+## true — другой ЖИВОЙ бот нашей стороны уже направляется к этой hide-зоне или сидит в ней
+## (state == DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE и его _current_hide_zone == zone).
+## Самоочищается — как только тот бот сменит стейт/умрёт/зона перестанет быть его,
+## _current_hide_zone у него сбрасывается (см. её doc-comment) и зона снова свободна. Точная
+## копия паттерна _zone_taken_by_other_bot(), только для роли "MortarHideZone" вместо "MOD_SEEK".
+func _hide_zone_taken_by_other_bot(zone: Node) -> bool:
+	for t in get_tree().get_nodes_in_group("tanks"):
+		if t == _body or not is_instance_valid(t):
+			continue
+		if t.team != _body.team:
+			continue
+		var brain: Node = t.get_node_or_null("TankAIController")
+		if brain == null or not brain.enabled:
+			continue
+		var s: int = brain.state
+		if (s == State.DISGUISE_APPROACH or s == State.DISGUISE_PREP or s == State.DISGUISE) and brain._current_hide_zone == zone:
+			return true
+	return false
 
 ## Тревога вокруг objective активна (недавно получал урон ИЛИ враг в alert-зоне) — то же
 ## ИЛИ-условие, что держит State.ALERT в _ensure_home_state().
@@ -2109,6 +2157,8 @@ func _on_respawned() -> void:
 	_mod_zone = null
 	_mortar_target_node = null
 	_mortar_prep_timer = 0.0
+	_current_hide_zone = null  # новая жизнь без старой заявки на hide-зону (координация ботов)
+	_pre_combat_state = -1  # новая жизнь без памяти о прерванном в прошлой жизни поручении
 
 func _on_target_lost() -> void:
 	if role == Role.KILLER:
@@ -2132,6 +2182,63 @@ func _on_target_lost() -> void:
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
 	_current_target = null
+
+## [ДОБАВЛЕНО, по прямому запросу] "Поручения" — состояния, к которым имеет смысл вернуться после
+## боя (ехал за мортирой/патронами, конкретным ящиком, или ждал их у зоны — прервался на бой, но
+## сама задача никуда не делась). "Домашнее" поведение роли (PATROL/HUNT/IDLE/ATTACK_OBJECTIVE) —
+## НЕ сюда: то и так пересчитывается с нуля в _ensure_home_state()/самоуправляется, специальная
+## память не нужна. Транзитные/боевые состояния (DEFEND/PURSUE/SEARCH/MORTAR_ATTACK/DISGUISE*) —
+## тоже не сюда: PURSUE/SEARCH сами по себе "после боя", MORTAR_ATTACK/DISGUISE* не имеют смысла
+## "продолжить" постфактум.
+func _is_resumable_task_state(s: int) -> bool:
+	return s == State.MOD_SEEK or s == State.MOD_RETRIEVE \
+			or s == State.AMMO_SEEK or s == State.AMMO_RETRIEVE or s == State.AMMO_WAIT
+
+## [ДОБАВЛЕНО, по прямому запросу — "бот поехал за мортирой, наткнулся на противника в зоне
+## сброса, убил его, но мортиру так и не взял — ушёл патрулировать вместо этого"] Попытка вернуться
+## к поручению, прерванному боем — вызывается РОВНО один раз, сразу после _on_target_lost() (см.
+## _think()). "Естественная сменяемость" (по прямому запросу — "старый стейт не должен заменить
+## более свежий и актуальный"): не слепое "поставить state как было", а ПЕРЕПРОВЕРКА, что
+## прерванное поручение всё ещё имеет смысл ПРЯМО СЕЙЧАС — ресурс, к которому бот ехал, всё ещё
+## существует/свободен. Не подтвердилось (мортиру забрал кто-то другой, зону перехватил другой бот
+## пока мы дрались, боезапас за время боя обнулился и т.п.) — тихо отдаём решение обычной
+## _ensure_home_state(), та подберёт то, что действительно актуально СЕЙЧАС (например, уйдёт в
+## AMMO_SEEK сама, если патроны кончились именно во время боя). Одноразовая попытка —
+## _pre_combat_state потребляется безусловно (успех или нет), не остаётся "залипшей" памятью на
+## несколько боёв вперёд.
+func _try_resume_pre_combat_state() -> bool:
+	var resumed: int = _pre_combat_state
+	_pre_combat_state = -1
+	if not _nav_agent.is_inside_tree():
+		return false
+	match resumed:
+		State.MOD_SEEK:
+			if _mod.can_pick_up() and is_instance_valid(_mod_zone) and not bool(_mod_zone.get("mortar_taken")) \
+					and not _zone_taken_by_other_bot(_mod_zone):
+				state = State.MOD_SEEK
+				_nav_agent.target_position = _ammo_zone_area(_mod_zone).global_position
+				return true
+		State.MOD_RETRIEVE:
+			if _mod.can_pick_up() and is_instance_valid(_mod_target_crate):
+				state = State.MOD_RETRIEVE
+				_nav_agent.target_position = _mod_target_crate.global_position
+				return true
+		State.AMMO_SEEK:
+			if not _ammo_zones.is_empty() and is_instance_valid(_ammo_zone):
+				state = State.AMMO_SEEK
+				_nav_agent.target_position = _ammo_zone_area(_ammo_zone).global_position
+				return true
+		State.AMMO_RETRIEVE:
+			if is_instance_valid(_ammo_target_crate):
+				state = State.AMMO_RETRIEVE
+				_nav_agent.target_position = _ammo_target_crate.global_position
+				return true
+		State.AMMO_WAIT:
+			if is_instance_valid(_ammo_zone):
+				state = State.AMMO_WAIT
+				_has_ammo_wait_target = false  # старая точка ожидания могла остаться позади после боя
+				return true
+	return false
 
 func _scan_for_target() -> Node:
 	for other in get_tree().get_nodes_in_group("tanks"):
@@ -2230,6 +2337,21 @@ func _enter_defend(target: Node) -> void:
 	# на каждый такой вызов заставлял бы прицел дёргаться внутри одного и того же боя.
 	if _current_target != target:
 		_reroll_aim_offset()
+	# «Спалился» из APPROACH/PREP/DISGUISE (единственные вызывающие пути сюда из маскировки) —
+	# hide-зона больше не занята нами, другой бот нашей стороны может её выбрать (см.
+	# _hide_zone_taken_by_other_bot()). Безусловно и безопасно — no-op, если не прятались.
+	_current_hide_zone = null
+	# [ДОБАВЛЕНО, по прямому запросу — "бот вступает в бой посреди поручения (например едет за
+	# мортирой), после боя должен постараться вернуться к нему, а не просто патрулировать"] Снимок
+	# ТОЛЬКО на настоящий вход в бой (state ещё не DEFEND) и ТОЛЬКО если снимка ещё нет — если бот
+	# уже дерётся и посреди боя переключился на другую цель, второй раз снимок не делаем, иначе бой
+	# с несколькими целями подряд стёр бы память о первоначальном поручении второй/третьей целью.
+	# Что можно "вспоминать" — см. _is_resumable_task_state(); "домашнее" поведение роли
+	# (PATROL/HUNT/IDLE) и так пересчитывается с нуля в _ensure_home_state(), ему такая память не
+	# нужна. Сама попытка резюме — _try_resume_pre_combat_state(), вызывается из _think() сразу
+	# после _on_target_lost().
+	if state != State.DEFEND and _pre_combat_state == -1 and _is_resumable_task_state(state):
+		_pre_combat_state = state
 	state = State.DEFEND
 	_current_target = target
 	_just_reached_waypoint = false  # маскировка (сценарий 2): «момент вейпоинта» протух — бой важнее
@@ -2321,6 +2443,7 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	# если он в конусе, иначе обычный _think() дотянет за тик-другой, пока башня доводится.
 	if state == State.DISGUISE_APPROACH or state == State.DISGUISE_PREP or state == State.DISGUISE:
 		state = State.IDLE
+		_current_hide_zone = null  # попали под обстрел, пока прятались — зона свободна для других
 	# [ДОБАВЛЕНО — система модификаций] Атакующий, НЕСУЩИЙ мортиру (ещё не выстрелил), не ввязывается
 	# в бой — «мортира = коммит», продолжает к objective. Разворот «камеры» на выстрел остаётся.
 	if _has_mortar() and _body.is_attacker():
@@ -2355,6 +2478,8 @@ func _on_destroyed(_killer: Node) -> void:
 	# Смерть в MOD_SEEK — сразу освобождаем зону для других ботов нашей стороны
 	# (state == DEAD и так исключает бота из _zone_taken_by_other_bot, это дубль-страховка).
 	_mod_zone = null
+	_current_hide_zone = null  # то же самое для hide-зоны, дубль-страховка
+	_pre_combat_state = -1
 
 ## Блуждание БАШНИ в IDLE/PATROL (v2 — только башня, см. заголовок файла) — то вперёд, то в
 ## сторону, с паузами, а не мерное качание туда-сюда. Пока не дошли до _look_yaw — просто ждём
