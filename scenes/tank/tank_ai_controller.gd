@@ -85,7 +85,7 @@ extends Node
 ##   пути, не обязательно у самого конца маршрута), после победы откатывался в PATROL к следующему
 ##   невзятому вейпоинту, даже стоя вплотную к objective — только дойдя до конца маршрута штатно,
 ##   переключался в ATTACK_OBJECTIVE; выглядело как "убил защитника, откатился куда-то, и лишь
-##   потом начал атаку objective". Оба пути делают одинаковые side-эффекты входа (_reroll_aim_offset(),
+##   потом начал атаку objective". Оба пути делают одинаковые side-эффекты входа (_reroll_accuracy_decisions(),
 ##   _nav_agent.target_position = objective) — какой конкретно путь сработал, значения не имеет.
 ##   Включается ИЗ PATROL, не перезаписывается каждый think-тик — та же логика исключения, что у
 ##   PURSUE/SEARCH (не перезаписывается каждый think-тик). Objective уничтожен (или его вообще не
@@ -268,18 +268,100 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var fire_aim_tolerance_deg: float = 5.0
 
 ## [ДОБАВЛЕНО, по прямому запросу — "текущая реализация стрельбы не учитывает параболическую
-## траекторию снарядов, боты должны приподнимать дуло на нужный угол для гарантированного попадания
-## с небольшим разбросом в пределах корпуса цели"] Снаряд падает под гравитацией (см.
-## projectile.gd/fall_acceleration) — прицел точно в центр цели БЕЗ угла возвышения промахивался бы
-## мимо на любой заметной дистанции. fire_pitch_tolerance_deg — допуск довода дула (аналог
-## fire_aim_tolerance_deg для башни), проверяется вместе с ним в _aim_and_fire() перед выстрелом.
-## aim_spread_horizontal/vertical — половина габаритов реального хитбокса танка с запасом ВНУТРЬ
-## (CollisionShape3D корпуса — Vector3(1.2, 0.6, 1.8), см. Tank.tscn: половина ширины/длины 0.6/0.9,
-## половина высоты 0.3 — берём чуть меньше, 0.5/0.2, чтобы точка прицеливания ГАРАНТИРОВАННО падала
-## внутри хитбокса при любом угле офсета, не только по одной оси).
+## траекторию снарядов, боты должны приподнимать дуло на нужный угол для гарантированного попадания"]
+## Снаряд падает под гравитацией (см. projectile.gd/fall_acceleration) — прицел точно в центр цели
+## БЕЗ угла возвышения промахивался бы мимо на любой заметной дистанции. fire_pitch_tolerance_deg —
+## допуск довода дула (аналог fire_aim_tolerance_deg для башни), проверяется вместе с ним в
+## _aim_and_fire() перед обычным ("плановый промах", см. `_miss_offset` ниже) выстрелом.
 @export var fire_pitch_tolerance_deg: float = 3.0
-@export var aim_spread_horizontal: float = 0.5
-@export var aim_spread_vertical: float = 0.2
+
+## [ДОБАВЛЕНО, по прямому запросу — "сделай упреждение точнее... уберите намеренное смещение, бот
+## должен стараться держать прицел прямо по цели перед выстрелом, смещаясь уже при необходимости по
+## упреждению или выпавшем по вероятности промахе"] Раньше КАЖДЫЙ выстрел целился не в сам центр
+## цели, а в центр + случайный `_aim_offset` внутри хитбокса (aim_spread_horizontal/vertical) —
+## неуправляемый источник промаха поверх уже управляемых lead_chance/stationary_hit_chance. Убрано:
+## по умолчанию (выстрел "запланирован как попадание" — см. `planned_hit` в _aim_and_fire()) целимся
+## РОВНО в точку (текущую или упреждённую — без разброса). Смещаемся ТОЛЬКО когда для этого есть
+## причина — precise_fire_aim_tolerance_deg/precise_fire_pitch_tolerance_deg ниже — более узкий
+## допуск СПЕЦИАЛЬНО для "запланированного попадания": обычный fire_aim_tolerance_deg/
+## fire_pitch_tolerance_deg (шире) остаётся допуском для "запланированного промаха" — там всё равно
+## целимся в намеренно смещённую (`_miss_offset`) точку, точность схождения к ней не критична.
+## Более узкий допуск для хита ⇒ бот дольше довинчивает наводку (см. запрос "избегай выстрела раньше
+## чем наведётся башня") прежде чем стрелять — именно то же самое требование, что уже решает
+## _throttle_turn_for_aim()/combat_turn_input_margin для сходимости yaw, только на последнем отрезке
+## точности, не на самой сходимости.
+@export var precise_fire_aim_tolerance_deg: float = 1.5
+@export var precise_fire_pitch_tolerance_deg: float = 1.0
+
+## Намеренный промах (см. `planned_hit == false` в _aim_and_fire()) — ЕДИНЫЙ механизм что для
+## движущейся (упреждение не сработало — lead_chance), что для неподвижной (не сработал
+## stationary_hit_chance) цели: раньше промах по стоячей цели считался отдельно
+## (stationary_miss_offset_*), теперь одно и то же поле на оба случая — семантика промаха
+## одинаковая (умышленно мимо, а не геометрическая случайность допуска). Значения — половина
+## габаритов реального хитбокса танка С ЗАПАСОМ НАРУЖУ (CollisionShape3D корпуса — Vector3(1.2, 0.6,
+## 1.8), см. Tank.tscn: половина ширины/длины 0.6/0.9, половина высоты 0.3 — берём заметно БОЛЬШЕ,
+## 1.2/0.5, чтобы намеренный промах ГАРАНТИРОВАННО пролетал МИМО хитбокса, а не просто "куда
+## попало", включая близкое к границе).
+@export var miss_offset_horizontal: float = 1.2
+@export var miss_offset_vertical: float = 0.5
+
+## [ДОБАВЛЕНО, по прямому запросу — "тормозят при стрельбе, когда сперва преследуют цель, потом
+## останавливаются"] Диагностировано: пока корпус активно доворачивает на цель, _drive_to_point()
+## держит ai_turn_input у максимума TankMovement.turn_speed (2.0 рад/сек, ОДИН на всех — не тюнинг
+## сложности) почти всю дорогу (доворот < 60° уже даёт полный газ, см. её код). Раз
+## _turret.target_yaw считается ОТНОСИТЕЛЬНО корпуса (_look_yaw - _body.rotation.y, см.
+## _aim_and_fire()), поворот корпуса непрерывно "утаскивает" мировой угол наводки — башне нужно
+## гасить это вращение СВЕРХ собственного слежения за целью, а её собственная скорость
+## (turret_turn_speed: 0.8/1.0/2.2 рад/сек EASY/MEDIUM/HARD) у EASY/MEDIUM меньше корпуса.
+## [ИСПРАВЛЕНО, по прямому запросу — "скорость башни ботов слишком быстрая, боты стали в бою
+## вращать башней быстрее, такого быть не должно"] Первая версия фикса РАЗГОНЯЛА башню на время
+## прицеливания (temp combat_turret_turn_speed) — рабочий, но неверный по ощущениям путь: башня
+## заметно меняла характерную для сложности скорость прямо в бою. Правильный путь — придержать
+## САМ РУЛЬ КОРПУСА на время активного прицеливания (см. _throttle_turn_for_aim(), вызывается из
+## State.DEFEND перед _aim_and_fire()), чтобы корпус не разгонял относительный угол быстрее, чем
+## турель успевает его гасить на СВОЕЙ обычной, никогда не трогаемой скорости (turret_turn_speed)
+## — combat_turn_input_margin ниже держит эффективную скорость корпуса строго МЕНЬШЕ
+## turret_turn_speed (с долей запаса), не наоборот. Проверено живьём: 0.8 (первая прикидка) даёт
+## слишком тонкий запас — на большом (~130°) угле рассогласования сходится единицы °/сек,
+## визуально неотличимо от прежнего стопора; 0.5 даёт уверенную сходимость за разумные секунды на
+## любой сложности (см. _throttle_turn_for_aim() — не трогает HARD вообще, там turret_turn_speed
+## 2.2 и без того больше скорости корпуса 2.0, штатно сходится сам).
+@export var combat_turn_input_margin: float = 0.5
+
+## [ДОБАВЛЕНО, по прямому запросу — "когда бот преследует противника, пусть метится чуть выше на
+## 5-10 градусов, снаряд не успевает долетать"] Доп. возвышение дула ТОЛЬКО пока бот ещё едет к
+## цели (не прибыл — см. вызов _aim_and_fire(target, is_pursuing) из State.DEFEND) — компенсация
+## того, что за время полёта снаряда цель (и сам стрелок, двигаясь) успевают разойтись сильнее,
+## чем в стоячем бою. Роллится заново каждый кадр вызова, не на весь заход прицеливания — дрожь
+## угла в этих пределах не мешает сходимости в fire_pitch_tolerance_deg и не заметна на глаз.
+@export var pursue_pitch_boost_min_deg: float = 5.0
+@export var pursue_pitch_boost_max_deg: float = 10.0
+
+## [ДОБАВЛЕНО, по прямому запросу — "добавь упреждение при стрельбе по движущейся цели; для MEDIUM
+## вероятность срабатывания перед каждым выстрелом 25-50%, где 100% — точный выстрел с
+## гарантированным попаданием по движущейся цели"] Упреждение — прогноз позиции цели на время
+## полёта снаряда (см. _aim_and_fire()) вместо голой текущей позиции; при 100%-й вероятности это
+## математически точный выстрел по прямолинейно движущейся цели. Одновременно — вероятность
+## "запланированного попадания" по ДВИЖУЩЕЙСЯ цели: сработало — целимся точно в упреждённую точку
+## (planned_hit=true, precise-допуск); не сработало — намеренный промах (`_miss_offset`, обычный
+## допуск), а не голое прицеливание в текущую позицию, как было раньше (то давало НЕУПРАВЛЯЕМУЮ,
+## завязанную на геометрию частоту попаданий). lead_chance_min/max — диапазон, из которого перед
+## КАЖДЫМ выстрелом (см. _reroll_lead_decision(), тот же момент, что и _reroll_accuracy_decisions() — заход
+## прицеливания и сразу после каждого произведённого выстрела) тянется случайная вероятность и
+## бросается монетка. Дефолт ниже — уже тюнинг MEDIUM (см. комментарий у _DIFFICULTY_PRESETS про
+## "MEDIUM ничего не меняет"): EASY вообще не целится с упреждением (пресет 0.0/0.0), HARD — всегда
+## (пресет 1.0/1.0).
+@export var lead_chance_min: float = 0.25
+@export var lead_chance_max: float = 0.5
+
+## [ДОБАВЛЕНО, по прямому запросу — "по стоячей цели упреждения быть не должно вообще, только шанс
+## попасть, 80% для MEDIUM"] Упреждение (lead_chance выше) осмысленно ТОЛЬКО против движущейся цели
+## — компенсирует, что она сместится за время полёта снаряда; при velocity≈0 сам расчёт вырождается
+## в no-op. Для неподвижной цели (см. `target_is_moving` в _aim_and_fire()) — свой, отдельный от
+## упреждения бросок монеты по той же схеме: попадёт (planned_hit=true, precise-допуск) — точка
+## прицеливания СТРОГО в центр; не попадёт — намеренный промах (`_miss_offset`, обычный допуск).
+## Дефолт ниже — тюнинг MEDIUM (0.8, тот самый показатель).
+@export var stationary_hit_chance: float = 0.8
 
 ## ПРИЦЕЛЬНЫЙ сектор — узкий, зафиксирован на РЕАЛЬНОМ текущем угле башни (не на _look_yaw, куда
 ## башня только стремится, а именно на _turret.rotation.y — куда ствол физически повёрнут прямо
@@ -518,21 +600,29 @@ const _DIFFICULTY_PRESETS := {
 		"look_cone_deg": 75.0,
 		"fire_range": 9.0,  # == прежний vision_range EASY
 		"fire_aim_tolerance_deg": 9.0,
+		"precise_fire_aim_tolerance_deg": 3.0,
 		"wander_hold_min_sec": 2.0,
 		"wander_hold_max_sec": 3.5,
 		"think_interval_sec": 0.25,
 		"turret_turn_speed": 0.8,
+		"lead_chance_min": 0.0,
+		"lead_chance_max": 0.0,
+		"stationary_hit_chance": 0.5,
 	},
 	Difficulty.HARD: {
 		"vision_range": 25.2,  # было 21.0 — см. @export vision_range выше
 		"look_cone_deg": 130.0,
 		"fire_range": 21.0,  # == прежний vision_range HARD
 		"fire_aim_tolerance_deg": 3.0,
+		"precise_fire_aim_tolerance_deg": 1.0,
 		"wander_hold_min_sec": 0.5,
 		"wander_hold_max_sec": 1.2,
 		"think_interval_sec": 0.05,
 		"turret_turn_speed": 2.2,
 		"move_speed_multiplier": 1.0,  # единственный уровень БЕЗ замедления — как танк игрока
+		"lead_chance_min": 1.0,
+		"lead_chance_max": 1.0,
+		"stationary_hit_chance": 1.0,
 	},
 }
 
@@ -627,12 +717,25 @@ var _current_target: Node = null
 ## как валидный стейт). Потребляется ОДИН раз в _try_resume_pre_combat_state(), вызывается из
 ## _think() сразу после _on_target_lost().
 var _pre_combat_state: int = -1
-## Случайное смещение точки прицеливания внутри хитбокса цели (см. @export-блок про
-## aim_spread_horizontal/vertical) — берётся ОДИН РАЗ за заход прицеливания (см. _reroll_aim_offset(),
-## вызывается из _enter_defend() и в момент входа в ATTACK_OBJECTIVE), не каждый кадр: иначе
-## _turret.target_yaw/_barrel.target_pitch дёргались бы на каждом физ.кадре и никогда стабильно не
-## попадали бы в допуск (fire_aim_tolerance_deg/fire_pitch_tolerance_deg).
-var _aim_offset: Vector3 = Vector3.ZERO
+## Решение "упреждать ли следующий выстрел" (см. @export lead_chance_min/max и
+## _reroll_lead_decision()) — рерольнуто заранее (заход прицеливания / сразу после предыдущего
+## выстрела), не в момент самого выстрела: иначе точка прицеливания дёргалась бы именно в момент
+## схождения допуска, срывая уже сошедшуюся наводку (тот же класс проблемы, что решает
+## придержка руля корпуса в _throttle_turn_for_aim() ниже).
+var _lead_shot_enabled: bool = false
+## Доп. возвышение на время преследования (см. @export pursue_pitch_boost_min/max_deg) — рероллено
+## заранее вместе с остальными полями этой группы, не каждый кадр внутри _aim_and_fire(): дулу
+## нужна СТАБИЛЬНАЯ цель, чтобы вообще успеть сойтись в fire_pitch_tolerance_deg (см. её комментарий).
+var _pursue_pitch_boost_deg: float = 0.0
+## Решение "попадёт ли следующий выстрел по НЕПОДВИЖНОЙ цели" (см. @export stationary_hit_chance) —
+## рероллено заранее, той же логикой, что _lead_shot_enabled.
+var _stationary_shot_will_hit: bool = true
+## Намеренный промах — ЕДИНЫЙ для обеих причин "выстрел не запланирован как попадание" (см.
+## @export miss_offset_horizontal/vertical и `planned_hit` в _aim_and_fire()): не сработало
+## упреждение по движущейся цели ИЛИ не сработал stationary_hit_chance по неподвижной. Рероллен
+## заранее вместе с остальными полями этой группы — по тем же причинам (дулу/башне нужна
+## СТАБИЛЬНАЯ цель на весь цикл сходимости, не дёргающаяся каждый кадр).
+var _miss_offset: Vector3 = Vector3.ZERO
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
 
@@ -956,10 +1059,14 @@ func _apply_difficulty_preset() -> void:
 	look_cone_deg = preset["look_cone_deg"]
 	fire_range = preset["fire_range"]
 	fire_aim_tolerance_deg = preset["fire_aim_tolerance_deg"]
+	precise_fire_aim_tolerance_deg = preset["precise_fire_aim_tolerance_deg"]
 	wander_hold_min_sec = preset["wander_hold_min_sec"]
 	wander_hold_max_sec = preset["wander_hold_max_sec"]
 	think_interval_sec = preset["think_interval_sec"]
 	turret_turn_speed = preset["turret_turn_speed"]
+	lead_chance_min = preset["lead_chance_min"]
+	lead_chance_max = preset["lead_chance_max"]
+	stationary_hit_chance = preset["stationary_hit_chance"]
 	if preset.has("move_speed_multiplier"):
 		move_speed_multiplier = preset["move_speed_multiplier"]
 
@@ -1075,7 +1182,9 @@ func _physics_process(delta: float) -> void:
 				if arrived:
 					_movement.ai_move_input = 0.0
 					_movement.ai_turn_input = 0.0
-				_aim_and_fire(_current_target)
+				else:
+					_throttle_turn_for_aim()
+				_aim_and_fire(_current_target, not arrived)
 			else:
 				_movement.ai_move_input = 0.0
 				_movement.ai_turn_input = 0.0
@@ -1545,7 +1654,7 @@ func _enter_attack_objective_priority() -> void:
 		_has_waypoint_target = false
 		_has_hunt_target = false
 		_has_alert_target = false
-		_reroll_aim_offset()
+		_reroll_accuracy_decisions()
 		state = State.ATTACK_OBJECTIVE
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = _objective_node.global_position
@@ -2004,7 +2113,7 @@ func _ensure_home_state() -> void:
 
 	if state != desired:
 		# [ДОБАВЛЕНО] entering_attack_objective считается ДО присвоения state=desired — тот же
-		# side-эффект входа, что и у штатного пути (1) в _advance_waypoint() (_reroll_aim_offset() +
+		# side-эффект входа, что и у штатного пути (1) в _advance_waypoint() (_reroll_accuracy_decisions() +
 		# nav target на objective), нужен и здесь, иначе бот встанет в ATTACK_OBJECTIVE, но будет
 		# целиться со старым/нулевым прицельным смещением и ехать на устаревший nav-таргет
 		# (последний вейпоинт, не objective).
@@ -2027,7 +2136,7 @@ func _ensure_home_state() -> void:
 		_has_hunt_target = false
 		_has_alert_target = false
 		if entering_attack_objective:
-			_reroll_aim_offset()
+			_reroll_accuracy_decisions()
 			if _objective_node != null and is_instance_valid(_objective_node) and _nav_agent.is_inside_tree():
 				_nav_agent.target_position = _objective_node.global_position
 		if entering_ammo_seek:
@@ -2488,11 +2597,11 @@ func _can_see(target: Node3D, ignore_disguise: bool = false) -> bool:
 ## этого достаточно для живой цели в 1v1-бою; переустанавливать на каждом физ.кадре форсило бы
 ## repath 60 раз/сек без реальной пользы.
 func _enter_defend(target: Node) -> void:
-	# Новая переустановка прицельного смещения только на смену цели (см. _reroll_aim_offset()) —
-	# _enter_defend() вызывается КАЖДЫЙ think-тик, пока цель видна (см. _think()), рероллить offset
-	# на каждый такой вызов заставлял бы прицел дёргаться внутри одного и того же боя.
+	# Переустановка решений точности (упреждение/шанс попасть/промах, см. _reroll_accuracy_decisions())
+	# только на смену цели — _enter_defend() вызывается КАЖДЫЙ think-тик, пока цель видна (см.
+	# _think()), рероллить на каждый такой вызов заставляло бы прицел дёргаться внутри одного боя.
 	if _current_target != target:
-		_reroll_aim_offset()
+		_reroll_accuracy_decisions()
 	# «Спалился» из APPROACH/PREP/DISGUISE (единственные вызывающие пути сюда из маскировки) —
 	# hide-зона больше не занята нами, другой бот нашей стороны может её выбрать (см.
 	# _hide_zone_taken_by_other_bot()). Безусловно и безопасно — no-op, если не прятались.
@@ -2516,15 +2625,42 @@ func _enter_defend(target: Node) -> void:
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = target.global_position
 
-## Случайное смещение точки прицеливания внутри хитбокса цели — берётся ОДИН РАЗ за заход
-## прицеливания (см. @export-блок про aim_spread_horizontal/vertical и комментарий у _aim_offset),
-## не пересчитывается каждый кадр. Вызывается из _enter_defend() и в момент входа в
-## ATTACK_OBJECTIVE (_advance_waypoint()).
-func _reroll_aim_offset() -> void:
-	_aim_offset = Vector3(
-		randf_range(-aim_spread_horizontal, aim_spread_horizontal),
-		randf_range(-aim_spread_vertical, aim_spread_vertical),
-		randf_range(-aim_spread_horizontal, aim_spread_horizontal)
+## Реролл всех решений точности разом (упреждение / шанс попасть по неподвижной цели / вектор
+## намеренного промаха / надбавка возвышения на преследование) — ОДИН РАЗ за заход прицеливания, не
+## каждый кадр (см. комментарии у самих полей `_lead_shot_enabled`/`_stationary_shot_will_hit`/
+## `_miss_offset`/`_pursue_pitch_boost_deg` — дёрганье любого из них каждый кадр срывает уже
+## сходящуюся наводку). Вызывается из _enter_defend() и в момент входа в ATTACK_OBJECTIVE
+## (_advance_waypoint()), плюс повторно из _aim_and_fire() сразу после каждого произведённого
+## выстрела — решение на СЛЕДУЮЩИЙ выстрел известно заранее, на весь цикл перезарядки.
+func _reroll_accuracy_decisions() -> void:
+	_reroll_lead_decision()
+	_reroll_stationary_hit_decision()
+	_reroll_miss_offset()
+	_pursue_pitch_boost_deg = randf_range(pursue_pitch_boost_min_deg, pursue_pitch_boost_max_deg)
+
+## Монетка "упреждать ли следующий выстрел" — см. @export lead_chance_min/max. Вызывается вместе с
+## _reroll_accuracy_decisions() (заход прицеливания/новая цель) и повторно из _aim_and_fire() сразу
+## после каждого фактически произведённого выстрела, так что решение на СЛЕДУЮЩИЙ выстрел известно
+## заранее, на весь следующий цикл перезарядки — башне есть время сойтись на новой точке
+## прицеливания до того, как выстрел станет готов, а не в момент готовности.
+func _reroll_lead_decision() -> void:
+	var chance: float = randf_range(lead_chance_min, lead_chance_max)
+	_lead_shot_enabled = randf() < chance
+
+## Монетка "попадёт ли следующий выстрел по НЕПОДВИЖНОЙ цели" — см. @export stationary_hit_chance.
+## Та же логика/момент реролла, что у _reroll_lead_decision() выше (заранее, не в момент выстрела).
+func _reroll_stationary_hit_decision() -> void:
+	_stationary_shot_will_hit = randf() < stationary_hit_chance
+
+## Намеренный промах — см. @export miss_offset_horizontal/vertical и комментарий у `_miss_offset`.
+## Значения ЗАВЕДОМО больше реального хитбокса цели (в отличие от бывшего aim_spread, который
+## калибровался падать ГАРАНТИРОВАННО ВНУТРЬ — тот механизм убран целиком, см. `planned_hit` в
+## _aim_and_fire()).
+func _reroll_miss_offset() -> void:
+	_miss_offset = Vector3(
+		randf_range(-miss_offset_horizontal, miss_offset_horizontal),
+		randf_range(-miss_offset_vertical, miss_offset_vertical),
+		randf_range(-miss_offset_horizontal, miss_offset_horizontal)
 	)
 
 ## Угол возвышения дула для гарантированного попадания по параболической траектории снаряда (см.
@@ -2555,26 +2691,107 @@ func _compute_ballistic_pitch(dist_xz: float, height_diff: float) -> float:
 		pitch = atan(t_low)
 	return clamp(pitch, deg_to_rad(_barrel.min_pitch_deg), deg_to_rad(_barrel.max_pitch_deg))
 
+## [ДОБАВЛЕНО, по прямому запросу — см. @export combat_turn_input_margin выше] Придерживает руль
+## корпуса на время активного прицеливания (вызывается из State.DEFEND перед _aim_and_fire(),
+## только пока не arrived — см. её ветку), чтобы _drive_to_point() не рулил быстрее, чем турель
+## (её собственная, никогда не трогаемая turret_turn_speed) успевает гасить относительный угол
+## наводки — иначе корпус на полном газу (TankMovement.turn_speed 2.0 рад/сек, общий на всех) у
+## EASY/MEDIUM попросту обгоняет башню, aim_diff_deg не сходится всю дорогу к цели (см. диагностику
+## у _aim_and_fire()). Не трогает САМ ai_turn_input, посчитанный _drive_to_point() (тот отвечает за
+## КУДА рулить — путь/огибание препятствий не меняются), только его МАКСИМАЛЬНУЮ величину — corpус
+## всё ещё поворачивает в нужную сторону, просто не быстрее, чем турель способна угнаться.
+## Если turret_turn_speed УЖЕ не меньше скорости корпуса (HARD: 2.2 против 2.0) — придержка не
+## нужна вообще, корпус и без нее не обгоняет турель; трогать вход в этом случае значило бы
+## без причины садить манёвренность корпуса там, где проблемы никогда не было.
+func _throttle_turn_for_aim() -> void:
+	var hull_turn_speed: float = _movement.turn_speed  # TankMovement.turn_speed — общий 2.0 рад/сек
+	if hull_turn_speed < 0.01 or turret_turn_speed >= hull_turn_speed:
+		return
+	var max_turn_input: float = (combat_turn_input_margin * turret_turn_speed) / hull_turn_speed
+	_movement.ai_turn_input = clamp(_movement.ai_turn_input, -max_turn_input, max_turn_input)
+
+## Порог скорости цели, ниже которого считаем её "неподвижной" (см. `target_is_moving` в
+## _aim_and_fire()) — не 0.0 буквально, чтобы дрожь скорости от физики/акселерации (TankMovement
+## плавно тормозит до нуля, не мгновенно) не переключала режим туда-обратно на последних
+## сантиметрах в секунду.
+const _STATIONARY_VELOCITY_EPS := 0.15
+
 ## Наводка пересчитывается КАЖДЫЙ кадр по живой позиции цели — "камера"/башня/дуло физически
-## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()). Целимся не в
-## голый target.global_position, а в него же + _aim_offset (см. _reroll_aim_offset()) — небольшой
-## разброс в пределах хитбокса, не идеальный лазерный центр. Выстрел ждёт готовности ОБЕИХ осей —
-## yaw (башня) И pitch (дуло, см. _compute_ballistic_pitch()) — стрелять с недоведённым углом
-## возвышения означало бы систематический недолёт/перелёт мимо параболы.
-func _aim_and_fire(target: Node3D) -> void:
-	var aim_point: Vector3 = target.global_position + _aim_offset
+## движутся вслед за её перемещением, пока цель остаётся видна (проверяет _think()). Выстрел ждёт
+## готовности ОБЕИХ осей — yaw (башня) И pitch (дуло, см. _compute_ballistic_pitch()) — стрелять с
+## недоведённым углом возвышения означало бы систематический недолёт/перелёт мимо параболы.
+##
+## [ПЕРЕРАБОТАНО, по прямому запросу — "сделай упреждение точнее, убери намеренное смещение, бот
+## должен держать прицел прямо по цели перед выстрелом, смещаясь уже при необходимости по
+## упреждению или выпавшем по вероятности промахе; избегай выстрела раньше чем наведётся башня"]
+## Единая модель точности вместо разрозненных offset'ов:
+## `planned_hit` — решено ли, что ЭТОТ выстрел обязан попасть (см. lead_chance_min/max для
+## движущейся цели / stationary_hit_chance для неподвижной, оба рероллены заранее в
+## _reroll_accuracy_decisions()). planned_hit=true ⇒ целимся РОВНО в точку (текущую или, для
+## движущейся цели, упреждённую) — БЕЗ случайного смещения (бывший aim_spread/_aim_offset убран
+## целиком), и ждём БОЛЕЕ УЗКОГО precise_fire_aim/pitch_tolerance_deg перед выстрелом — именно это
+## "стараться держать прицел прямо по цели перед выстрелом" и "избегай выстрела раньше чем
+## наведётся башня": узкий допуск не даёт стрелять, пока наводка ещё заметно недоведена.
+## planned_hit=false ⇒ целимся в ту же точку + `_miss_offset` (заведомо больше хитбокса — см. его
+## @export) и ждём обычного (шире) fire_aim/pitch_tolerance_deg — раз выстрел всё равно запланирован
+## мимо, точность схождения к нему не критична, не тратим время на лишнее довинчивание.
+func _aim_and_fire(target: Node3D, is_pursuing: bool = false) -> void:
+	var target_is_moving: bool = target is CharacterBody3D \
+		and (target as CharacterBody3D).velocity.length() > _STATIONARY_VELOCITY_EPS
+	var planned_hit: bool = _stationary_shot_will_hit if not target_is_moving else _lead_shot_enabled
+
+	var lead_pos: Vector3 = target.global_position
+	if target_is_moving and _lead_shot_enabled:
+		lead_pos = _predict_lead_position(target)
+
+	var aim_point: Vector3 = lead_pos if planned_hit else lead_pos + _miss_offset
 	_look_yaw = _yaw_to_world_point(_turret.global_position, aim_point)
 	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 
 	var to_aim: Vector3 = aim_point - _turret.global_position
 	var dist_xz: float = Vector2(to_aim.x, to_aim.z).length()
-	_barrel.target_pitch = _compute_ballistic_pitch(dist_xz, to_aim.y)
+	var pitch: float = _compute_ballistic_pitch(dist_xz, to_aim.y)
+	# `pitch` тут уже посчитан от aim_point/dist_xz, а aim_point УЖЕ включает упреждение (lead_pos
+	# выше), если оно активно — баллистика уже сама решила правильный угол под БУДУЩУЮ, упреждённую
+	# точку. Добавлять сверху ещё и pursue_pitch_boost при активном упреждении — двойная компенсация
+	# одного и того же явления (снаряд не успевает за целью) — систематический перелёт, живьём
+	# подтверждено (forced lead + движущаяся цель — промах). Надбавка вообще не имеет физического
+	# смысла против НЕПОДВИЖНОЙ цели (нечему "не успевать" — там только шанс попасть) — поэтому
+	# требует ещё и target_is_moving, не только "нет упреждения".
+	if is_pursuing and target_is_moving and not _lead_shot_enabled:
+		pitch += deg_to_rad(_pursue_pitch_boost_deg)
+	_barrel.target_pitch = clamp(pitch, deg_to_rad(_barrel.min_pitch_deg), deg_to_rad(_barrel.max_pitch_deg))
 
 	var dist: float = _body.global_position.distance_to(target.global_position)
 	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
 	var pitch_diff_deg: float = rad_to_deg(absf(_barrel.target_pitch - _barrel.rotation.x))
-	if dist <= fire_range and aim_diff_deg <= fire_aim_tolerance_deg and pitch_diff_deg <= fire_pitch_tolerance_deg:
-		_weapon.try_fire()
+	var aim_tolerance: float = precise_fire_aim_tolerance_deg if planned_hit else fire_aim_tolerance_deg
+	var pitch_tolerance: float = precise_fire_pitch_tolerance_deg if planned_hit else fire_pitch_tolerance_deg
+	if dist <= fire_range and aim_diff_deg <= aim_tolerance and pitch_diff_deg <= pitch_tolerance:
+		if _weapon.try_fire():
+			_reroll_lead_decision()
+			_reroll_stationary_hit_decision()
+			_reroll_miss_offset()
+
+## Прогноз точки перехвата движущейся цели — fixed-point итерация вместо однопроходной оценки
+## [ДОБАВЛЕНО, по прямому запросу — "сделай упреждение более точным"]: однопроходная версия брала
+## время полёта ДО ТЕКУЩЕЙ позиции цели, а стреляла в точку, которая обычно ДАЛЬШЕ (цель успела
+## отъехать) — реальное время полёта до неё чуть больше того, что заложили в снос. На игровых
+## скоростях/дистанциях (fire_range 9-21м, launch_speed ~30, скорость цели до ~6 м/с) расхождение
+## небольшое, но систематическое; 3 итерации fixed-point (пересчитать время полёта уже ДО
+## предсказанной точки, уточнить снос, повторить) сходятся с большим запасом за счёт малости
+## самого сноса относительно дистанции — устраняет систематическую ошибку почти целиком.
+func _predict_lead_position(target: Node3D) -> Vector3:
+	var vel: Vector3 = (target as CharacterBody3D).velocity
+	var predicted: Vector3 = target.global_position
+	for _i in range(3):
+		var to_pred: Vector3 = predicted - _turret.global_position
+		var dist_xz: float = Vector2(to_pred.x, to_pred.z).length()
+		var pitch: float = _compute_ballistic_pitch(dist_xz, to_pred.y)
+		var speed_xz: float = _weapon.launch_speed * cos(pitch)
+		var t_flight: float = dist_xz / speed_xz if speed_xz > 0.01 else 0.0
+		predicted = target.global_position + vel * t_flight
+	return predicted
 
 func _yaw_to_world_point(from: Vector3, to_point: Vector3) -> float:
 	var d: Vector3 = to_point - from
@@ -3068,7 +3285,7 @@ func _advance_waypoint() -> void:
 	_just_reached_waypoint = true  # одноразовый — маскировка (сценарий 2) потребляет в _ensure_home_state()
 	if waypoints_one_way and _waypoint_index >= _waypoints.size() - 1:
 		state = State.ATTACK_OBJECTIVE
-		_reroll_aim_offset()
+		_reroll_accuracy_decisions()
 		# [ИСПРАВЛЕНО, по прямому запросу — "атакующий бот замирает не стреляя в objective"] Тот же
 		# класс бага: без явной переустановки здесь _nav_agent.target_position остаётся указывать на
 		# последний AttackWaypoint (старая PATROL-цель), не на objective — State.ATTACK_OBJECTIVE
