@@ -33,15 +33,25 @@ const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_st
 ## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TargetObjectiveMap.tscn` = 0,
 ## `TeamArenaMap.tscn` = 1), не детектится по наличию узла Objective. Значения совпадают с
 ## `MatchState.Mode` (0 = TARGET_OBJECTIVE, 1 = TEAM_ARENA).
-@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA") var match_mode: int = 0
+## Дефолт = -1 (sentinel, НЕ валидный режим) намеренно: и 0, и 1 тогда — НЕ-дефолтные значения,
+## и редактор Godot всегда сериализует их в .tscn. Дефолт 0 приводил к тому, что GUI-сейв карты
+## каждый раз вырезал строку `match_mode = 0` из TargetObjectiveMap.tscn (равно дефолту → не
+## пишется), а пропавший `match_mode` молча читается как TARGET_OBJECTIVE — на карте, которой
+## нужен TEAM_ARENA, это тихая поломка. Проверка на -1 — в _setup_match_context().
+@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA") var match_mode: int = -1
 
 ## Опция карты: наступает ли финальная стадия (доп. время + продолжающийся сброс ящиков), когда
-## основное время раунда вышло, а у всех живых танков кончился боезапас. Задаётся в .tscn каждой
-## карты: TeamArenaMap = true, TargetObjectiveMap = false. Условие/логику см. match_manager.gd.
+## основное время раунда вышло, а у всех живых танков кончился боезапас. Условие/логику см.
+## match_manager.gd. Дефолт false. В .tscn строка есть ТОЛЬКО у карт с true (TeamArenaMap) —
+## редактор Godot не пишет значения, равные дефолту; отсутствие строки в TargetObjectiveMap.tscn
+## это норма, не потеря (читается как false).
 @export var final_stage_enabled: bool = false
 
 ## Опция карты: строить ли непроходимую красную границу по периметру пола (см. _build_map_borders).
 ## ПО УМОЛЧАНИЮ ВКЛ. Выключить имеет смысл только для карты со своими границами/геометрией края.
+## Дефолт true == то, что нужно почти любой карте, поэтому строки `map_border_enabled = true` в
+## .tscn обычно НЕТ (редактор не пишет дефолт) — это норма. Строка появляется только если карта
+## явно ставит false.
 @export var map_border_enabled: bool = true
 
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
@@ -159,6 +169,12 @@ func _build_map_borders() -> void:
 ## карты»). Серию НЕ сбрасываем: она копится через reload_current_scene() между раундами; сброс —
 ## только из меню (main_menu.gd) и кнопкой «Новый матч» (hud.gd).
 func _setup_match_context() -> void:
+	# match_mode дефолт = -1 (см. @export выше). Если он всё ещё -1 — строку `match_mode` вырезали
+	# из .tscn (GUI-сейв при значении = старому дефолту 0) либо новая карта её не задала. Не молчим:
+	# 0/1 теперь НЕ-дефолтны, редактор их не режет; -1 здесь = реальная ошибка конфигурации карты.
+	if match_mode < 0:
+		push_error("map_scene: match_mode не задан на корне %s — выставь в .tscn (0=TARGET_OBJECTIVE, 1=TEAM_ARENA). Фолбэк на TARGET_OBJECTIVE." % scene_file_path)
+		match_mode = MatchState.Mode.TARGET_OBJECTIVE
 	MatchState.match_mode = match_mode
 
 	var score_manager := Node.new()

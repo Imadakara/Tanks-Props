@@ -183,7 +183,9 @@ Every map's root script (`scenes/maps/map_scene.gd`) explicitly sequences
 `_build_map_borders() → TeamSpawner.spawn_team() → MatchManager.setup(...) →
 ScoreManager.begin_match()` in its own `_ready()`, rather than letting each manager act in its own
 `_ready()`. (`_build_map_borders()` — a per-map `@export var map_border_enabled` toggle, **default
-on**, set in each map's `.tscn` like `match_mode`/`final_stage_enabled` — reads the `Ground`
+on**; a map only carries a `map_border_enabled` line in its `.tscn` when it sets `false` (Godot's
+editor never serializes a default-valued export — see the `match_mode` note under "Game modes")
+— reads the `Ground`
 collision box and adds a 4-wall solid red `MapBorders` ring, thickness 1 / height 3, flush with the
 ground edge, under `NavigationRegion3D` — an impassable perimeter so bots can't drive off the map;
 code-generated so it fits any map's ground size with no per-`.tscn` geometry work. It's a physical
@@ -328,9 +330,16 @@ circle sits on the ground), freed together with the objective and simply absent 
 result screen all say Красные/Синие in this mode (in TARGET_OBJECTIVE they say Атака/Оборона).
 
 `match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
-= 0, `TeamArenaMap` = 1). A missing value silently defaults to `TARGET_OBJECTIVE` — that regression
-(TeamArenaMap running as objective: no kill scoring, timeout always a defense win) is exactly what
-happens if the property line is dropped from the scene file.
+= 0, `TeamArenaMap` = 1). Its script default is **`-1`, a deliberate invalid sentinel**: both real
+values (0 and 1) are then non-default, so Godot's editor always serializes the line and a GUI
+scene-save can't silently strip it (the old default `0` meant `TargetObjectiveMap`'s
+`match_mode = 0` line — equal to the default — got dropped on every editor save). If the value is
+still `-1` in `_setup_match_context()` the line really is missing (dropped, or a new map forgot
+it): `map_scene.gd` `push_error`s and falls back to `TARGET_OBJECTIVE` rather than running the
+wrong mode silently. **Default-valued option lines are legitimately absent from a `.tscn`** —
+`TargetObjectiveMap` has no `final_stage_enabled` / `map_border_enabled` line (both equal their
+`false` / `true` defaults), `TeamArenaMap` has no `map_border_enabled` line (default `true`); that
+is not corruption, don't "restore" them.
 
 Both maps run the **same round loop**: `map_scene.gd._setup_match_context()` creates a `ScoreManager`
 + a node named `"MatchManager"` running `scenes/main/match_manager.gd`, which picks its end-of-round
@@ -338,8 +347,9 @@ condition from `match_mode` (objective `destroyed` → attack / timeout → defe
 winner-by-kills) then `MatchState.record_round_result` → `round_ended`. The same script also owns
 the **final stage**: extra time (`GameConfig.final_stage_duration_sec` = 30s, HUD shows a
 countdown, ammo crates keep dropping, tanks respawn with ammo), then the round resolves by kill
-count. It is a **per-map opt-in** — `map_scene.gd` has `@export var final_stage_enabled` set in
-each map's `.tscn` (**on** for `TeamArenaMap`, **off** for `TargetObjectiveMap`) — and it starts
+count. It is a **per-map opt-in** — `map_scene.gd` `@export var final_stage_enabled` (script
+default `false`); only `TeamArenaMap.tscn` carries the line (**on**), `TargetObjectiveMap` runs
+the `false` default with no line — and it starts
 **only at the moment the main `RoundTimer` expires** *and* every still-alive (not respawning) tank
 is out of ammo (the round has genuinely stalled). It is **not** triggered mid-round by ammo
 running out while the clock is still going. When disabled, or when someone still has ammo, the

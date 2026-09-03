@@ -33,7 +33,6 @@ size = Vector3(72, 0.5, 72)
 script = ExtResource("1_fe26o")
 match_mode = 1
 final_stage_enabled = true
-map_border_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1900000001]
 environment = ExtResource("13_env")
