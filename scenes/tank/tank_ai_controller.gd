@@ -223,7 +223,16 @@ extends Node
 ## значений при _ready(). Чтобы поменять баланс MEDIUM — править сами @export; чтобы
 ## поменять EASY/HARD — саму таблицу _DIFFICULTY_PRESETS.
 
-enum State { IDLE, PATROL, DEFEND, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE }
+## CHASE — [ДОБАВЛЕНО, по прямому запросу — "цель уходит за пределы стрельбы и теряется, бот не
+## успевает развернуться и поехать за целью"] Агрессивный вариант DEFEND против УЖЕ ЗАХВАЧЕННОЙ,
+## ОТДАЛЯЮЩЕЙСЯ цели (не путать с PURSUE — та для KILLER, гонится за ПОСЛЕДНЕЙ ВИДИМОЙ позицией
+## цели, которую УЖЕ потерял из виду, и не целится/не стреляет вообще). CHASE цель всё ещё видит —
+## просто она далеко и убегает: обычный DEFEND намеренно придерживает руль корпуса
+## (_throttle_turn_for_aim(), см. её @export combat_turn_input_margin) ради точности прицела, а это
+## же самое придерживание не даёт корпусу довернуться и физически угнаться за убегающей целью
+## быстрее, чем та наращивает дистанцию — цель успевает выйти за vision_range и потеряться
+## насовсем. Вход/выход и сама логика вождения — см. State.CHASE в _physics_process().
+enum State { IDLE, PATROL, DEFEND, CHASE, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -1178,28 +1187,79 @@ func _physics_process(delta: float) -> void:
 	match state:
 		State.DEFEND:
 			if _current_target != null and is_instance_valid(_current_target):
-				# [ИЗМЕНЕНО, по прямому запросу — "стрелять на ходу, если цель в зоне досягаемости
-				# стрельбы"] Раньше дистанция гейтилась ЖЁСТКО по fire_range: вошёл в радиус —
-				# движение обнулялось целиком, бот превращался в неподвижную турель. Теперь бот
-				# ВСЕГДА продолжает ехать к цели (reach_dist = fire_range * _defend_reach_frac —
-				# случайная на этот бой доля в [defend_reach_frac_min, 1.0], рероллится на смену
-				# цели в _enter_defend(); нижняя доля 0.85 — прежний запас, чтобы гарантированно
-				# оказаться ВНУТРИ радиуса стрельбы, а не топтаться ровно на границе, где
-				# float-погрешность может дать dist чуть больше fire_range на отдельных кадрах),
-				# стреляя всю дорогу — `_aim_and_fire()` сама решает, готов ли выстрел
-				# (dist<=fire_range), движение сближения этому не мешает. Останавливается ТОЛЬКО
-				# по факту реального прибытия (`arrived`), явно — не полагаемся на то, что
-				# _drive_to_point() сама не трогает inputs после arrived (см. её комментарий):
-				# при живой, двигающейся цели это оставило бы старый ненулевой газ навсегда,
-				# бот продолжал бы упираться в цель без тормоза/антизастряла (те тоже не
-				# выполняются в её ветке "уже приехали").
-				var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * _defend_reach_frac)
-				if arrived:
-					_movement.ai_move_input = 0.0
-					_movement.ai_turn_input = 0.0
+				# [ДОБАВЛЕНО, по прямому запросу — State.CHASE, см. её doc-comment у enum State]
+				# Цель, взятая на прицел, отдаляется быстрее, чем DEFEND успевает довернуть корпус
+				# (тот намеренно придержан ради точности прицела, см. _throttle_turn_for_aim()) —
+				# как только дистанция перевалила за половину vision_range, переключаемся на
+				# агрессивное преследование ДО того, как цель успеет выйти за vision_range целиком
+				# и потеряться насовсем. Половина vision_range (не fire_range) — специально с
+				# запасом: для всех трёх сложностей это МЕНЬШЕ fire_range (EASY 5.4 против 9.0,
+				# MEDIUM 9.0 против 15.0, HARD 12.6 против 21.0), то есть уход в CHASE начинается,
+				# пока цель ещё физически в радиусе стрельбы — на реакцию остаётся запас, а не только
+				# отчаянная погоня вдогонку за уже вышедшей из-под обстрела целью.
+				# ВТОРОЕ условие — target_is_moving — обязательно, не только дистанция: по формулировке
+				# запроса вход триггерит именно "ОТДАЛЯЕМОЕ ДВИЖЕНИЕ", не сам факт "далеко". Без него
+				# ловилось бы противоречие с условием выхода CHASE (dist<=fire_range И цель стоит) —
+				# поскольку half_vision ВСЕГДА меньше fire_range (см. числа выше), полоса дистанций
+				# (half_vision, fire_range] одновременно удовлетворяла бы и входу (dist>half_vision), и
+				# выходу (dist<=fire_range, если цель к тому моменту остановилась) — DEFEND/CHASE
+				# дёргались бы туда-обратно каждый кадр, пока цель СТОИТ именно в этой полосе (живьём
+				# воспроизведено при диагностике). Стоящую цель в этой полосе просто незачем
+				# преследовать агрессивно — обычный DEFEND и так доедет до неё как до любой другой.
+				var target_is_moving: bool = _current_target is CharacterBody3D \
+					and (_current_target as CharacterBody3D).velocity.length() > _STATIONARY_VELOCITY_EPS
+				if target_is_moving and _body.global_position.distance_to(_current_target.global_position) > vision_range * 0.5:
+					state = State.CHASE
 				else:
-					_throttle_turn_for_aim()
-				_aim_and_fire(_current_target, not arrived)
+					# [ИЗМЕНЕНО, по прямому запросу — "стрелять на ходу, если цель в зоне
+					# досягаемости стрельбы"] Раньше дистанция гейтилась ЖЁСТКО по fire_range: вошёл
+					# в радиус — движение обнулялось целиком, бот превращался в неподвижную турель.
+					# Теперь бот ВСЕГДА продолжает ехать к цели (reach_dist = fire_range *
+					# _defend_reach_frac — случайная на этот бой доля в [defend_reach_frac_min,
+					# 1.0], рероллится на смену цели в _enter_defend(); нижняя доля 0.85 — прежний
+					# запас, чтобы гарантированно оказаться ВНУТРИ радиуса стрельбы, а не топтаться
+					# ровно на границе, где float-погрешность может дать dist чуть больше fire_range
+					# на отдельных кадрах), стреляя всю дорогу — `_aim_and_fire()` сама решает,
+					# готов ли выстрел (dist<=fire_range), движение сближения этому не мешает.
+					# Останавливается ТОЛЬКО по факту реального прибытия (`arrived`), явно — не
+					# полагаемся на то, что _drive_to_point() сама не трогает inputs после arrived
+					# (см. её комментарий): при живой, двигающейся цели это оставило бы старый
+					# ненулевой газ навсегда, бот продолжал бы упираться в цель без тормоза/
+					# антизастряла (те тоже не выполняются в её ветке "уже приехали").
+					var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * _defend_reach_frac)
+					if arrived:
+						_movement.ai_move_input = 0.0
+						_movement.ai_turn_input = 0.0
+					else:
+						_throttle_turn_for_aim()
+					_aim_and_fire(_current_target, not arrived)
+			else:
+				_movement.ai_move_input = 0.0
+				_movement.ai_turn_input = 0.0
+		State.CHASE:
+			# Агрессивный вариант DEFEND — см. её doc-comment у enum State. Отличия от обычного
+			# DEFEND ветки выше ровно два: (1) НЕ вызывает _throttle_turn_for_aim() — корпус рулит
+			# на полном газу _drive_to_point(), не придерживаясь ради точности прицела, чтобы
+			# реально угнаться за отдаляющейся целью; (2) сам решает, когда вернуться в DEFEND —
+			# и в отличие от обычного домашнего/боевого переключения это НЕ идёт через
+			# _enter_defend()/_think() (та вызывается лишь раз в think_interval_sec — слишком редко
+			# для решения "цель только что остановилась в зоне поражения", да и без спец-развилки в
+			# _think() тут же откатила бы CHASE обратно в DEFEND на следующем тике, даже не доехав —
+			# см. её комментарий).
+			if _current_target != null and is_instance_valid(_current_target):
+				var dist_to_target: float = _body.global_position.distance_to(_current_target.global_position)
+				var target_is_moving: bool = _current_target is CharacterBody3D \
+					and (_current_target as CharacterBody3D).velocity.length() > _STATIONARY_VELOCITY_EPS
+				if dist_to_target <= fire_range and not target_is_moving:
+					# [ДОБАВЛЕНО, по прямому запросу — "преследование сменяется обычным стейтом
+					# атаки когда цель, будучи в пределах расстояния выстрела, остановилась"]
+					state = State.DEFEND
+				else:
+					var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * _defend_reach_frac)
+					if arrived:
+						_movement.ai_move_input = 0.0
+						_movement.ai_turn_input = 0.0
+					_aim_and_fire(_current_target, not arrived)
 			else:
 				_movement.ai_move_input = 0.0
 				_movement.ai_turn_input = 0.0
@@ -1564,7 +1624,7 @@ func _think() -> void:
 	# (нажали кнопку прямо во время боя) — выходим из него тем же путём, что при обычной потере
 	# цели, максимум через один think_interval_sec.
 	if not enemy_reaction_enabled:
-		if state == State.DEFEND:
+		if state == State.DEFEND or state == State.CHASE:
 			_on_target_lost()
 		_ensure_home_state()
 		return
@@ -1593,7 +1653,7 @@ func _think() -> void:
 	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из DEFEND не
 	# выпадает — бот продолжает огонь по «имитации» (см. _can_see()). Первичное обнаружение ниже
 	# (_scan_for_target) маскировку по-прежнему уважает — новую замаскированную цель бот не берёт.
-	if state == State.DEFEND and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target, true):
+	if (state == State.DEFEND or state == State.CHASE) and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target, true):
 		visible_target = _current_target
 	else:
 		visible_target = _scan_for_target()
@@ -1614,15 +1674,22 @@ func _think() -> void:
 			visible_target = mortar_carrier
 
 	if visible_target != null:
+		# [ДОБАВЛЕНО, по прямому запросу — State.CHASE] Уже агрессивно преследуем ЭТУ ЖЕ цель —
+		# ничего не трогаем: без этой развилки _enter_defend() ниже безусловно ставит state обратно
+		# в State.DEFEND на КАЖДОМ think-тике (идемпотентно обновляет nav-цель того же врага), и
+		# CHASE откатывалась бы в DEFEND раньше, чем реально успевала сократить дистанцию —
+		# _physics_process() сам решает, когда именно вернуться в DEFEND (см. State.CHASE там же).
+		if state == State.CHASE and visible_target == _current_target:
+			pass
 		# [ДОБАВЛЕНО — система модификаций] ЗАЩИТНИК с мортирой применяет её по вражескому танку
 		# (гарантированный one-shot) вместо обычного DEFEND.
-		if _has_mortar() and not _body.is_attacker():
+		elif _has_mortar() and not _body.is_attacker():
 			_enter_mortar_attack(visible_target)
 		else:
 			_enter_defend(visible_target)
 		return
 
-	if state == State.DEFEND:
+	if state == State.DEFEND or state == State.CHASE:
 		_on_target_lost()
 		# [ДОБАВЛЕНО, по прямому запросу] Бой только что закончился — сначала пробуем вернуться к
 		# прерванному поручению (см. _try_resume_pre_combat_state()), и только если оно больше не
@@ -3616,6 +3683,8 @@ func _update_fov_debug_draw() -> void:
 	match state:
 		State.DEFEND:
 			fill_color = Color(1.0, 0.15, 0.1, 0.28)
+		State.CHASE:
+			fill_color = Color(1.0, 0.4, 0.0, 0.3)  # яркий оранжевый — агрессивная погоня за целью, между DEFEND(красный) и PURSUE
 		State.PATROL:
 			fill_color = Color(0.2, 0.6, 0.95, 0.22)
 		State.HUNT:
@@ -3893,6 +3962,12 @@ func _update_brain_debug_label() -> void:
 			if _current_target != null and is_instance_valid(_current_target):
 				var dist: float = _body.global_position.distance_to(_current_target.global_position)
 				lines.append("target: %s (%.1fm)" % [String(_current_target.name), dist])
+			else:
+				lines.append("target: -")
+		State.CHASE:
+			if _current_target != null and is_instance_valid(_current_target):
+				var dist: float = _body.global_position.distance_to(_current_target.global_position)
+				lines.append("CHASE target: %s (%.1fm, vision half %.1fm)" % [String(_current_target.name), dist, vision_range * 0.5])
 			else:
 				lines.append("target: -")
 		State.PATROL:
