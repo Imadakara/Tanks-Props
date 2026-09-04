@@ -292,6 +292,67 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## границе. Верхняя = 1.0 (ровно `fire_range`).
 @export var attack_reach_frac_min: float = 0.85
 
+## [ДОБАВЛЕНО, по прямому запросу — "простое манёвренное перемещение во время боя, чтобы бот
+## случайно перемещался в небольшом радиусе в пределах досягаемости стрельбы", уточнено трижды по
+## прямому запросу: (1) "суть манёвра — снижать вероятность попадания по себе; корпус реально едет
+## по случайным траекториям в небольшом радиусе, мешая цели прицелиться; башня наводится НЕЗАВИСИМО
+## от корпуса"; (2) "боты должны стараться друг друга объезжать и заходить в тыл, когда находятся в
+## состоянии атаки"; (3) "цели теряются, боты крутятся на месте и слишком близко сходятся"]
+## По факту прибытия на дистанцию боя (см. гистерезис входа/выхода в doc-comment у
+## `_attack_maneuvering`) — не полная остановка, а НЕПРЕРЫВНАЯ орбита вокруг цели со сдвигом в её
+## тыл: угол вокруг цели (`_attack_maneuver_angle`) сдвигается маленькими шагами КАЖДЫЙ физ.кадр
+## (`attack_maneuver_orbit_deg_per_sec` градусов/сек) в сторону `target.global_transform.basis.z`
+## (тыл цели в мировых координатах — тот же знак, что forward = `-basis.z`, см. заголовок файла), а
+## не скачком раз в несколько секунд — заход в тыл получается постепенно, а требуемый доворот
+## корпуса на кадр остаётся исчезающе мал (см. следующий абзац, почему это важно). Дистанция —
+## отдельный джиттер раз в `randf_range(attack_maneuver_interval_min_sec,
+## attack_maneuver_interval_max_sec)`, в полосе `[fire_range * _attack_reach_frac *
+## attack_maneuver_min_dist_frac, fire_range * _attack_reach_frac]`, структурно ≤ `fire_range`.
+## Рулим на точку НАПРЯМУЮ (без `NavigationAgent3D`/pure pursuit — см. State.ATTACK) — только
+## аварийный тормоз на движение вперёд. Наводка и стрельба — `_aim_and_fire()`, полностью
+## независимо от того, куда сейчас едет корпус (турель — отдельный физический узел со своей
+## скоростью поворота, ВСЕГДА на 10% быстрее корпуса самого бота — см. её оверрайд в _initialize()).
+##
+## [ПОПРОБОВАНО И ОТКАЧЕНО, живьём, дважды]
+## 1) Корпус ПРИНУДИТЕЛЬНО держался развёрнутым точно на цель (руль правился отдельно от манёвра,
+##    сам "манёвр" — рывки вперёд/назад вдоль этой линии) — устраняло кратковременную потерю
+##    видимости турелью полностью, но переставало быть уклонением по сути: корпус ни на градус не
+##    уходил в сторону от направления на цель, что не мешает противнику прицелиться. Откачено по
+##    прямому запросу — цена (иногда турель на резком развороте на долю секунды теряет цель, см.
+##    attack_target_lost_grace_sec ниже) принята сознательно ради настоящего уклонения.
+## 2) Точка манёвра выбиралась заново раз в `attack_maneuver_interval_*` (телепорт, не
+##    непрерывное движение) и ехали к ней через `_drive_to_point()`/pure pursuit — КАЖДЫЙ такой
+##    скачок обычно требовал резкого доворота корпуса С НУЛЯ (новая точка почти всегда лежит не
+##    там, куда корпус только что ехал), а `_drive_to_point()` держит `ai_move_input=0`, пока
+##    `yaw_diff` не сойдётся < 60° — живым тестом поймано: 830 из 900 кадров БЕЗ движения вообще,
+##    чистое "бот крутится на месте". Заменено на непрерывную орбиту (см. выше) именно поэтому.
+## `attack_maneuver_min_dist_frac` — нижняя граница дистанции манёвра как доля от боевой дистанции;
+## поднята по прямому запросу — "слишком близко сходятся" (раньше падала почти до упора).
+@export var attack_maneuver_radius: float = 4.0
+@export var attack_maneuver_orbit_deg_per_sec: float = 20.0
+@export var attack_maneuver_min_dist_frac: float = 0.6
+@export var attack_maneuver_interval_min_sec: float = 1.5
+@export var attack_maneuver_interval_max_sec: float = 3.0
+
+## [ДОБАВЛЕНО, живьём] Уклонение (см. attack_maneuver_* выше) периодически разворачивает корпус
+## ПО НАПРАВЛЕНИЮ ДВИЖЕНИЯ, а не на цель. [ИСПРАВЛЕНО, по прямому запросу — "скорость поворота
+## башни должна быть на 10% больше скорости поворота корпуса — это позволит танку поворачивать
+## корпус перед манёвром и держать цель на прицеле"] Раньше корпус (TankMovement.turn_speed,
+## собственный дефолт скрипта — общий 2.0 рад/с, JSON-конфиг его не трогает, только move_speed/
+## acceleration/turret_turn_speed/launch_speed/max_hits, см. team_spawner.gd._apply_tank_config())
+## разворачивался БЫСТРЕЕ башни на EASY/MEDIUM
+## (turret_turn_speed 0.8/1.0 рад/с) — на резком манёвренном повороте башня не успевала
+## докомпенсировать, и цель на долю секунды выпадала из ОБОИХ конусов разом чисто из-за манёвра.
+## Теперь `_initialize()` (см. её doc-comment у _movement.turn_speed) переопределяет корпус этого
+## бота ВСЕГДА чуть медленнее его собственной башни (на 10%) — корпус физически не может обогнать
+## башню на повороте, так что этот класс потери цели больше не должен возникать. Ниже — дешёвая
+## страховка на ОСТАЛЬНЫЕ причины кратковременной потери видимости (геометрия/другой танк на миг
+## перекрыли обзор, доля кадра рассинхрона на смене направления и т.п.), не главный фикс: `_think()`
+## (см. её visible-target блок) держит `_current_target` ещё `attack_target_lost_grace_sec` после
+## потери, ПОКА бот в ATTACK, не разрывая бой из-за доли секунды; настоящая потеря (цель правда
+## скрылась/погибла надолго) всё равно вызовет `_on_target_lost()` по истечении этого окна.
+@export var attack_target_lost_grace_sec: float = 1.5
+
 ## [ДОБАВЛЕНО, по прямому запросу — "текущая реализация стрельбы не учитывает параболическую
 ## траекторию снарядов, боты должны приподнимать дуло на нужный угол для гарантированного попадания"]
 ## Снаряд падает под гравитацией (см. projectile.gd/fall_acceleration) — прицел точно в центр цели
@@ -737,6 +798,28 @@ var _pre_combat_state: int = -1
 ## каждый think-тик — иначе дистанция боя дёргалась бы). Дефолт = нижняя граница (0.85).
 var _attack_reach_frac: float = 0.85
 
+## Манёвр во время боя (см. @export attack_maneuver_* выше) — случайная точка ОТ ЦЕЛИ, к которой
+## сейчас едет ATTACK, и признак, что мы вообще в фазе манёвра. [ИСПРАВЛЕНО, живьём — гистерезис]
+## `_attack_maneuvering` больше НЕ синоним "arrived в этом кадре" — входит при `dist <= stop_dist`,
+## но выходит только при `dist > stop_dist + attack_maneuver_radius` (см. State.ATTACK), иначе
+## колебание дистанции у ЖИВОЙ (тоже маневрирующей) цели вокруг stop_dist дёргало бы бота между
+## "погоня"/"манёвр" по нескольку раз в секунду — внешне выглядело как танк "крутится на месте".
+var _attack_maneuvering: bool = false
+var _attack_maneuver_pos: Vector3 = Vector3.ZERO
+## Мировой угол (вокруг ЦЕЛИ) текущей манёвренной точки — сдвигается НЕПРЕРЫВНО, маленькими шагами
+## КАЖДЫЙ физ.кадр (`attack_maneuver_orbit_deg_per_sec`) в сторону тыла цели, см. State.ATTACK —
+## инициализируется с ТЕКУЩЕГО пеленга бота относительно цели на входе в манёвр (гистерезис — см.
+## doc-comment у _attack_maneuvering), а не с нуля/сразу в тыл, без рывка на старте.
+var _attack_maneuver_angle: float = 0.0
+## Текущая дистанция манёвра от цели — джиттерится отдельно от угла, раз в
+## `randf_range(attack_maneuver_interval_min_sec, attack_maneuver_interval_max_sec)`.
+var _attack_maneuver_dist: float = 0.0
+var _attack_maneuver_timer: float = 0.0
+## "Память" на потерю видимости цели из-за кратковременной помехи, см. @export
+## attack_target_lost_grace_sec выше и её применение в _think(). Взводится заново на каждый кадр,
+## где цель реально видна.
+var _attack_target_lost_grace_timer: float = 0.0
+
 ## [ДОБАВЛЕНО, по прямому запросу — "если бот не в ATTACK, но способен стрелять, и находится в
 ## поиске/подборе патронов/движется к засаде — если пушка засекла противника, нужно стрелять и
 ## стараться держать прицел на цели"] "Лёгкая" боевая реакция для состояний, где бот занят своим
@@ -1007,6 +1090,23 @@ func _initialize() -> void:
 	_disguise.is_player_controlled = false
 	_mod.is_player_controlled = false  # бот подбирает модификации (MOD_SEEK), но режим прицеливания мортиры — только у игрока
 	_turret.turn_speed = turret_turn_speed
+	# [ДОБАВЛЕНО, по прямому запросу — "скорость поворота башни должна быть на 10% больше скорости
+	# поворота корпуса — это позволит танку поворачивать корпус перед манёвром и держать цель на
+	# прицеле"] Раньше корпус (TankMovement.turn_speed — собственный дефолт скрипта, общий 2.0 рад/с
+	# для ВСЕХ уровней сложности; JSON-конфиг (team_spawner.gd._apply_tank_config()) этого поля не
+	# читает вообще, только move_speed/acceleration/turret_turn_speed/launch_speed/max_hits)
+	# поворачивался БЫСТРЕЕ башни на EASY/MEDIUM (0.8/1.0 рад/с) — при уклонении в бою (см.
+	# State.ATTACK) корпус успевал отвернуть от цели раньше, чем башня доворачивалась следом, и на
+	# резком развороте бот на долю секунды терял цель из виду (компенсация —
+	# attack_target_lost_grace_sec, см. её @export). Теперь корпус этого бота ВСЕГДА ЧУТЬ МЕДЛЕННЕЕ
+	# его собственной башни (turret_turn_speed/1.1, т.е. башня на 10% быстрее) — оверрайд ставится
+	# здесь же, ПОСЛЕ _apply_tank_config() (которая до этого момента уже успела применить JSON к
+	# другим полям), затрагивает только ботов (у игрока этот метод вообще не вызывается,
+	# is_player_controlled остаётся true, TankMovement.turn_speed игрока не трогаем). Побочный
+	# эффект — корпус разворачивается медленнее ВЕЗДЕ, не только в бою (общий TankMovement.turn_speed
+	# на все состояния, отдельной боевой скорости руления в проекте нет) — цена принята явно по
+	# запросу.
+	_movement.turn_speed = turret_turn_speed / 1.1
 	_movement.move_speed *= move_speed_multiplier
 	_look_yaw = _body.rotation.y
 	_health.damaged.connect(_on_damaged)
@@ -1204,21 +1304,82 @@ func _physics_process(delta: float) -> void:
 			# ехать за целью как будто хочет выйти на возможность остановиться и выстрелить, и
 			# стрелять по ней, если она в пределах максимальной дистанции стрельбы"] Тот же паттерн,
 			# что и у ATTACK_OBJECTIVE (см. её ветку ниже) — не двухфазная модель MORTAR_ATTACK.
-			# `_drive_to_point()` всегда едет к живой позиции цели, целясь остановиться на
-			# `fire_range * _attack_reach_frac`; `_aim_and_fire()` вызывается КАЖДЫЙ кадр безусловно —
-			# сама решает, стрелять ли (её собственный гейт `dist <= fire_range` + сведённый прицел),
-			# движение сближения этому не мешает. Останавливается ТОЛЬКО по факту прибытия
-			# (`arrived`) — явно, не полагаясь на то, что `_drive_to_point()` сама не трогает inputs
-			# после arrived (см. её комментарий).
+			# `_aim_and_fire()` вызывается КАЖДЫЙ кадр безусловно — сама решает, стрелять ли (её
+			# собственный гейт `dist <= fire_range` + сведённый прицел), движение этому не мешает.
+			# По факту прибытия на дистанцию боя — не полная остановка, а простое манёвренное
+			# перемещение с гистерезисом входа/выхода (см. ниже и attack_maneuver_* выше, по прямому
+			# запросу — "чтобы бот случайно перемещался в небольшом радиусе... стараясь объезжать
+			# цель и заходить в тыл").
 			if _current_target != null and is_instance_valid(_current_target):
-				var arrived: bool = _drive_to_point(delta, _current_target.global_position, fire_range * _attack_reach_frac)
-				if arrived:
-					_movement.ai_move_input = 0.0
-					_movement.ai_turn_input = 0.0
+				# [ИСПРАВЛЕНО, живьём — реальный бой бот-на-бота] Раньше "приехали/манёвр" решалось
+				# заново каждый физ.кадр одним вызовом `_drive_to_point(..., stop_dist)`: если ЦЕЛЬ
+				# ТОЖЕ живая и движется (обычный случай — противник тоже в ATTACK и маневрирует),
+				# дистанция колеблется вокруг stop_dist кадр в кадр, и бот мигал между "погоня"
+				# (nav-цель = живая позиция цели) и "манёвр" (nav-цель = точка манёвра) по нескольку
+				# раз в секунду — снаружи выглядело как "крутится на месте" (каждый флип — новый
+				# NavigationServer-запрос с нуля, корпус не успевает набрать инерцию ни в одном
+				# направлении). Гистерезис: выйти из манёвра можно только когда дистанция реально
+				# превысила ВЕСЬ манёвренный коридор (`stop_dist + attack_maneuver_radius`), не сам
+				# stop_dist — колебание цели ВНУТРИ коридора манёвр не прерывает.
+				var stop_dist: float = fire_range * _attack_reach_frac
+				var dist_now: float = _body.global_position.distance_to(_current_target.global_position)
+				if _attack_maneuvering and dist_now > stop_dist + attack_maneuver_radius:
+					_attack_maneuvering = false
+				if not _attack_maneuvering and dist_now <= stop_dist:
+					_attack_maneuvering = true
+					# Свежий заход — точка манёвра стартует с ТЕКУЩЕГО пеленга бота относительно
+					# цели (см. doc-comment у _attack_maneuver_angle), без рывка на входе.
+					var from_target: Vector3 = _body.global_position - _current_target.global_position
+					from_target.y = 0.0
+					_attack_maneuver_angle = atan2(from_target.z, from_target.x) if from_target.length() > 0.01 else 0.0
+					_attack_maneuver_dist = stop_dist
+					_attack_maneuver_timer = 0.0  # форсируем пересчёт дистанции на первом же кадре
+				if _attack_maneuvering:
+					# [ПЕРЕДЕЛАНО В ТРЕТИЙ РАЗ, живьём — "боты крутятся на месте", "слишком близко
+					# сходятся", "должны объезжать друг друга и заходить в тыл в ATTACK"] Прошлая
+					# версия телепортировала точку манёвра раз в 1.5-3с и ехала к ней через
+					# `_drive_to_point()`/pure pursuit — каждый такой скачок обычно требовал резкого
+					# доворота корпуса С НУЛЯ (новая точка почти всегда лежит не там, куда корпус
+					# только что ехал), а `_drive_to_point()` держит `ai_move_input=0`, пока
+					# `yaw_diff` не сойдётся < 60° — живым тестом поймано: 830 из 900 кадров БЕЗ
+					# движения вообще, чистое "крутится на месте". Теперь угол вокруг цели
+					# (`_attack_maneuver_angle`) сдвигается НЕПРЕРЫВНО, маленькими шагами КАЖДЫЙ
+					# физ.кадр (`attack_maneuver_orbit_deg_per_sec`), в сторону ТЫЛА цели
+					# (`target.global_transform.basis.z` — «зад» цели в мировых координатах, тот же
+					# знак, что forward = `-basis.z`, см. заголовок файла) — заход в тыл получается
+					# сам собой, постепенно, а требуемый доворот корпуса на кадр исчезающе мал,
+					# корпус никогда не отстаёт настолько, чтобы упереться в гейт "не ехать, пока не
+					# довернул". Прямое рулевое управление на точку (БЕЗ NavigationAgent3D/pure
+					# pursuit — на короткой дистанции открытого боя объезд препятствий не нужен, а
+					# реассайн nav-цели КАЖДЫЙ кадр форсил бы новый A*-запрос — дорого), только
+					# аварийный тормоз (`_check_emergency_brake()`) на движение вперёд. Дистанция —
+					# отдельный джиттер раз в `attack_maneuver_interval_*` в полосе `[stop_dist *
+					# attack_maneuver_min_dist_frac, stop_dist]` (нижняя граница поднята по прямому
+					# запросу — "слишком близко сходятся", раньше проваливалась почти до упора).
+					var rear: Vector3 = _current_target.global_transform.basis.z
+					var rear_angle: float = atan2(rear.z, rear.x)
+					var to_rear: float = wrapf(rear_angle - _attack_maneuver_angle, -PI, PI)
+					var max_orbit_step: float = deg_to_rad(attack_maneuver_orbit_deg_per_sec) * delta
+					_attack_maneuver_angle = wrapf(_attack_maneuver_angle + clampf(to_rear, -max_orbit_step, max_orbit_step), -PI, PI)
+
+					_attack_maneuver_timer -= delta
+					if _attack_maneuver_timer <= 0.0:
+						_attack_maneuver_dist = clampf(stop_dist - randf() * attack_maneuver_radius, stop_dist * attack_maneuver_min_dist_frac, stop_dist)
+						_attack_maneuver_timer = randf_range(attack_maneuver_interval_min_sec, attack_maneuver_interval_max_sec)
+
+					_attack_maneuver_pos = _current_target.global_position + Vector3(cos(_attack_maneuver_angle) * _attack_maneuver_dist, 0.0, sin(_attack_maneuver_angle) * _attack_maneuver_dist)
+					var world_yaw: float = _yaw_to_world_point(_body.global_position, _attack_maneuver_pos)
+					var yaw_diff: float = wrapf(world_yaw - _body.rotation.y, -PI, PI)
+					_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
+					var brake_hit: bool = _check_emergency_brake()
+					_movement.ai_move_input = 1.0 if (not brake_hit and absf(yaw_diff) < deg_to_rad(75.0)) else 0.0
+				else:
+					_drive_to_point(delta, _current_target.global_position, stop_dist)
 				_aim_and_fire(_current_target)
 			else:
 				_movement.ai_move_input = 0.0
 				_movement.ai_turn_input = 0.0
+				_attack_maneuvering = false
 		State.PATROL:
 			_drive_to_waypoint(delta)
 			_wander(delta, true)
@@ -1668,8 +1829,25 @@ func _think() -> void:
 	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из ATTACK не
 	# выпадает — бот продолжает огонь по «имитации» (см. _can_see()). Первичное обнаружение ниже
 	# (_scan_for_target) маскировку по-прежнему уважает — новую замаскированную цель бот не берёт.
-	if state == State.ATTACK and _current_target != null and is_instance_valid(_current_target) and _can_see(_current_target, true):
-		visible_target = _current_target
+	if state == State.ATTACK and _current_target != null and is_instance_valid(_current_target):
+		if _can_see(_current_target, true):
+			visible_target = _current_target
+			_attack_target_lost_grace_timer = attack_target_lost_grace_sec  # снова видим — взводим заново
+		elif _attack_target_lost_grace_timer > 0.0:
+			# [ДОБАВЛЕНО, по прямому запросу — манёвр в бою] Момент реально не видим (оба конуса
+			# промахнулись), но НЕ бросаем бой сразу: манёвр (см. State.ATTACK) заставляет корпус
+			# ехать ПОПЕРЁК направления на цель (по касательной вокруг неё, а не прямо на неё, как
+			# при обычном сближении). Корпус этого бота ВСЕГДА на 10% медленнее его собственной
+			# башни (см. оверрайд в _initialize()), так что обогнать её на повороте он физически не
+			# может — этот класс потери цели фиксом там уже по большей части устранён; страховка
+			# здесь — на ОСТАЛЬНЫЕ причины (геометрия/другой танк на миг перекрыли обзор, доля кадра
+			# рассинхрона). Короткая "память" (attack_target_lost_grace_sec) перекрывает такие
+			# кратковременные провалы видимости, не разрывая бой — тем же тиком/следующим обзор
+			# обычно уже восстанавливается.
+			_attack_target_lost_grace_timer -= think_interval_sec
+			visible_target = _current_target
+		else:
+			visible_target = _scan_for_target()
 	else:
 		visible_target = _scan_for_target()
 
@@ -2517,6 +2695,8 @@ func _on_respawned() -> void:
 	_current_target = null
 	_snap_fire_target = null
 	_hit_sweep_active = false
+	_attack_maneuvering = false
+	_attack_target_lost_grace_timer = 0.0
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
@@ -2567,6 +2747,8 @@ func _on_target_lost() -> void:
 	_detour_timer = 0.0
 	_stuck_check_timer = 0.0
 	_current_target = null
+	_attack_maneuvering = false
+	_attack_target_lost_grace_timer = 0.0
 
 ## [ДОБАВЛЕНО, по прямому запросу] "Поручения" — состояния, к которым имеет смысл вернуться после
 ## боя (ехал за мортирой/патронами, конкретным ящиком, или ждал их у зоны — прервался на бой, но
@@ -2799,6 +2981,8 @@ func _enter_attack(target: Node) -> void:
 		# Случайная дистанция сближения на этот бой — от attack_reach_frac_min до ровно fire_range
 		# (см. @export-блок), чтобы боты не сходились в кучу на одном и том же расстоянии.
 		_attack_reach_frac = randf_range(attack_reach_frac_min, 1.0)
+		_attack_maneuvering = false  # новая цель — манёвр начнётся заново по прибытии
+		_attack_target_lost_grace_timer = attack_target_lost_grace_sec  # свежая цель — полный запас
 	# «Спалился» из APPROACH/PREP/DISGUISE (единственные вызывающие пути сюда из маскировки) —
 	# hide-зона больше не занята нами, другой бот нашей стороны может её выбрать (см.
 	# _hide_zone_taken_by_other_bot()). Безусловно и безопасно — no-op, если не прятались.
@@ -2835,6 +3019,8 @@ func _enter_attack(target: Node) -> void:
 		_notify_team_of_alert_target(target)
 	_just_reached_waypoint = false  # маскировка (сценарий 2): «момент вейпоинта» протух — бой важнее
 	_last_known_target_pos = target.global_position
+	# Манёвр (см. State.ATTACK) на близкой дистанции рулит НАПРЯМУЮ, без NavigationAgent3D — этот
+	# реассайн его не касается вообще, нужен только для фазы сближения (chase).
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = target.global_position
 
@@ -3079,6 +3265,8 @@ func _on_destroyed(_killer: Node) -> void:
 	_current_target = null
 	_snap_fire_target = null
 	_hit_sweep_active = false
+	_attack_maneuvering = false
+	_attack_target_lost_grace_timer = 0.0
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
