@@ -114,7 +114,7 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   everyone else sees the prop only. Bots never activate or seek disguise. A bot **won't acquire** a
   disguised enemy (`TankAIController._can_see()` returns false in `_scan_for_target()` while the
   target's `TankStateMachine` is `DISGUISED`, unless `GameConfig.ai_can_see_disguised_tanks`) — but a
-  bot **already in `DEFEND` on that tank keeps firing** through the disguise (`_can_see(target,
+  bot **already in `ATTACK` on that tank keeps firing** through the disguise (`_can_see(target,
   ignore_disguise=true)` in `_think()`): disguising while already someone's target doesn't save you.
   Break triggers: turret turn / move /
   fire / moving-tank bump (`CollisionDetector`, below) / **projectile hit** (`HealthComponent.damaged`
@@ -501,8 +501,8 @@ a `project` memory — do not silently ship the visible checkbox.
 Single AI system for the whole project — every map deploys the exact same node/script, not a
 per-map or per-context system. Lives as a dormant sibling on every `Tank.tscn` instance (including
 the player's, see "Tank as a composed entity" above) and lazily self-inits on first enabled
-`_physics_process()` tick. A 19-state priority engine
-(`IDLE/PATROL/DEFEND/CHASE/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
+`_physics_process()` tick. An 18-state priority engine
+(`IDLE/PATROL/ATTACK/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
 AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK/DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE`) with a
 NavMesh-based driving stack (pure
 pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
