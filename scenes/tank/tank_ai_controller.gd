@@ -376,6 +376,15 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## См. _can_see() — засчитывается, если цель попала В ЛЮБОЙ из двух секторов (главный ИЛИ этот).
 @export var secondary_cone_deg: float = 15.0
 
+## [ДОБАВЛЕНО, по прямому запросу — п.2] Прочёсывание башней после попадания без видимого стрелка
+## (см. _start_hit_sweep()/_process_hit_sweep()). hit_search_sweep_count точек РАВНОМЕРНО внутри
+## hit_search_spread_deg вокруг оценённого направления на killer (не 360° — стрелок скорее всего
+## где-то рядом с этим направлением, а не с точностью до градуса позади; полный круг тратил бы
+## время на заведомо маловероятные углы), по hit_search_hold_sec на каждую точку.
+@export var hit_search_sweep_count: int = 4
+@export var hit_search_spread_deg: float = 160.0
+@export var hit_search_hold_sec: float = 0.5
+
 ## Обзор при блуждании (IDLE и, с уклоном, PATROL) — полный круг: следующий угол может быть
 ## любым (в т.ч. назад), но не ближе wander_min_turn_deg к текущему (см. _pick_new_wander_target()).
 @export var wander_min_turn_deg: float = 30.0
@@ -727,6 +736,28 @@ var _pre_combat_state: int = -1
 ## Рероллится в `randf_range(attack_reach_frac_min, 1.0)` на смену цели в `_enter_attack()` (не на
 ## каждый think-тик — иначе дистанция боя дёргалась бы). Дефолт = нижняя граница (0.85).
 var _attack_reach_frac: float = 0.85
+
+## [ДОБАВЛЕНО, по прямому запросу — "если бот не в ATTACK, но способен стрелять, и находится в
+## поиске/подборе патронов/движется к засаде — если пушка засекла противника, нужно стрелять и
+## стараться держать прицел на цели"] "Лёгкая" боевая реакция для состояний, где бот занят своим
+## поручением (SEARCH/AMMO_*/MOD_*/DISGUISE_APPROACH — см. их пометку в _think()) — В ОТЛИЧИЕ от
+## обычного приоритета "видит цель → ATTACK" эта реакция НЕ бросает поручение (не трогает
+## state/_current_target/навигацию), только даёт башне стрелять по замеченному врагу, пока он
+## виден. Применяется в _physics_process() сразу после `match state:` (см. её комментарий) —
+## перехватывает башню у обычного wander на этот кадр, вызывая уже готовый `_aim_and_fire()`.
+var _snap_fire_target: Node = null
+
+## [ДОБАВЛЕНО, по прямому запросу — п.2, "если получили попадание и не видим стрелка, нужно
+## повернуть башню в нескольких направлениях в поисках его в слепой от корпуса зоне"] Активен между
+## `_start_hit_sweep()` (вызывается из `_on_damaged()`, когда `_can_see(killer) == false`) и
+## естественным исчерпанием списка углов в `_process_hit_sweep()`. Само обнаружение НЕ входит сюда
+## — прочёсывание только физически проводит башню через несколько точек, обычная проверка "видит
+## цель" (в `_think()` или в снапфайр-ветке выше) сама подхватит стрелка, когда башня пройдёт мимо
+## его реального пеленга.
+var _hit_sweep_active: bool = false
+var _hit_sweep_angles: Array[float] = []
+var _hit_sweep_index: int = 0
+var _hit_sweep_hold_timer: float = 0.0
 ## Решение "упреждать ли следующий выстрел" (см. @export lead_chance_min/max и
 ## _reroll_lead_decision()) — рерольнуто заранее (заход прицеливания / сразу после предыдущего
 ## выстрела), не в момент самого выстрела: иначе точка прицеливания дёргалась бы именно в момент
@@ -1463,6 +1494,21 @@ func _physics_process(delta: float) -> void:
 			_movement.ai_move_input = 0.0
 			_movement.ai_turn_input = 0.0
 
+	# [ДОБАВЛЕНО, по прямому запросу — п.1/п.2] "Лёгкая" реакция ПОВЕРХ обычного поведения текущего
+	# стейта — НЕ меняет state/движение, только перехватывает башню на этот кадр (перебивает то, что
+	# только что выставила ветка match state: выше — обычный wander/задачный взгляд). Не трогает
+	# состояния, которые уже полностью распоряжаются башней сами (ATTACK/ATTACK_OBJECTIVE/
+	# MORTAR_ATTACK/DISGUISE_PREP/DISGUISE/DEAD) — там переопределение сломало бы их собственное
+	# прицеливание/сторожевой угол. Снапфайр-цель важнее прочёсывания — раз враг реально виден,
+	# искать больше нечего (см. doc-comment у _snap_fire_target/_hit_sweep_active).
+	if state != State.ATTACK and state != State.ATTACK_OBJECTIVE and state != State.MORTAR_ATTACK \
+			and state != State.DISGUISE_PREP and state != State.DISGUISE and state != State.DEAD:
+		if _snap_fire_target != null and is_instance_valid(_snap_fire_target):
+			_aim_and_fire(_snap_fire_target)
+			_hit_sweep_active = false
+		elif _hit_sweep_active:
+			_process_hit_sweep(delta)
+
 	# Обновляем оверлеи только если их setup реально прошёл (debug-режим + per-instance show_*-флаг,
 	# см. _initialize()) — иначе _fov_debug_mesh/_path_debug_mesh/_brain_debug_label == null.
 	if MatchState.debug_enabled:
@@ -1539,10 +1585,17 @@ func _think() -> void:
 			_current_hide_zone = null
 			_is_s3_ambush = false
 			state = State.IDLE
+		# [ИЗМЕНЕНО, по прямому запросу — п.1, "движется к месту засады" — один из перечисленных
+		# случаев "мирного поручения"] Раньше "спалился" здесь означало полный _enter_attack() —
+		# бросить засаду и ввязаться в бой. Теперь, пока ещё едем (ФАЗА подготовки/сама маскировка
+		# ниже — другое дело, там оставлен старый полный вход, см. их комментарии), замеченный враг
+		# получает только лёгкий прицельный огонь (`_snap_fire_target`, см. её doc-comment) — бот
+		# продолжает ехать к точке засады, отстреливаясь по пути, а не бросает план на первом же
+		# замеченном танке.
 		if state == State.DISGUISE_APPROACH and enemy_reaction_enabled:
-			var seen_approach: Node = _scan_for_target()
-			if seen_approach != null:
-				_enter_attack(seen_approach)
+			_snap_fire_target = _scan_for_target()
+		else:
+			_snap_fire_target = null
 		return
 	elif state == State.DISGUISE_PREP:
 		# Тот же ALERT-guard, что у DISGUISE_APPROACH выше — раньше здесь проверялось только
@@ -1596,6 +1649,20 @@ func _think() -> void:
 			and _objective_low_health() and _any_enemy_alive():
 		_enter_attack_objective_priority()
 		return
+
+	# [ДОБАВЛЕНО, по прямому запросу — п.1] "Мирные" поручения — поиск (SEARCH), подбор боеприпасов/
+	# мортиры (AMMO_*/MOD_*, по аналогии — тот же класс "едет за конкретной вещью") — НЕ бросаем ради
+	# полного ATTACK, как обычный приоритет "видит цель" ниже: тот перебивает ЛЮБОЙ домашний стейт, а
+	# тут поручение важнее ("он куда-то направляется по своим делам ... но отстреливаться, если
+	# замечен враг, должен уметь"). Только запоминаем цель для лёгкого прицельного огня
+	# (`_snap_fire_target`, см. её doc-comment и применение в _physics_process() сразу после
+	# match state:) — сам wander/driving этих состояний не трогаем. Эти состояния самоуправляемые
+	# (не проходят через _ensure_home_state(), см. её exception-guard) — ранний return их не портит.
+	if state == State.SEARCH or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE \
+			or state == State.AMMO_WAIT or state == State.MOD_SEEK or state == State.MOD_RETRIEVE:
+		_snap_fire_target = _scan_for_target()
+		return
+	_snap_fire_target = null
 
 	var visible_target: Node = null
 	# ignore_disguise=true: цель, ВКЛЮЧИВШАЯ маскировку уже будучи под прицелом, из ATTACK не
@@ -2355,6 +2422,8 @@ func _enter_mortar_attack(tgt: Node) -> void:
 		_mortar_prep_timer = _mod.ai_prep_sec()
 	_mortar_target_node = tgt
 	state = State.MORTAR_ATTACK
+	_snap_fire_target = null  # полный бой — снапфайр/прочёсывание больше не при делах
+	_hit_sweep_active = false
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = tgt.global_position
 
@@ -2446,6 +2515,8 @@ func _process_mortar_attack(delta: float) -> void:
 func _on_respawned() -> void:
 	state = State.IDLE
 	_current_target = null
+	_snap_fire_target = null
+	_hit_sweep_active = false
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
@@ -2758,6 +2829,8 @@ func _enter_attack(target: Node) -> void:
 	var was_alert_with_new_target: bool = state == State.ALERT and _current_target != target
 	state = State.ATTACK
 	_current_target = target
+	_snap_fire_target = null  # полный бой — снапфайр/прочёсывание больше не при делах
+	_hit_sweep_active = false
 	if was_alert_with_new_target:
 		_notify_team_of_alert_target(target)
 	_just_reached_waypoint = false  # маскировка (сценарий 2): «момент вейпоинта» протух — бой важнее
@@ -2946,6 +3019,52 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	# мортиры / атаку objective и переходит в ATTACK — приоритет стрелку.
 	if state != State.ATTACK and _can_see(killer):
 		_enter_attack(killer)
+		return
+	# [ДОБАВЛЕНО, по прямому запросу — п.2, "если получили попадание и не видим стрелка, нужно
+	# повернуть башню в нескольких направлениях в поисках его в слепой от корпуса зоне"] Разовый
+	# доворот "камеры" на killer (см. _look_yaw выше) часто промахивается мимо реального пеленга —
+	# оценка направления приблизительная (по позиции killer в момент попадания, не настоящий
+	# радиопеленг), а сам стрелок мог сместиться/спрятаться за укрытие ещё до того, как башня туда
+	# довернётся. Вместо одной попытки — прочёсываем несколько точек вокруг этого направления (см.
+	# _start_hit_sweep()); state != ATTACK уже проверено условием выше (killer не виден — иначе
+	# ушли бы в _enter_attack() и return'ули строкой выше).
+	if state != State.ATTACK:
+		_start_hit_sweep(killer.global_position)
+
+## [ДОБАВЛЕНО, по прямому запросу — п.2] Попали, а кто стрелял — не видно (вне обоих конусов
+## обзора прямо сейчас). Заполняет hit_search_sweep_count мировых углов равномерно внутри
+## hit_search_spread_deg вокруг оценённого направления на источник попадания — не собственное
+## сканирование цели, просто физически проводит башню через более широкий сектор, чтобы обычная
+## проверка "видит цель" (в _think() или в снапфайр-ветке для мирных поручений, см.
+## _snap_fire_target) сама поймала стрелка, как только РЕАЛЬНЫЙ угол башни пройдёт мимо его
+## настоящего пеленга. Потребляется `_process_hit_sweep()`, вызывается сразу после `match state:`
+## в _physics_process() — не переопределяет турель состояний, которые уже полностью распоряжаются
+## ей сами (см. её doc-comment).
+func _start_hit_sweep(from_pos: Vector3) -> void:
+	var hit_yaw: float = _yaw_to_world_point(_body.global_position, from_pos)
+	var half: float = deg_to_rad(hit_search_spread_deg) * 0.5
+	var n: int = maxi(hit_search_sweep_count, 1)
+	_hit_sweep_angles.clear()
+	for i in range(n):
+		var t: float = 0.5 if n == 1 else float(i) / float(n - 1)
+		_hit_sweep_angles.append(wrapf(hit_yaw + lerpf(-half, half, t), -PI, PI))
+	_hit_sweep_index = 0
+	_hit_sweep_hold_timer = hit_search_hold_sec
+	_hit_sweep_active = true
+
+## Каждый физ.кадр, пока _hit_sweep_active (см. _start_hit_sweep()) — держит текущий угол
+## hit_search_hold_sec, затем переходит к следующему; список исчерпан → сброс, со следующего кадра
+## обычное поведение стейта (wander/задачный взгляд) снова распоряжается башней само.
+func _process_hit_sweep(delta: float) -> void:
+	if _hit_sweep_index >= _hit_sweep_angles.size():
+		_hit_sweep_active = false
+		return
+	_look_yaw = _hit_sweep_angles[_hit_sweep_index]
+	_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+	_hit_sweep_hold_timer -= delta
+	if _hit_sweep_hold_timer <= 0.0:
+		_hit_sweep_index += 1
+		_hit_sweep_hold_timer = hit_search_hold_sec
 
 ## [ДОБАВЛЕНО, по прямому запросу — "добавь ботам стейт DEAD, отражай в дебаг-логах, плюс время до
 ## респавна"] Единственное место, выставляющее State.DEAD — сразу на самом сигнале уничтожения, не
@@ -2958,6 +3077,8 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 func _on_destroyed(_killer: Node) -> void:
 	state = State.DEAD
 	_current_target = null
+	_snap_fire_target = null
+	_hit_sweep_active = false
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
