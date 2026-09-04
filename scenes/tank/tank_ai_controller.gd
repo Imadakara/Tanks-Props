@@ -1803,6 +1803,15 @@ func _enter_disguise() -> void:
 ##  - на бота прямо сейчас НЕ смотрит никто из врагов (боты — их _can_see; игрок — фрустум).
 ## Плюс неявное: бот в State.ATTACK_OBJECTIVE (значит физически у цели и видимой танк-цели нет —
 ## иначе _think увёл бы в DEFEND).
+## [ИСПРАВЛЕНО, по прямому запросу — "если бот имеет цель в прицеле и находится в бою либо
+## преследует цель, то этот приоритет выше чем когда пора маскироваться"] `State.ATTACK_OBJECTIVE`
+## самоуправляем (см. её ветку в _physics_process()) и проверяет это условие КАЖДЫЙ физ.кадр — не
+## раз в think_interval_sec, как обычный переход "вижу цель → DEFEND/CHASE" (_think()). Между двумя
+## think-тиками (до 0.25с у EASY) бот мог реально УЖЕ видеть противника, но ещё формально стоять в
+## ATTACK_OBJECTIVE — окно, где физика этого тика уходила в засаду мимо думающего "пора в бой"
+## think-тика. `_is_observed_by_enemy()` ниже проверяет ОБРАТНОЕ (видит ли ВРАГ нас) и тут не
+## помогает; сценарии 2/3 (защитник) от этой гонки не страдают структурно — обе вызываются
+## ИСКЛЮЧИТЕЛЬНО из _ensure_home_state(), а та сама не выполняется, пока _think() видит цель.
 func _should_disguise_s1() -> bool:
 	if not disguise_bot_enabled or not disguise_s1_enabled or not enemy_reaction_enabled:
 		return false
@@ -1818,6 +1827,8 @@ func _should_disguise_s1() -> bool:
 		return false
 	if _round_time_left() < disguise_s1_min_round_time_left_sec:
 		return false
+	if _scan_for_target() != null:
+		return false  # см. doc-comment выше — вижу врага прямо сейчас, бой важнее пряток
 	return not _is_observed_by_enemy()
 
 ## [ДОБАВЛЕНО, по прямому запросу — "не всегда фиксированное окно, а от MIN до MAX случайно"]

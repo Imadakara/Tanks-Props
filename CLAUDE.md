@@ -356,7 +356,13 @@ Two modes, keyed off `MatchState.match_mode` (see Autoloads above), each map a t
 mode (see "Map inventory"). **TARGET_OBJECTIVE** (`TargetObjectiveMap.tscn`): an `Objective` static
 body with a `HealthComponent` (`attackers_only = true`) sits on the map; **objective destroyed →
 round ends with an attack win; round timer expires with it intact → defense win**. Round timer for
-this mode is `GameConfig.round_timer_sec` = **180 s (3 min)**. The `ObjectiveAlertZone` (the ground
+this mode is `GameConfig.round_timer_sec` = **180 s (3 min)**. **Buzzer-beater rule**
+(`match_manager._settling_last_shots`): at timeout the defense win is *not* awarded immediately —
+first a settle phase waits until the `"projectiles"` group empties (every shot that was airborne
+at the buzzer has landed), so a lobbed mortar that then destroys the objective still gives attack
+the round via `_on_objective_destroyed`. `_SETTLE_MAX_SEC` (the stuck-projectile safety ceiling)
+**must stay above `Projectile.max_lifetime_sec`** or a slow arc gets cut off and its post-buzzer
+objective kill is silently rejected by the `_round_over` guard. The `ObjectiveAlertZone` (the ground
 circle the AI uses for `State.ALERT`) is a **child of the objective node** (local `y = -1` so the
 circle sits on the ground), freed together with the objective and simply absent on maps without one
 (`TeamArenaMap.tscn`); every reader of `_alert_zone` uses `is_instance_valid()`, not `== null`.
