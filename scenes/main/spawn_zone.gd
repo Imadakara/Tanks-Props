@@ -1,6 +1,21 @@
+@tool
 extends Node3D
 ## SpawnZone — круглая зона спавна команды, единый механизм на ЛЮБОЙ карте
 ## (`TargetObjectiveMap.tscn`/`TeamArenaMap.tscn`).
+##
+## [ДОБАВЛЕНО, по прямому запросу — "радиус должен автоматом пересчитываться при изменении
+## трансформа в редакторе, прежде всего скейла, а не расходиться с тем что видно"] `@tool` —
+## РОВНО ради этого: при перетаскивании Scale-гизмо/правке Transform в инспекторе Godot-редактора
+## узел сам конвертирует текущий множитель масштаба в @export radius и тут же сбрасывает
+## scale обратно к (1,1,1) — см. _sync_radius_from_scale(). Единственный источник истины по
+## размеру зоны — ПОЛЕ radius, никогда transform/scale узла: и рантайм-круг
+## (_draw_debug_circle(), ниже), и его зеркало в редакторе (`addons/zone_gizmos/
+## zone_gizmo_plugin.gd`), и реальная игровая логика (pick_spawn_position(), ALERT-детект
+## в tank_ai_controller.gd) — все читают именно radius. Раньше скейл узла визуально тянул
+## оба круга (они — дети узла/гизмо узла, наследуют его transform), но НЕ менял radius —
+## тянуть скейл в редакторе показывало неправду: видимый круг рос, а реальный игровой радиус
+## оставался прежним. Теперь после любой правки transform'а зона сама возвращается к scale=1,
+## растущий/уменьшающийся круг — это всегда живое значение radius, не обман.
 ##
 ## Команда кодируется ПРЕФИКСОМ ИМЕНИ узла, не отдельным @export полем — тот же паттерн, что уже
 ## используется в проекте для Waypoint/AttackWaypoint (tank_ai_controller.gd): "AttackSpawnZone" /
@@ -24,7 +39,22 @@ extends Node3D
 ## на картах без objective (`TeamArenaMap.tscn`, режим TEAM_ARENA) его нет вовсе. Все читатели
 ## ссылки используют is_instance_valid() — после разрушения цели ссылка висячая, != null.
 
-@export var radius: float = 6.0
+## Setter вместо голого @export — при правке значения ПРЯМО В ИНСПЕКТОРЕ (не через скейл-гизмо)
+## сразу дёргает update_gizmos(), чтобы кольцо `zone_gizmo_plugin.gd` перерисовалось немедленно
+## (раньше это было отдельным задокументированным ограничением — "смена radius в инспекторе не
+## перерисовывает кольцо сразу, перевыделить узел/перезагрузить сцену" — устранено тем же ходом,
+## что и синхронизация со скейлом ниже, один и тот же механизм update_gizmos()).
+@export var radius: float = 6.0:
+	set(value):
+		radius = value
+		if Engine.is_editor_hint():
+			update_gizmos()
+
+## Реентрантность: само присваивание `scale = Vector3.ONE` в _sync_radius_from_scale() тоже
+## порождает NOTIFICATION_TRANSFORM_CHANGED — без этого флага получился бы бесконечный, хоть и
+## быстро гасящийся (после первого сброса scale уже (1,1,1), выход по is_equal_approx), цикл.
+var _syncing_scale: bool = false
+
 ## Сколько раз пробовать случайную точку, прежде чем сдаться. Страховка от вырожденного случая
 ## "вся зона легла на яму/HazardZone/пустоту за краем карты" — не должно случаться при разумной
 ## расстановке зоны на реальной карте, но не полагаемся на это молча.
@@ -48,7 +78,19 @@ extends Node3D
 ## им отдельная роль не нужна — искать их нужно РОВНО ОДНУ, не "все зоны этого типа").
 @export var zone_role: String = ""
 
+## Включает NOTIFICATION_TRANSFORM_CHANGED (по умолчанию Node3D его НЕ шлёт — расход не бесплатный,
+## Godot требует явного opt-in) — но только в редакторе; в игре зона не двигается, слать эти
+## уведомления некому и незачем.
+func _enter_tree() -> void:
+	if Engine.is_editor_hint():
+		set_notify_transform(true)
+
 func _ready() -> void:
+	# В редакторе (не в игре) зона существует только чтобы её тут двигали/масштабировали и рисовали
+	# гизмо (zone_gizmo_plugin.gd, отдельный @tool-плагин) — ни группа, ни рантайм-круг, ни тем более
+	# MatchState (autoload, которого в редакторе просто нет в дереве) ей не нужны и не безопасны.
+	if Engine.is_editor_hint():
+		return
 	if not zone_role.is_empty():
 		add_to_group(zone_role)
 	# Круг на земле — отладочный визуал (зоны спавна + круги зон сброса ящиков): только в
@@ -56,6 +98,29 @@ func _ready() -> void:
 	# вложенным per-instance фильтром.
 	if show_debug_circle and MatchState.debug_enabled:
 		_draw_debug_circle()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_TRANSFORM_CHANGED and Engine.is_editor_hint():
+		_sync_radius_from_scale()
+
+## Конвертирует текущий scale узла в radius, затем сбрасывает scale к (1,1,1) — см. doc-comment
+## файла. Фактор — среднее |scale.x|/|scale.z| (круг лежит в плоскости XZ; непропорциональный
+## X≠Z скейл эллипс скалярным radius не выразит, среднее — разумный компромисс, не крах). scale.y
+## на форму круга не влияет вовсе, но тоже сбрасывается — единообразия ради (узел зоны никогда не
+## должен нести нетривиальный scale, что бы ни трогали).
+func _sync_radius_from_scale() -> void:
+	if _syncing_scale:
+		return
+	var s: Vector3 = scale
+	if is_equal_approx(s.x, 1.0) and is_equal_approx(s.y, 1.0) and is_equal_approx(s.z, 1.0):
+		return  # уже нормализован — обычная правка позиции/поворота, не про нас
+	var factor: float = (absf(s.x) + absf(s.z)) * 0.5
+	if factor < 0.0001:
+		return  # вырожденный/нулевой скейл — не позволяем радиусу схлопнуться в мусор
+	_syncing_scale = true
+	radius = maxf(radius * factor, 0.01)
+	scale = Vector3.ONE
+	_syncing_scale = false
 
 ## Случайная точка в круге (равномерно по площади — sqrt(randf()), не randf() напрямую, тот же
 ## приём, что уже используется в tank_ai_controller.gd/_pick_random_point_near()) С ПРОВЕРКОЙ

@@ -488,7 +488,16 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
   (`ObjectiveAlertZone`/`DropArea`) — yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
   zone_gizmo_plugin.gd`, a `@tool` `EditorNode3DGizmoPlugin`) draws identical circles in the Godot
   viewport while placing/tuning a zone, reading the same `radius`/name convention — keep both in
-  sync when touching either.
+  sync when touching either. `spawn_zone.gd` is itself `@tool`: dragging the node's Scale
+  gizmo/Transform in the inspector auto-converts the scale factor into `radius` and resets scale
+  back to `(1,1,1)` (`_sync_radius_from_scale()`, on `NOTIFICATION_TRANSFORM_CHANGED`,
+  editor-only) — `radius` (not node scale) is always the one source of truth for both circles
+  *and* the actual gameplay radius (`pick_spawn_position()`/AI alert-detect), so resizing by
+  dragging scale in the editor can no longer show a circle that doesn't match what the game
+  uses. `radius`'s own setter calls `update_gizmos()`, so editing it directly in the inspector
+  also redraws the gizmo ring immediately. A committed `.tscn` should never carry a non-identity
+  `scale` on one of these nodes — if you see one, it predates this mechanism; open in the editor
+  and nudge the transform once to normalize it.
 
 **RELEASE TODO (Steam / release prep):** the menu checkbox is a *development-stage* entry point —
 it's in the normal player-facing menu. Before release, change how debug mode is entered: drop it
