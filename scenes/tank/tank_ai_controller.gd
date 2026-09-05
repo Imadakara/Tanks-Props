@@ -239,7 +239,7 @@ extends Node
 ## нужна ТОЛЬКО когда придерживали руль ради точности прицела (см. §14 vault-доки/git log), а руль
 ## здесь ничем не придерживается вообще — корпус и башня наводятся независимо, ровно как у
 ## `ATTACK_OBJECTIVE`.
-enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE }
+enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE, OBJECTIVE_CHECK }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -711,6 +711,23 @@ const _DIFFICULTY_PRESETS := {
 ## конкретного difficulty-пресета, а правило самого механизма тревоги.
 @export var alert_timeout_sec: float = 10.0
 
+## [ДОБАВЛЕНО, по прямому запросу — "после PURSUE за потерянным мортирщиком включается ALERT, но
+## тут же проваливается в PATROL, т.к. глобальный ALERT не активен — сделай отдельный стейт для
+## проверки зоны objective после pursue"] `State.OBJECTIVE_CHECK` держится САМ ПО СЕБЕ после
+## форсированной погони (§8, `_pursue_is_priority_chase`), независимо от глобальных условий тревоги
+## (`alert_timeout_sec`/`enemy_in_alert_zone()` выше — те про ДРУГОЕ: "objective реально под
+## обстрелом прямо сейчас"). [ИЗМЕНЕНО, по прямому запросу — "бот должен сперва заехать в
+## objective-зону и только после отсчитывать кулдаун, не фиксированные 6с, а 2-3 случайных
+## перемещения ИЛИ 5-7с, что раньше — как при обычном ALERT танки ездят в зоне"] Кулдаун стартует
+## не с входа в стейт, а с момента, когда бот физически въехал в круг `_is_within_objective_circle()`
+## (см. State.OBJECTIVE_CHECK) — до этого просто едет туда. Выходит по ЛЮБОМУ из двух условий:
+## случайное число посещённых точек в зоне (`objective_check_visits_min/_max`) ИЛИ случайное время
+## (`objective_check_duration_min/_max_sec`). Не тюнинг сложности — общее правило механизма.
+@export var objective_check_duration_min_sec: float = 5.0
+@export var objective_check_duration_max_sec: float = 7.0
+@export var objective_check_visits_min: int = 2
+@export var objective_check_visits_max: int = 3
+
 ## [ДОБАВЛЕНО, по прямому запросу — "если HP objective 3 и менее и на карте есть живые
 ## противники, атакующий должен добивать objective обычным оружием — приоритетная цель"] Порог
 ## оставшегося HP objective (max_hits - current_hits), ниже/равно которому включается приоритет
@@ -989,12 +1006,27 @@ var _just_reached_waypoint: bool = false
 
 ## PURSUE — _pursue_target_pos выставляется РОВНО ОДИН РАЗ в _on_target_lost() (не меняется по
 ## ходу самой фазы, в отличие от _waypoint_target_pos/_hunt_target_pos, которые живут много кадров
-## и требуют флага "уже выбрана" — PURSUE-цель разовая, флаг не нужен). _last_known_target_pos —
-## обновляется КАЖДЫЙ кадр в _aim_and_fire(), пока цель видна (для ЛЮБОЙ роли — дёшево, читается
-## только когда роль KILLER решает уйти в PURSUE, но пишется всегда, не хранить отдельный путь для
-## KILLER-only).
+## и требуют флага "уже выбрана" — PURSUE-цель разовая, флаг не нужен). [ИСПРАВЛЕНО, живьём]
+## _last_known_target_pos обновляется только в `_think()`, и только там, где `_can_see()` в этот
+## тик подтвердился по-настоящему (для ЛЮБОЙ роли — дёшево, читается только когда роль KILLER или
+## форсированная погоня решает уйти в PURSUE, но пишется всегда, не хранить отдельный путь). НЕ
+## пишется во время grace-периода манёвра ATTACK — та ветка держит бой при кратковременной потере
+## видимости, но текущая позиция цели там уже не обязательно видима (см. State.ATTACK).
 var _pursue_target_pos: Vector3 = Vector3.ZERO
+## true — этот заход в PURSUE не обычная KILLER-охота, а форсированная погоня за потерянной
+## приоритетной целью (см. _on_target_lost()'s force_pursue). Меняет поведение по прибытии — см.
+## State.PURSUE в _physics_process().
+var _pursue_is_priority_chase: bool = false
 var _last_known_target_pos: Vector3 = Vector3.ZERO
+## [ДОБАВЛЕНО, по прямому запросу — отдельный стейт "проверить зону objective" после форсированной
+## погони] State.OBJECTIVE_CHECK — двухфазный: сначала едет к зоне (те же driving-поля, что ALERT,
+## см. _drive_to_alert_point()), НЕ взводя таймер/счётчик визитов; как только физически въехал в
+## круг (_is_within_objective_circle()) — _objective_check_arrived взводится один раз, тем же кадром
+## запускается случайный кулдаун (_objective_check_timer/_objective_check_visits_left, оба
+## randf/randi_range из @export-диапазонов выше). Выход по ЛЮБОМУ из двух — что раньше.
+var _objective_check_arrived: bool = false
+var _objective_check_timer: float = 0.0
+var _objective_check_visits_left: int = 0
 
 ## SEARCH — см. @export-блок и _decide_search_attempt(). _search_anchor_pos фиксируется один раз
 ## при входе (_enter_search()), не меняется по ходу всего захода. _search_attempt считает ЛЮБЫЕ
@@ -1420,11 +1452,76 @@ func _physics_process(delta: float) -> void:
 			_drive_to_alert_point(delta)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.OBJECTIVE_CHECK:
+			# [ДОБАВЛЕНО, по прямому запросу — "специальный стейт для проверки всё ли ок в зоне
+			# objective после pursue"] Тот же driving, что ALERT (см. её комментарий выше) — бот
+			# едет по случайным точкам зоны, обычное сканирование цели срабатывает поверх независимо
+			# от состояния. [ИЗМЕНЕНО, по прямому запросу — "должен сперва заехать в зону, потом
+			# отсчитывать кулдаун, не фиксированные 6с, а 2-3 перемещения ИЛИ 5-7с — что раньше, как
+			# при обычном ALERT"] Objective уничтожен/зона исчезла, пока ехали, — проверять больше
+			# нечего, выходим сразу (иначе _is_within_objective_circle() навсегда false и бот
+			# застрял бы здесь до конца матча). `had_alert_target` — снимок ДО _drive_to_alert_point()
+			# — переход true→false внутри неё значит "физически доехал до точки-цели", это и есть
+			# один "визит" (тот же приём, что и любой другой счётчик попыток в файле, см. SEARCH).
+			if not is_instance_valid(_alert_zone):
+				state = State.IDLE
+				_ensure_home_state()
+			else:
+				var had_alert_target: bool = _has_alert_target
+				_drive_to_alert_point(delta)
+				_wander(delta, true)
+				_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+				if not _objective_check_arrived:
+					# Фаза "ещё едем к зоне" — кулдаун не тикает и визиты не считаются, пока
+					# физически не оказались внутри круга хотя бы раз.
+					if _is_within_objective_circle():
+						_objective_check_arrived = true
+						_objective_check_timer = randf_range(objective_check_duration_min_sec, objective_check_duration_max_sec)
+						_objective_check_visits_left = randi_range(objective_check_visits_min, objective_check_visits_max)
+				else:
+					_objective_check_timer -= delta
+					if had_alert_target and not _has_alert_target:
+						_objective_check_visits_left -= 1
+					if _objective_check_timer <= 0.0 or _objective_check_visits_left <= 0:
+						# state ДО пересчёта должен уйти с OBJECTIVE_CHECK — exception-guard
+						# _ensure_home_state() (см. §2) иначе увидит его как "уже активный
+						# самоуправляемый" и вернётся без пересчёта, бот застрянет здесь навсегда
+						# (тот же приём, что ATTACK_OBJECTIVE делает через _objective_mission_complete
+						# выше).
+						state = State.IDLE
+						_ensure_home_state()
 		State.PURSUE:
 			# Доехал до последней видимой позиции цели (или не с чем сравнивать — reach_dist от
 			# самого начала) → SEARCH (локальный поиск рядом, см. заголовок файла), не сразу HUNT.
+			# [ДОБАВЛЕНО, по прямому запросу — приоритетная погоня за потерянной целью с мортирой]
+			# Форсированная (не-KILLER) погоня — см. _pursue_is_priority_chase — по прибытии НЕ
+			# уходит в SEARCH (это чужая охота, не своя постоянная роль). [ИЗМЕНЕНО, по прямому
+			# запросу — "SEARCH лишний и долго не выключается, пусть включает сам себе ALERT — танк
+			# с мортирой поедет как раз к objective"] Резюме прерванного поручения (AMMO_*/MOD_*)
+			# заменено на прямой переход в ALERT: не резюмируем — мортирщик почти наверняка держит
+			# курс на objective, а ALERT уже умеет ровно это ("прочёсывает круг вокруг objective в
+			# поисках атакующих", §10) — ближе к цели поиска, чем случайная старая errand.
+			# [ИЗМЕНЕНО, по прямому запросу — живым тестом поймано: ALERT держится ОДИН думающий
+			# тик и тут же проваливается обратно в PATROL, потому что ALERT завязан на ГЛОБАЛЬНЫЕ
+			# условия тревоги (`alert_timeout_sec`/`enemy_in_alert_zone()`, §10) — "objective реально
+			# под обстрелом ПРЯМО СЕЙЧАС", а не "я лично приехал сюда проверить, что тут чисто". Это
+			# другой повод той же природы, но не то же самое условие — обычный ALERT не подходит.
+			# `State.OBJECTIVE_CHECK` — свой самоуправляемый стейт (в exception-guard
+			# `_ensure_home_state()`, см. §2), использующий тот же driving-хелпер, что и ALERT
+			# (`_drive_to_alert_point()`, те же поля `_has_alert_target`/`_alert_target_pos` — только
+			# один из двух активен за раз, делить безопасно) — не зависит от глобальных условий,
+			# снимается своим случайным кулдауном ПОСЛЕ реального въезда в зону (см. её ветку в
+			# _physics_process() — двухфазная: сперва доехать, потом отсчёт визитов/времени).
+			# `_pre_combat_state` сбрасываем явно — прерванное поручение не резюмируется этим заходом.
 			if _drive_to_point(delta, _pursue_target_pos, waypoint_reach_dist):
-				_enter_search()
+				if _pursue_is_priority_chase:
+					_pursue_is_priority_chase = false
+					_pre_combat_state = -1
+					state = State.OBJECTIVE_CHECK
+					_objective_check_arrived = false  # сперва доехать до зоны, кулдаун взводится там
+					_has_alert_target = false  # свежий обход, не наследуем старую ALERT-точку
+				else:
+					_enter_search()
 			else:
 				_wander(delta, true)
 				_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
@@ -1814,6 +1911,34 @@ func _think() -> void:
 		_ensure_home_state()
 		return
 
+	# [ДОБАВЛЕНО, по прямому запросу — "если бот-защитник обнаруживает вражеский танк с мортирой,
+	# атака этого танка должна быть приоритетным стейтом, игнорируются все остальные стейты, пока
+	# танк может стрелять"] Только TARGET_OBJECTIVE, только защитник (`_objective_node` — тот же
+	# гейт, что и у прочих защитных приоритетов ниже). ПЕРЕД абсолютно ЛЮБЫМ другим поручением этого
+	# think-тика — раньше эта же проверка стояла НИЖЕ "мирных поручений" (см. их блок дальше), и
+	# SEARCH/AMMO_*/MOD_* до неё вообще не доходили (их ранний return случался раньше) — бот,
+	# занятый добычей патронов/мортиры, замеченного вражеского мортирщика в лучшем случае просто
+	# отстреливал сам-по-себе снапфайром, не бросая поручение, никогда не преследовал всерьёз.
+	# "Пока может стрелять" — боезапас=0 уже отсеян гейтом выше (жёсткий приоритет), сюда попадаем
+	# только имея хотя бы 1 патрон. Не заменяет обычный приоритет "видит цель" ниже — тот всё ещё
+	# нужен для ЛЮБОГО другого видимого врага (без мортиры) и для держания уже захваченной цели
+	# через grace-период при манёвре (см. его комментарий) — эта проверка только ПЕРЕХВАТЫВАЕТ
+	# раньше времени, если противник именно с мортирой.
+	if not _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node):
+		var priority_carrier: Node = _scan_for_mortar_carrier()
+		if priority_carrier != null:
+			# [ИСПРАВЛЕНО, живьём] Этот путь возвращается СРАЗУ, минуя обычный блок видимости ниже
+			# (1887+), где иначе обновляется _last_known_target_pos — без явной записи здесь поле
+			# годами держало бы значение из последнего ОБЫЧНОГО боя (или нулевой дефолт), и потеря
+			# приоритетной цели гнала бы PURSUE не туда. _scan_for_mortar_carrier() сам построен на
+			# _can_see(), так что видимость здесь уже подтверждена по-настоящему.
+			_last_known_target_pos = priority_carrier.global_position
+			if _has_mortar():
+				_enter_mortar_attack(priority_carrier)
+			else:
+				_enter_attack(priority_carrier)
+			return
+
 	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ с мортирой в слоте бьёт по objective и СТАРАЕТСЯ
 	# НЕ ВСТУПАТЬ В БОЙ: не сканируем танки-цели вообще, сразу навесная атака objective. Если
 	# objective нет/уничтожен — мортира атакующему бесполезна, падаем в обычный цикл (мортира
@@ -1856,6 +1981,7 @@ func _think() -> void:
 		if _can_see(_current_target, true):
 			visible_target = _current_target
 			_attack_target_lost_grace_timer = attack_target_lost_grace_sec  # снова видим — взводим заново
+			_last_known_target_pos = _current_target.global_position  # реально видим сейчас — обновляем
 		elif _attack_target_lost_grace_timer > 0.0:
 			# [ДОБАВЛЕНО, по прямому запросу — манёвр в бою] Момент реально не видим (оба конуса
 			# промахнулись), но НЕ бросаем бой сразу: манёвр (см. State.ATTACK) заставляет корпус
@@ -1871,23 +1997,12 @@ func _think() -> void:
 			visible_target = _current_target
 		else:
 			visible_target = _scan_for_target()
+			if visible_target != null:
+				_last_known_target_pos = visible_target.global_position  # свежая находка — реально видим
 	else:
 		visible_target = _scan_for_target()
-
-	# [ДОБАВЛЕНО, по прямому запросу — "если замечен атакующий бот с мортирой — он приоритетная
-	# цель для защитника, на другие активности не отвлекаться, кроме подбора боеприпасов по
-	# существующим правилам"] Только TARGET_OBJECTIVE (`_objective_node` — тот же гейт, что уже
-	# использует _enter_attack_objective_priority() выше, TEAM_ARENA сюда не попадает). Не заменяет
-	# visible_target выше, а ПЕРЕОПРЕДЕЛЯЕТ его — сработает даже если защитник уже держит ATTACK на
-	# ДРУГОМ, обычном танке (см. ветку `_current_target` строкой выше — та без этой проверки
-	# держала бы менее опасную цель, пока сама не потеряется) или уже собрался в засаду/патруль
-	# (_ensure_home_state() ниже до неё не дойдёт, раз visible_target не null). "Существующие правила
-	# подбора боеприпасов" не трогаем — AMMO_SEEK по пустому боезапасу гейтится РАНЬШЕ (см. проверку
-	# `_ammo.has_ammo()` в начале этой функции) и сюда не доходит вообще.
-	if not _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node):
-		var mortar_carrier: Node = _scan_for_mortar_carrier()
-		if mortar_carrier != null:
-			visible_target = mortar_carrier
+		if visible_target != null:
+			_last_known_target_pos = visible_target.global_position  # свежая находка — реально видим
 
 	if visible_target != null:
 		# [ДОБАВЛЕНО — система модификаций] ЗАЩИТНИК с мортирой применяет её по вражескому танку
@@ -1899,7 +2014,16 @@ func _think() -> void:
 		return
 
 	if state == State.ATTACK:
-		_on_target_lost()
+		# [ДОБАВЛЕНО, по прямому запросу — "если бот потерял приоритетную цель с мортирой, нужно
+		# сразу ехать на место, где она была в обзоре последний раз"] Определяем ДО _on_target_lost()
+		# (та обнуляет _current_target) — теряем именно приоритетную цель (защитник, цель несла
+		# мортиру), а не любую обычную. force_pursue пробрасывается в _on_target_lost(), которая
+		# обычно входит в State.PURSUE только для KILLER — здесь форсируем её и для ACHIEVER-защитника
+		# тоже, ровно на этот один случай.
+		var lost_priority_carrier: bool = not _body.is_attacker() and _current_target != null and _is_mortar_carrier(_current_target)
+		_on_target_lost(lost_priority_carrier)
+		if lost_priority_carrier:
+			return  # уже в PURSUE на последнюю видимую позицию — см. её ветку в _physics_process()
 		# [ДОБАВЛЕНО, по прямому запросу] Бой только что закончился — сначала пробуем вернуться к
 		# прерванному поручению (см. _try_resume_pre_combat_state()), и только если оно больше не
 		# актуально — падаем в обычную _ensure_home_state() ниже.
@@ -2135,8 +2259,15 @@ func _disguise_s2_prep_yaw(reached_wp: bool) -> float:
 		return _yaw_to_world_point(_body.global_position, _objective_node.global_position)
 	return NAN
 
-## Сторожевой угол сценария 1: на ближайшего живого врага в пределах vision_range*2, иначе —
-## «наружу от центра objective» (защита приходит снаружи круга).
+## Сторожевой угол сценариев 1 и 3 (общий для обоих — атакующий у зоны сброса, защитник в засаде
+## рядом с ней): на ближайшего живого врага в пределах vision_range*2, иначе — [ИЗМЕНЕНО, по прямому
+## запросу — "перед входом в маскировку в зоне маскировки/засады боты должны поворачиваться передом
+## в направлении центра ближайшей зоны сброса боеприпасов, чтобы кемперить атакующих у въезда, а
+## самим сразу быть развёрнутыми для выбора пути при сбросе мортиры"] на центр ближайшей зоны
+## сброса патронов (та самая, рядом с которой стоит эта MortarHideZone, см. её doc-comment) —
+## именно оттуда появляются атакующие и туда же обоим сценариям ехать первым делом после сброса
+## мортиры (MOD_SEEK). Раньше — «наружу от центра objective» (защита приходит снаружи круга);
+## оставлено как фолбэк на map без единой зоны сброса (defensive).
 func _s1_watch_yaw() -> float:
 	var nearest: Node3D = null
 	var nd: float = INF
@@ -2149,7 +2280,26 @@ func _s1_watch_yaw() -> float:
 			nearest = other
 	if nearest != null and nd <= vision_range * 2.0:
 		return _yaw_to_world_point(_turret.global_position, nearest.global_position)
+	var ammo_area: Node3D = _nearest_ammo_drop_zone_area()
+	if ammo_area != null:
+		return _yaw_to_world_point(_body.global_position, ammo_area.global_position)
 	return _yaw_to_world_point(_objective_node.global_position, _body.global_position)
+
+## Ближайшая к боту зона сброса патронов (площадка DropArea через _ammo_zone_area(), из уже
+## закешированного в _initialize() _ammo_zones — группа "ammo_drop_zones") — null на карте без
+## зон сброса вообще (вызывающий код тогда падает на свой собственный фолбэк).
+func _nearest_ammo_drop_zone_area() -> Node3D:
+	var best: Node3D = null
+	var best_d: float = INF
+	for zone in _ammo_zones:
+		var area: Node3D = _ammo_zone_area(zone)
+		if area == null:
+			continue
+		var d: float = _body.global_position.distance_to(area.global_position)
+		if d < best_d:
+			best_d = d
+			best = area
+	return best
 
 ## [ИЗМЕНЕНО, по прямому запросу — сперва "не видно маркеры в дебаг-режиме, нужна движимая/
 ## масштабируемая зона", затем "единый общий механизм подсасывания вейпоинтов каждого типа, а не
@@ -2295,7 +2445,8 @@ func _ensure_home_state() -> void:
 	if state == State.PURSUE or state == State.SEARCH or state == State.ATTACK_OBJECTIVE \
 			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT \
 			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK \
-			or state == State.DISGUISE or state == State.DISGUISE_PREP or state == State.DISGUISE_APPROACH:
+			or state == State.DISGUISE or state == State.DISGUISE_PREP or state == State.DISGUISE_APPROACH \
+			or state == State.OBJECTIVE_CHECK:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -2720,6 +2871,10 @@ func _on_respawned() -> void:
 	_hit_sweep_active = false
 	_attack_maneuvering = false
 	_attack_target_lost_grace_timer = 0.0
+	_pursue_is_priority_chase = false
+	_objective_check_timer = 0.0
+	_objective_check_arrived = false
+	_objective_check_visits_left = 0
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
@@ -2748,12 +2903,21 @@ func _on_respawned() -> void:
 	_is_s3_ambush = false
 	_pre_combat_state = -1  # новая жизнь без памяти о прерванном в прошлой жизни поручении
 
-func _on_target_lost() -> void:
-	if role == Role.KILLER:
+## `force_pursue` — [ДОБАВЛЕНО, по прямому запросу — приоритетная цель с мортирой] обычно в
+## State.PURSUE (доехать до последней видимой позиции) уходит только KILLER; force_pursue включает
+## её и для ACHIEVER — ровно на случай "защитник потерял из виду вражеского мортирщика", когда
+## нужно всё равно доехать до места последнего контакта, а не сразу вернуться к своим делам.
+## `_pursue_is_priority_chase` (см. её применение в State.PURSUE в _physics_process()) помечает
+## именно такую погоню — по прибытии, если цель не нашлась, стейт перестаёт быть приоритетным и
+## бот возвращается к своим делам НАПРЯМУЮ (`_ensure_home_state()`/резюме поручения), без обычной
+## для KILLER эскалации в SEARCH (локальный поиск вокруг точки) — это чужая, не своя охота.
+func _on_target_lost(force_pursue: bool = false) -> void:
+	if role == Role.KILLER or force_pursue:
 		_pursue_target_pos = _last_known_target_pos
 		state = State.PURSUE
 		_nav_agent.target_position = _pursue_target_pos
 		_has_hunt_target = false
+	_pursue_is_priority_chase = force_pursue
 	# [ИСПРАВЛЕНО, по прямому запросу — "бот защиты крутится на месте, не может начать движение по
 	# новому маршруту после уничтожения цели"] Тот же класс бага, что уже был описан выше для
 	# _has_hunt_target: ATTACK (см. фикс дедлока сближения) сама переписывает
@@ -2919,10 +3083,16 @@ func _scan_for_mortar_carrier() -> Node:
 			continue
 		if not _can_see(other):
 			continue
-		var enemy_mod: Node = other.get_node_or_null("ModificationController")
-		if enemy_mod != null and enemy_mod.ai_usable():
+		if _is_mortar_carrier(other):
 			return other
 	return null
+
+## Несёт ли этот (уже видимый — сама видимость не проверяется здесь) танк готовую к применению
+## модификацию (сейчас — только мортира) — вынесено отдельным хелпером из _scan_for_mortar_carrier(),
+## переиспользуется в _think() при потере приоритетной цели (см. её вызов там).
+func _is_mortar_carrier(t: Node) -> bool:
+	var enemy_mod: Node = t.get_node_or_null("ModificationController")
+	return enemy_mod != null and enemy_mod.ai_usable()
 
 ## Замаскирован ли этот вражеский танк под объект-препятствие прямо сейчас (см. disguise_controller.gd).
 ## GameConfig.ai_can_see_disguised_tanks=true — гейт отключён, всегда false.
@@ -3050,7 +3220,14 @@ func _enter_attack(target: Node) -> void:
 	if was_alert_with_new_target:
 		_notify_team_of_alert_target(target)
 	_just_reached_waypoint = false  # маскировка (сценарий 2): «момент вейпоинта» протух — бой важнее
-	_last_known_target_pos = target.global_position
+	# _last_known_target_pos НЕ трогаем здесь — [ИСПРАВЛЕНО] _enter_attack() вызывается и во время
+	# grace-периода (attack_target_lost_grace_sec), когда цель РЕАЛЬНО не видна (см. _think() —
+	# ветка grace искусственно держит visible_target = _current_target, чтобы не выходить из боя
+	# при короткой потере видимости), но target.global_position в этот момент уже её текущая (не
+	# обязательно видимая) позиция. Запись сюда затирала бы last-known текущей позицией даже когда
+	# цель реально пропала из вида (найдено живым тестом: телепорт цели → PURSUE поехал на
+	# телепорт-координаты вместо последней видимой точки). Актуальную видимую позицию пишет только
+	# _think(), и только когда _can_see() подтверждён по-настоящему — см. её тело.
 	# Манёвр (см. State.ATTACK) на близкой дистанции рулит НАПРЯМУЮ, без NavigationAgent3D — этот
 	# реассайн его не касается вообще, нужен только для фазы сближения (chase).
 	if _nav_agent.is_inside_tree():
@@ -3299,6 +3476,10 @@ func _on_destroyed(_killer: Node) -> void:
 	_hit_sweep_active = false
 	_attack_maneuvering = false
 	_attack_target_lost_grace_timer = 0.0
+	_pursue_is_priority_chase = false
+	_objective_check_timer = 0.0
+	_objective_check_arrived = false
+	_objective_check_visits_left = 0
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
@@ -3529,7 +3710,7 @@ func _current_drive_target() -> Vector3:
 			return _waypoint_target_pos
 		State.HUNT:
 			return _hunt_target_pos
-		State.ALERT:
+		State.ALERT, State.OBJECTIVE_CHECK:
 			return _alert_target_pos if _has_alert_target else _body.global_position
 		State.PURSUE:
 			return _pursue_target_pos
@@ -4028,6 +4209,8 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(1.0, 0.1, 0.05, 0.3)  # насыщенный красный — активно стреляет, как ATTACK
 		State.ALERT:
 			fill_color = Color(0.95, 0.85, 0.15, 0.24)  # жёлтый — тот же цвет, что у ObjectiveAlertZone
+		State.OBJECTIVE_CHECK:
+			fill_color = Color(0.9, 0.55, 0.1, 0.24)  # оранжевый — родственный ALERT, но свой (разовая проверка после pursue)
 		State.MORTAR_ATTACK:
 			fill_color = Color(1.0, 0.35, 0.75, 0.3)  # пурпурный — навесная атака мортирой
 		_:
@@ -4318,6 +4501,14 @@ func _update_brain_debug_label() -> void:
 				lines.append("ALERT — enemy in zone (timer expired)")
 			else:
 				lines.append("ALERT — expires in %.1fs unless objective hit again" % (alert_timeout_sec - arena_time))
+			if _has_alert_target:
+				lines.append("to point: %.1fm" % _body.global_position.distance_to(_alert_target_pos))
+			_append_nav_debug_lines(lines)
+		State.OBJECTIVE_CHECK:
+			if not _objective_check_arrived:
+				lines.append("driving to objective zone")
+			else:
+				lines.append("checking objective area — %.1fs / %d visits left" % [_objective_check_timer, _objective_check_visits_left])
 			if _has_alert_target:
 				lines.append("to point: %.1fm" % _body.global_position.distance_to(_alert_target_pos))
 			_append_nav_debug_lines(lines)

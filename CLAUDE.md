@@ -518,9 +518,10 @@ a `project` memory — do not silently ship the visible checkbox.
 Single AI system for the whole project — every map deploys the exact same node/script, not a
 per-map or per-context system. Lives as a dormant sibling on every `Tank.tscn` instance (including
 the player's, see "Tank as a composed entity" above) and lazily self-inits on first enabled
-`_physics_process()` tick. An 18-state priority engine
+`_physics_process()` tick. A 19-state priority engine
 (`IDLE/PATROL/ATTACK/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
-AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK/DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE`) with a
+AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK/DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE/
+OBJECTIVE_CHECK`) with a
 NavMesh-based driving stack (pure
 pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
 `ACHIEVER` self-degrades to `KILLER` behavior at init if the map has no objective), three difficulty
