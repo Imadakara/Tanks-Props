@@ -2285,7 +2285,8 @@ func _s1_watch_yaw() -> float:
 		return _yaw_to_world_point(_body.global_position, ammo_area.global_position)
 	return _yaw_to_world_point(_objective_node.global_position, _body.global_position)
 
-## Ближайшая к боту зона сброса патронов (площадка DropArea через _ammo_zone_area(), из уже
+## Ближайшая к боту зона сброса патронов (круг-зона через _ammo_zone_area() — корень AmmoDropZone,
+## из уже
 ## закешированного в _initialize() _ammo_zones — группа "ammo_drop_zones") — null на карте без
 ## зон сброса вообще (вызывающий код тогда падает на свой собственный фолбэк).
 func _nearest_ammo_drop_zone_area() -> Node3D:
@@ -3948,16 +3949,14 @@ func _pick_new_alert_target() -> void:
 	_alert_target_pos = _alert_zone.global_position + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
 	_has_alert_target = true
 
-## [ИСПРАВЛЕНО, живьём] Группа "ammo_drop_zones" (см. ammo_drop_zone.gd) регистрирует не корень
-## префаба AmmoDropZone, а именно узел DropOrigin (Marker3D) — скрипт ammo_drop_zone.gd висит НА
-## НЁМ, не на его родителе (см. её doc-comment: "DropOrigin — ЭТОТ узел"). DropArea — СИБЛИНГ
-## DropOrigin (оба дети AmmoDropZone), не его ребёнок: `zone.get_node("DropArea")` возвращало бы
-## null. Тот же паттерн, что сама зона использует на себя (`_area =
-## get_parent().get_node("DropArea")`) — но у НАС `zone` уже И ЕСТЬ DropOrigin, значит на один
-## уровень выше. Вынесено в отдельный геттер — используется и для центра/радиуса (AMMO_SEEK/WAIT),
-## и для фильтра "ящик в этой зоне" (_find_crate_in_zone()).
+## Группа "ammo_drop_zones" (см. ammo_drop_zone.gd) регистрирует не корень префаба AmmoDropZone, а
+## именно узел DropOrigin (Marker3D) — скрипт ammo_drop_zone.gd висит НА НЁМ, не на родителе (см.
+## её doc-comment: "DropOrigin — ЭТОТ узел"). Сама зона-круг (spawn_zone.gd: radius / центр /
+## pick_spawn_position) — это РОДИТЕЛЬ DropOrigin (корень AmmoDropZone; отдельного DropArea больше
+## нет). Вынесено в отдельный геттер — используется и для центра/радиуса (AMMO_SEEK/WAIT), и для
+## фильтра "ящик в этой зоне" (_find_crate_in_zone()).
 func _ammo_zone_area(zone: Node) -> Node3D:
-	return zone.get_parent().get_node_or_null("DropArea")
+	return zone.get_parent()
 
 ## Ближайший ящик (группа "ammo_crates", та же, что ammo_crate.gd заводит на себя) в пределах
 ## РАДИУСА зоны от её центра — не reach_dist, по прямому запросу "заезжает в пределы окружности".

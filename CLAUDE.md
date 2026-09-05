@@ -427,9 +427,11 @@ one ends. So the result screen still reads "Раунд 1/3" for round 1's outcom
 becomes "Раунд 2/3" after the reload. `reset_series()` also zeroes `current_round_num` and
 `player_team`.
 
-**Ammo drops** (all maps): a self-contained prefab `scenes/ammo_crate/AmmoDropZone.tscn` — a
-spawn-sized ground circle (`DropArea`, reuses `spawn_zone.gd`) plus a high dummy `Marker3D`
-(`DropOrigin`, script `ammo_crate/ammo_drop_zone.gd`) — sits in each map's two empty corners
+**Ammo drops** (all maps): a self-contained prefab `scenes/ammo_crate/AmmoDropZone.tscn` — the
+root node itself *is* the spawn-sized ground circle (`spawn_zone.gd` on the root, so `radius` is
+tuned right on the instance + editor gizmo, same as `MortarHideZone` — no separate `DropArea`
+child) plus a high dummy `Marker3D` child (`DropOrigin`, script `ammo_crate/ammo_drop_zone.gd`,
+its `_area = get_parent()`) — sits in each map's two empty corners
 (the diagonal opposite the spawn zones). Cadence is **map-level, not per-zone**: the drop zones
 join group `ammo_drop_zones`, the lowest-`get_path()` one is the leader and owns the sole
 `DropTimer`; every `drop_interval_sec` (30 s) the leader drops **one** `AmmoCrate` at a **random**
@@ -483,8 +485,8 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
   overlay meshes/labels are never touched when null).
 - `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is now
   this one script/one visual** (per-instance `@export radius`, movable/scalable in the editor, no
-  separate hardcoded radius anywhere): spawn zones, ammo/mod drop-zone circles (`AmmoDropZone/
-  DropArea` reuses this script), `ObjectiveAlertZone`, patrol waypoints (`Waypoint*`/
+  separate hardcoded radius anywhere): spawn zones, the ammo/mod drop-zone circle (the
+  `AmmoDropZone` prefab **root** runs this script), `ObjectiveAlertZone`, patrol waypoints (`Waypoint*`/
   `AttackWaypoint*`/`DefenseWaypoint*` on `TargetObjectiveMap.tscn`, each tagged with its
   `zone_role` — see "Патруль по вейпоинтам" in `tank_ai_controller.gd`'s header; a role no roster
   squad's `waypoint_routes` references is dead weight, delete it rather than leave it — see
@@ -493,7 +495,7 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
   below). Color by name prefix: `Attack*`/`Defense*` — red/blue; a bare `Waypoint*` (the defender's
   diamond, no team prefix in its name) is **also** blue, matching the old `_build_waypoint_debug()`
   convention of "not Attack → defense colour"; `MortarHide*` — purple; genuinely team-neutral zones
-  (`ObjectiveAlertZone`/`DropArea`) — yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
+  (`ObjectiveAlertZone`/`AmmoDropZone`) — yellow. An **editor-time mirror** of the same rings (`addons/zone_gizmos/
   zone_gizmo_plugin.gd`, a `@tool` `EditorNode3DGizmoPlugin`) draws identical circles in the Godot
   viewport while placing/tuning a zone, reading the same `radius`/name convention — keep both in
   sync when touching either. `spawn_zone.gd` is itself `@tool`: dragging the node's Scale

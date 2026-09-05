@@ -13,9 +13,11 @@ extends Marker3D
 ## на неё, поведение как раньше.
 ##
 ## Дерево префаба:
-##   AmmoDropZone (Node3D)          — origin = центр круга на земле; ставится в угол карты
-##   ├── DropArea (Node3D)          — spawn_zone.gd: жёлтый круг на земле + pick_spawn_position()
-##   │                                 (равномерная по площади точка + raycast на реальную землю)
+##   AmmoDropZone (Node3D + spawn_zone.gd)  — САМА зона-круг: @export radius, жёлтый круг на земле
+##   │                                        + pick_spawn_position() (равномерная точка + raycast),
+##   │                                        editor-гизмо (zone_gizmo_plugin.gd). Ставится в угол
+##   │                                        карты. Радиус правится прямо на инстансе, как у
+##   │                                        MortarHideZone — отдельного дочернего DropArea больше нет.
 ##   └── DropOrigin (Marker3D)      — ЭТОТ узел, локальный y ≈ 14 («высоко над центром»)
 ##
 ## Смысл механики: заставить расходовать боезапас тактичнее, добавить точку интереса на карте.
@@ -76,7 +78,9 @@ var mortar_drops_done: int = 0
 
 func _ready() -> void:
 	add_to_group(_GROUP)
-	_area = get_parent().get_node("DropArea")
+	# Зона-круг — это РОДИТЕЛЬ (сам AmmoDropZone, spawn_zone.gd), а не отдельный сиблинг DropArea:
+	# радиус/гизмо/pick_spawn_position() теперь на корне префаба (как у MortarHideZone).
+	_area = get_parent()
 	# Таймер НЕ заводим здесь: решение «я лидер / не лидер» требует, чтобы все зоны карты уже
 	# были в группе, а это гарантировано только к первому _process (после всех _ready).
 
@@ -189,7 +193,8 @@ func _try_drop() -> bool:
 	_pending.append(crate)
 	return true
 
-## Случайная точка круга (DropArea.pick_spawn_position — равномерная по площади + raycast на
+## Случайная точка круга (_area.pick_spawn_position, где _area == родительский AmmoDropZone на
+## spawn_zone.gd — равномерная по площади + raycast на
 ## реальную землю + fallback в центр зоны), отклонённая если она:
 ##   - ближе min_crate_separation (по XZ) к любому ещё не подобранному ящику зоны; ИЛИ
 ##   - перекрывает стену/дом/танк/чужой ящик (sphere query по _PROBE_MASK).

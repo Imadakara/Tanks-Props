@@ -16,7 +16,7 @@ extends EditorNode3DGizmoPlugin
 ##
 ## Детект:
 ##   - имя == "Objective"        → разрушаемая цель. Маленькое кольцо + вертикальная «мачта».
-##   - script == spawn_zone.gd   → AttackSpawnZone/DefenseSpawnZone/ObjectiveAlertZone/DropArea/
+##   - script == spawn_zone.gd   → AttackSpawnZone/DefenseSpawnZone/ObjectiveAlertZone/AmmoDropZone/
 ##                                 Waypoint*/AttackWaypoint*/DefenseWaypoint*/MortarHideZone*.
 ##                                 Радиус — из @export radius САМОГО узла.
 ##   - имя содержит "Waypoint"   → ФОЛБЭК для маркера без скрипта. Радиус 7.5 (см.
@@ -25,7 +25,7 @@ extends EditorNode3DGizmoPlugin
 ## Defense* — синий, голый Waypoint* (диамант защитника без командного префикса в имени) — ТОЖЕ
 ## синий (историческое соответствие: старая _build_waypoint_debug() трактовала любое имя без
 ## "Attack" как оборону), MortarHide* — фиолетовый (зона ожидания маскировки), иначе — жёлтый
-## (истинно нейтральные ObjectiveAlertZone/DropArea), Objective — пурпурный.
+## (истинно нейтральные ObjectiveAlertZone/AmmoDropZone), Objective — пурпурный.
 ##
 ## [ИСПРАВЛЕНО, по прямому запросу — "радиус должен пересчитываться под то что реально видно"]
 ## spawn_zone.gd теперь @tool: смена radius в инспекторе (через его property-setter) и любая
