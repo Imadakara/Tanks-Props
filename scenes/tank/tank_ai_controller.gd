@@ -333,6 +333,11 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var attack_maneuver_min_dist_frac: float = 0.6
 @export var attack_maneuver_interval_min_sec: float = 1.5
 @export var attack_maneuver_interval_max_sec: float = 3.0
+## [ДОБАВЛЕНО, живьём — контр-кручение башни, см. её применение в State.ATTACK] Доля
+## turret_turn_speed, которую разрешено тратить на компенсацию поворота КОРПУСА во время манёвра —
+## остальное остаётся башне на довод по НАСТОЯЩЕЙ цели. Руль корпуса при манёвре придерживается
+## соответствующе (max_lock_turn = turret_turn_speed*это/_movement.turn_speed).
+@export var attack_maneuver_turret_margin_frac: float = 0.5
 
 ## [ДОБАВЛЕНО, живьём] Уклонение (см. attack_maneuver_* выше) периодически разворачивает корпус
 ## ПО НАПРАВЛЕНИЮ ДВИЖЕНИЯ, а не на цель. [ИСПРАВЛЕНО, по прямому запросу — "скорость поворота
@@ -635,7 +640,6 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 @export var turret_turn_speed: float = 1.0  # рад/сек — применяется на Turret при _ready() (см. turret_controller.gd), также скорость блуждания обзора
-
 ## Множитель к TankMovement.move_speed (см. _ready()) — по прямому запросу боты EASY/MEDIUM должны
 ## быть медленнее танка игрока, 0.75 = на 25% медленнее. HARD возвращает полную скорость игрока
 ## обратно в своём пресете (см. _DIFFICULTY_PRESETS) — сложность в первую очередь про осведомлённость
@@ -1370,7 +1374,26 @@ func _physics_process(delta: float) -> void:
 					_attack_maneuver_pos = _current_target.global_position + Vector3(cos(_attack_maneuver_angle) * _attack_maneuver_dist, 0.0, sin(_attack_maneuver_angle) * _attack_maneuver_dist)
 					var world_yaw: float = _yaw_to_world_point(_body.global_position, _attack_maneuver_pos)
 					var yaw_diff: float = wrapf(world_yaw - _body.rotation.y, -PI, PI)
-					_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -1.0, 1.0)
+					# [ДОБАВЛЕНО, живьём — контр-кручение башни, попытка 2] `_aim_and_fire()` уже
+					# пересчитывает `_turret.target_yaw` КАЖДЫЙ кадр от ТЕКУЩЕГО `_body.rotation.y` —
+					# это и есть контр-кручение, реактивное, лаг всего 1 физ.кадр (~16мс), без
+					# предсказания вперёд. Первая попытка (линейная экстраполяция угла корпуса на
+					# turret_counter_rotation_lead_sec вперёд) на живом A/B (тот же RNG seed) дала
+					# 0→3 потери цели вместо улучшения — corpус в манёвре крутится ПРОПОРЦИОНАЛЬНЫМ
+					# регулятором (скорость падает по мере схождения к цели поворота), а линейная
+					# экстраполяция считает скорость постоянной — систематически ПЕРЕЛЁТ прогноза
+					# именно тогда, когда корпус вот-вот перестанет поворачивать. Настоящая причина
+					# потерь — не лаг реакции, а ЗАПАС скорости: башня всего на 10% быстрее корпуса
+					# (turret_turn_speed = _movement.turn_speed*1.1, см. _initialize()), и корпус на
+					# полном руле (ai_turn_input=±1) во время манёвра съедает этот запас ПОЛНОСТЬЮ —
+					# башне ничего не остаётся на довод по НАСТОЯЩЕЙ (тоже движущейся) цели. Придержка
+					# руля корпуса КОНКРЕТНО во время манёвра (не влияет на "погоню"/сближение, там
+					# корпус и так почти всегда смотрит на цель) освобождает часть запаса башне —
+					# орбита сама по себе крутится медленно (attack_maneuver_orbit_deg_per_sec) и не
+					# требует полного руля корпуса почти никогда, редкие пиковые манёвры (вход в
+					# манёвр, смена дистанции) станут чуть плавнее, но не потеряют цель.
+					var max_lock_turn: float = clampf(turret_turn_speed * attack_maneuver_turret_margin_frac / _movement.turn_speed, 0.1, 1.0)
+					_movement.ai_turn_input = clamp(-yaw_diff / 0.5, -max_lock_turn, max_lock_turn)
 					var brake_hit: bool = _check_emergency_brake()
 					_movement.ai_move_input = 1.0 if (not brake_hit and absf(yaw_diff) < deg_to_rad(75.0)) else 0.0
 				else:
