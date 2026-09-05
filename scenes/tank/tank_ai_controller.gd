@@ -292,6 +292,47 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## границе. Верхняя = 1.0 (ровно `fire_range`).
 @export var attack_reach_frac_min: float = 0.85
 
+## [ДОБАВЛЕНО, по прямому запросу — "бот-защитник при сближении с мортирщиком подъезжает к нему в
+## упор, пусть останавливается в случайном интервале около середины дистанции выстрела"] Мортира —
+## навесное оружие с короткой дальностью (`GameConfig.mortar_range`, дефолт 9м, вдвое меньше
+## обычного `vision_range`) — старые фиксированные доли `engage_range` (0.8-0.9, "почти на пределе
+## дальности") в АБСОЛЮТНЫХ метрах на этой короткой шкале означали сближение до 7-8м — вплотную по
+## меркам обычного боя, читалось как "в упор". Доля `engage_range` (`_mod.ai_engage_range()`), на
+## которой останавливается `MORTAR_ATTACK` — ТОЛЬКО у защитника (по вражескому танку). Рероллится
+## один раз на новый бой/смену цели в `_enter_mortar_attack()`, тот же приём, что
+## `attack_reach_frac_min` у обычного `ATTACK`. Атакующий (по objective) — свой отдельный диапазон,
+## см. `mortar_objective_reach_frac_min`/`_max` ниже: разные цели, разный резон дистанции.
+@export var mortar_reach_frac_min: float = 0.4
+@export var mortar_reach_frac_max: float = 0.6
+
+## [ДОБАВЛЕНО, по прямому запросу — "атакующий мортирщик всегда одинаково близко подъезжает к
+## objective для залпа, пусть будет разная случайная дистанция, дальше в полтора раза в среднем,
+## если позволяет дальность стрельбы"] Отдельный диапазон от `mortar_reach_frac_min`/`_max` выше —
+## тот теперь только для защитника. Средняя доля старого общего диапазона была 0.5 ((0.4+0.6)/2);
+## "в полтора раза дальше в среднем" → средняя 0.75, тот же относительный разброс (±0.1) вокруг неё
+## → [0.65, 0.85]. Верхняя граница 0.85 < 1.0 — укладывается в дальность мортиры с запасом, не
+## требует отдельной защиты от выхода за `engage_range`. Objective неподвижен, "подъехать ближе для
+## надёжности" не нужно — держаться дальше безопаснее (меньше риска ответного огня защитников) и
+## не мешает точности навесного выстрела (модификация сама считает дугу под любую дистанцию внутри
+## своей дальности, см. `ai_aim_solution()`).
+@export var mortar_objective_reach_frac_min: float = 0.65
+@export var mortar_objective_reach_frac_max: float = 0.85
+
+## [ДОБАВЛЕНО, по прямому запросу — "защитник с мортирой если теряет цель, впадает в ступор и
+## крутится на месте — пусть возвращается к обычному расписанию"] `MORTAR_ATTACK` раньше проверял
+## только `is_instance_valid(_mortar_target_node)` — танки НЕ `queue_free()`'ятся при смерти
+## (`free_on_destroy=false`, только прячутся `RespawnController`'ом), так что эта проверка
+## практически никогда не срабатывала: цель, скрывшаяся из виду ЖИВОЙ (спряталась/уехала) или
+## погибшая (спрятана респавном), одинаково оставалась "валидной" — бот бесконечно пытался
+## доехать/навестись на её последнюю читаемую позицию, зависая в `MORTAR_ATTACK` навсегда (в её
+## exception-guard `_ensure_home_state()`, самостоятельно этот стейт никогда не пересчитывается).
+## Держит цель ещё это время после потери видимости (см. `_process_mortar_attack()`), как
+## `attack_target_lost_grace_sec` у обычного `ATTACK` — отдельный экспорт, а не переиспользование
+## того же поля: разная природа (стационарная наводка мортиры против манёвренного боя), разный смысл
+## подстройки. Применяется только к ЗАЩИТНИКУ (цель — танк, может физически скрыться) — атакующего,
+## чья цель objective, никогда не касается (она не прячется и не умирает у него на глазах).
+@export var mortar_target_lost_grace_sec: float = 1.5
+
 ## [ДОБАВЛЕНО, по прямому запросу — "простое манёвренное перемещение во время боя, чтобы бот
 ## случайно перемещался в небольшом радиусе в пределах досягаемости стрельбы", уточнено трижды по
 ## прямому запросу: (1) "суть манёвра — снижать вероятность попадания по себе; корпус реально едет
@@ -818,6 +859,15 @@ var _pre_combat_state: int = -1
 ## Рероллится в `randf_range(attack_reach_frac_min, 1.0)` на смену цели в `_enter_attack()` (не на
 ## каждый think-тик — иначе дистанция боя дёргалась бы). Дефолт = нижняя граница (0.85).
 var _attack_reach_frac: float = 0.85
+## Доля `engage_range`, на которой MORTAR_ATTACK останавливается перед целью В ТЕКУЩЕМ бою.
+## Рероллится в `randf_range(mortar_reach_frac_min, mortar_reach_frac_max)` на смену цели/свежий
+## вход в `_enter_mortar_attack()` (тот же приём, что `_attack_reach_frac` у ATTACK). Дефолт =
+## середина дефолтного диапазона.
+var _mortar_reach_frac: float = 0.5
+## Обратный отсчёт "давно не видел цель" в MORTAR_ATTACK (только у защитника — см. doc-comment
+## mortar_target_lost_grace_sec). Взводится на вход/смену цели, тикает в _process_mortar_attack(),
+## по истечении — state = State.IDLE, обычный цикл роли подхватывает на следующем think-тике.
+var _mortar_target_lost_grace_timer: float = 0.0
 
 ## Манёвр во время боя (см. @export attack_maneuver_* выше) — случайная точка ОТ ЦЕЛИ, к которой
 ## сейчас едет ATTACK, и признак, что мы вообще в фазе манёвра. [ИСПРАВЛЕНО, живьём — гистерезис]
@@ -1603,6 +1653,7 @@ func _physics_process(delta: float) -> void:
 			# ЗАДОЛГО до того, как бот успел бы физически доехать до самого центра.
 			if _ammo_zone == null or not is_instance_valid(_ammo_zone):
 				state = State.IDLE  # defensive — не должно случаться, см. _pick_ammo_zone()
+				_clear_stale_nav_target_flags()
 			else:
 				var area: Node3D = _ammo_zone_area(_ammo_zone)
 				var radius: float = float(area.get("radius"))
@@ -1649,6 +1700,7 @@ func _physics_process(delta: float) -> void:
 					_has_ammo_wait_target = false
 				else:
 					state = State.IDLE  # подобрали — следующий think-тик выберет обычное ролевое поведение
+					_clear_stale_nav_target_flags()
 				_ammo_target_crate = null
 			else:
 				_drive_to_point(delta, _ammo_target_crate.global_position, waypoint_reach_dist)
@@ -1660,6 +1712,7 @@ func _physics_process(delta: float) -> void:
 			# "прогулочной" точки.
 			if _ammo_zone == null or not is_instance_valid(_ammo_zone):
 				state = State.IDLE
+				_clear_stale_nav_target_flags()
 			else:
 				var crate: Node = _find_crate_in_zone(_ammo_zone)
 				var mod_crate: Node = _find_mod_crate_in_zone(_ammo_zone) if crate == null and _mod.can_pick_up() else null
@@ -1695,8 +1748,10 @@ func _physics_process(delta: float) -> void:
 			if not _mod.can_pick_up():
 				_mark_mortar_taken()
 				state = State.IDLE
+				_clear_stale_nav_target_flags()
 			elif not is_instance_valid(_mod_zone):
 				state = State.IDLE
+				_clear_stale_nav_target_flags()
 			else:
 				var area: Node3D = _ammo_zone_area(_mod_zone)
 				var center: Vector3 = area.global_position
@@ -1724,6 +1779,7 @@ func _physics_process(delta: float) -> void:
 						if waypoints_one_way and _waypoint_index == 0 and not _waypoints.is_empty():
 							_waypoint_index = _waypoints.size() - 1
 						state = State.IDLE
+						_clear_stale_nav_target_flags()
 				else:
 					_drive_to_point(delta, center, waypoint_reach_dist)
 			_wander(delta, true)
@@ -1736,8 +1792,10 @@ func _physics_process(delta: float) -> void:
 			if not _mod.can_pick_up():
 				_mark_mortar_taken()
 				state = State.IDLE
+				_clear_stale_nav_target_flags()
 			elif not is_instance_valid(_mod_target_crate):
 				state = State.IDLE
+				_clear_stale_nav_target_flags()
 			else:
 				_drive_to_point(delta, _mod_target_crate.global_position, waypoint_reach_dist)
 			_wander(delta, true)
@@ -2801,6 +2859,15 @@ func _enter_mortar_attack(tgt: Node) -> void:
 	# тик (как _enter_attack): у защитника цель — движущийся танк, путь должен вести к живой позиции.
 	if state != State.MORTAR_ATTACK or _mortar_target_node != tgt:
 		_mortar_prep_timer = _mod.ai_prep_sec()
+		# Случайная дистанция сближения на этот бой — разный диапазон по роли (см. их @export-блоки:
+		# mortar_objective_reach_frac_min/_max у атакующего — дальше, objective не движется и не
+		# нужно рисковать; mortar_reach_frac_min/_max у защитника — ближе к середине, короче
+		# vision_range врага) — и свежий запас "не видел цель" для нового боя/смены цели.
+		if _body.is_attacker():
+			_mortar_reach_frac = randf_range(mortar_objective_reach_frac_min, mortar_objective_reach_frac_max)
+		else:
+			_mortar_reach_frac = randf_range(mortar_reach_frac_min, mortar_reach_frac_max)
+		_mortar_target_lost_grace_timer = mortar_target_lost_grace_sec
 	_mortar_target_node = tgt
 	state = State.MORTAR_ATTACK
 	_snap_fire_target = null  # полный бой — снапфайр/прочёсывание больше не при делах
@@ -2823,14 +2890,41 @@ func _process_mortar_attack(delta: float) -> void:
 	if not _has_mortar() or not is_instance_valid(_mortar_target_node):
 		state = State.IDLE
 		return
+	# [ДОБАВЛЕНО, по прямому запросу — "защитник с мортирой теряет цель — впадает в ступор, пусть
+	# возвращается к обычному расписанию"] Только защитник — цель-объектив атакующего никогда не
+	# прячется/умирает у него на глазах (см. mortar_target_lost_grace_sec doc-comment). `_can_see`
+	# сама возвращает false для уже мёртвой (спрятанной респавном) цели — единый механизм для обеих
+	# причин потери, не нужно различать "сбежал"/"убит" отдельной проверкой.
+	if not _body.is_attacker():
+		if _can_see(_mortar_target_node, true):
+			_mortar_target_lost_grace_timer = mortar_target_lost_grace_sec
+		else:
+			_mortar_target_lost_grace_timer -= delta
+			if _mortar_target_lost_grace_timer <= 0.0:
+				state = State.IDLE  # обычный цикл роли подхватит на следующем think-тике
+				return
 	var engage_range: float = _mod.ai_engage_range()
 	var prep_sec: float = _mod.ai_prep_sec()
 	# Целимся в ЦЕНТР коллайдера цели (+0.3 по Y — центр BoxShape корпуса, см. Tank.tscn), не в
 	# точку на земле: навесной снаряд идёт круто вниз, попасть надо в объём танка.
 	var tpos: Vector3 = _mortar_target_node.global_position + Vector3(0.0, 0.3, 0.0)
 	var dist: float = _body.global_position.distance_to(tpos)
-	if dist > engage_range * 0.9:
-		_drive_to_point(delta, tpos, engage_range * 0.8)
+	# [ИЗМЕНЕНО, по прямому запросу — см. mortar_reach_frac_* @export-блок] Случайная дистанция
+	# около середины engage_range вместо фиксированных 0.8-0.9 (на короткой шкале mortar_range это
+	# было "в упор"). Гистерезис-зазор (0.1*engage_range между порогом возврата к движению и самим
+	# stop_dist) — та же идея, что раньше давали разнесённые 0.9/0.8, не даёт дребезжать на границе.
+	var stop_dist: float = engage_range * _mortar_reach_frac
+	if dist > stop_dist + engage_range * 0.1:
+		# [ИСПРАВЛЕНО, живьём — "крутится на месте"] _nav_agent.target_position синхронизируется
+		# КАЖДЫМ физ.кадром здесь, не только на входе в _enter_mortar_attack() (та обновляется лишь
+		# когда _think() ЗАНОВО находит цель через приоритетный скан — если цель на миг пропала из
+		# видимости грейс-периодом выше, живая позиция tpos продолжает уезжать, а nav-цель без этой
+		# синхронизации замирала на последней известной точке; pure pursuit относительно устаревшего
+		# пути вырождался в лукахед на месте — то самое "крутится на месте", не только зависание в
+		# MORTAR_ATTACK навсегда).
+		if _nav_agent.is_inside_tree():
+			_nav_agent.target_position = tpos
+		_drive_to_point(delta, tpos, stop_dist)
 		_mortar_prep_timer = prep_sec  # вне радиуса — прицел не считается сведённым
 		_look_yaw = _yaw_to_world_point(_turret.global_position, tpos)
 		_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
@@ -2946,6 +3040,21 @@ func _on_respawned() -> void:
 ## именно такую погоню — по прибытии, если цель не нашлась, стейт перестаёт быть приоритетным и
 ## бот возвращается к своим делам НАПРЯМУЮ (`_ensure_home_state()`/резюме поручения), без обычной
 ## для KILLER эскалации в SEARCH (локальный поиск вокруг точки) — это чужая, не своя охота.
+## [ДОБАВЛЕНО, по прямому запросу — "атакующие боты бывает впадают в ступор в зонах сброса при
+## подборе мортиры, крутятся на месте"] Тот же класс бага, что уже был найден и исправлен у
+## _on_target_lost() (см. её doc-comment ниже) — MOD_SEEK/MOD_RETRIEVE сами владеют
+## _nav_agent.target_position, пока активны (`_pick_mod_zone()`/переход на конкретный ящик). Если
+## бот попал в MOD_SEEK, НЕ доехав до текущей точки PATROL/HUNT/ALERT (свежая мортира отвлекла
+## посреди пути — `_has_waypoint_target`/`_has_hunt_target`/`_has_alert_target` остались true), то
+## по возврату в IDLE→домашнее состояние на следующем think-тике эти флаги читаются как "точка уже
+## выбрана" — nav-цель НЕ переустанавливается и продолжает указывать на уже чужую точку (мод-зону/
+## ящик), _get_lookahead_point() вырождается в текущую позицию бота — бот крутится на месте.
+## Вызывается на каждом выходе MOD_SEEK/MOD_RETRIEVE в IDLE.
+func _clear_stale_nav_target_flags() -> void:
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
+
 func _on_target_lost(force_pursue: bool = false) -> void:
 	if role == Role.KILLER or force_pursue:
 		_pursue_target_pos = _last_known_target_pos
