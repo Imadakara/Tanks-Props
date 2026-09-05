@@ -2901,6 +2901,15 @@ func _notify_team_of_alert_target(target: Node) -> void:
 		var brain: Node = t.get_node_or_null("TankAIController")
 		if brain != null and brain.enabled and brain.state == State.ALERT:
 			brain._enter_attack(target)
+	# [ДОБАВЛЕНО — шаринг цели по ALERT на союзные стационарные турели, см. scenes/turret/turret_ai.gd]
+	# Турель не «подключается к бою», а доворачивает башню на цель и берёт её, как только реально
+	# увидит (LOS/дальность/маскировка проверяются у неё). Группа "turrets" — регистрирует turret.gd.
+	for tr in get_tree().get_nodes_in_group("turrets"):
+		if not is_instance_valid(tr) or int(tr.team) != int(_body.team):
+			continue
+		var tai: Node = tr.get_node_or_null("TurretAI")
+		if tai != null:
+			tai.on_alert_target_shared(target)
 
 func _scan_for_mortar_carrier() -> Node:
 	for other in get_tree().get_nodes_in_group("tanks"):

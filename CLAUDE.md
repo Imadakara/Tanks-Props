@@ -38,6 +38,14 @@ what the code does, including reasoning behind changes that were tried and rever
   to the 100-HP objective / one-shot vs the now-3-HP tanks. Bots pick up **and use** it (`MOD_SEEK`/`MOD_RETRIEVE`/
   `MORTAR_ATTACK`): attackers only within a 10 s window after each mortar drop (and coordinating so
   two bots don't chase the same zone), defenders only on a crate they can see.
+- `Tank_Prop_Hunt_Turrets.md` — **current-state reference for the stationary turret system**: the
+  universal `Turret.tscn` prefab (own scene, dropped into any map's `.tscn` per side via
+  `@export team`, no spawner), its 3 states (SEARCH 360° sweep / ATTACK / RELOAD), MEDIUM-base +
+  EASY/HARD difficulty presets, 10-HP destructible body, tank-cadence fire (3 s between shots) +
+  10-round mag + 5 s reload, near blind-zone (`min_fire_range` — drives out of `_can_see`, not just
+  fire), disguise blindness, the ally→turret
+  ALERT target-share, the "mortar on the objective kills the guard turret first" geometry, and the
+  debug FOV/fire-sector overlay.
 - `Tank_Prop_Hunt_Map_Creation_Guide.md` — **step-by-step how-to for designers** (assumes no
   project knowledge): make a new map + assign its `match_mode`, the required-node skeleton, add/tune
   the `Objective`, place `SpawnZone`s + author the roster JSON (role/difficulty/count/waypoints),
@@ -561,6 +569,47 @@ All three sub-resources in each prefab are `resource_local_to_scene = true` so p
 add/move/resize/delete the per-map NavMesh still needs a manual re-bake
 (`Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md`).
 
+### Stationary turret system — `scenes/turret/` (universal, any map / any mode)
+
+`Turret.tscn` is its own prefab — a "tank that can't move", dropped as an instance into any map's
+`.tscn` per side (`@export team` on the root), no spawner or autoload. Full reference:
+`Tank_Prop_Hunt_Turrets.md`. Key points that touch the rest of the codebase:
+
+- `turret.gd` (`@tool`, `extends StaticBody3D`, `collision_layer=1`) — shell only: team +
+  `apply_team_visuals()` (same reusable-`StandardMaterial3D` idiom as `tank.gd`), `body_size` cube
+  sync, `HealthComponent` wiring (`max_hits` **10**, `free_on_destroy=true` — the node vanishes on
+  death, **no respawn**), a debug `Label3D` "HP N/M" (gated by `MatchState.debug_enabled`),
+  `add_to_group("turrets")`, and a `call_deferred` hook onto `MatchManager.round_ended` →
+  disable `TurretAI` for the results screen (it's **not** in `"tanks"`, so
+  `map_scene._on_round_ended_teardown` never `force_destroy`s it).
+- `turret_ai.gd` (`extends Node`, no `class_name`) — 3-state brain (SEARCH 360° turret sweep /
+  ATTACK / RELOAD), lazy `_initialize()` on first enabled `_physics_process` tick like
+  `TankAIController`. Reuses `turret_controller.gd` on `TurretPivot` and `barrel_controller.gd` on
+  `Barrel` unchanged (both `is_player_controlled=false`, external `target_yaw`/`target_pitch`; their
+  `CameraRig`/`TankStateMachine` lookups are null-safe). Fires plain `Projectile` (`damage` 1)
+  directly, `shooter = turret root`. MEDIUM `@export`s + EASY/HARD `_DIFFICULTY_PRESETS` (same
+  pattern as the bot). Fire cadence `shot_interval_sec` = **3 s** (= `GameConfig.reload_duration_sec`,
+  "shoots like a tank"), 10-round `mag_size`, 5 s `reload_sec`. `min_fire_range` (3 m, **XZ**
+  distance) near **blind**-zone — a target inside it drops out of `_can_see()` entirely (acquire
+  *and* hold: drive right up to the turret's base and it loses you, back to SEARCH), not just a
+  fire gate. Narrow `detect_cone_deg` (18°, like a tank's `secondary_cone_deg`) for
+  acquisition, wide `track_cone_deg` (200°) for holding. `_can_see()` respects the disguise gate
+  (`TankStateMachine.DISGUISED` + `GameConfig.ai_can_see_disguised_tanks`); the turret itself can't
+  disguise / can't pick up crates or mods (no entry points; wrong collision layer).
+- **ALERT target-share**: `TankAIController._notify_team_of_alert_target()` — after its existing
+  loop over allied tanks in `State.ALERT` — also loops `get_nodes_in_group("turrets")` of the same
+  team and calls `turret_ai.on_alert_target_shared(target)`. The turret slews its barrel to that
+  target and enters ATTACK once it has real LOS/range (recon share, not vision teleport).
+- **"Mortar on the objective kills the guard turret first"** is geometry, not redirect code: the
+  test turret sits physically on the objective's top face (`ObjectiveTurret`, instance transform
+  `(0,2,0)` under `NavigationRegion3D` in `TargetObjectiveMap.tscn`), so a plunging mortar arc
+  aimed at the objective enters the turret's collider first and is consumed; a flat cannon shot
+  passes under the turret and still reaches the objective's side.
+- Debug FOV/fire-sector overlay (`show_fov_debug`, gated by `MatchState.debug_enabled`) — an
+  `ImmediateMesh` child of the turret root, ground-plane fan rotated by the live turret yaw:
+  detection-cone fill (colour by state), `fire_range` arc, `min_fire_range` inner arc, barrel line.
+  Same spirit as `TankAIController`'s FOV debug.
+
 ### Map inventory
 
 `run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, two buttons, each
@@ -571,7 +620,9 @@ to skip the menu:
 - `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
   centre `(0,1,0)` (no central wall), the `Waypoint1..4` defender diamond around it, one defense
   bot (`ACHIEVER`, patrols/defends around it) and one attack bot (`ACHIEVER`, one-way route to the
-  objective), both `TankAIController`. Balance knobs stay single-sourced: mortar damage is
+  objective), both `TankAIController`, plus an `ObjectiveTurret` (`Turret.tscn` instance, `team=1`)
+  sitting on top of the objective as a complication — see "Stationary turret system" above and
+  `Tank_Prop_Hunt_Turrets.md`. Balance knobs stay single-sourced: mortar damage is
   `GameConfig.mortar_objective_damage`, the alert-circle radius is `ObjectiveAlertZone.radius` in
   the `.tscn` — docs cite them by name, values live only in the two param tables
   (`Tank_Prop_Hunt_Modifications.md` §8, `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.4).
