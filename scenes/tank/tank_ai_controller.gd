@@ -1359,17 +1359,28 @@ func _physics_process(delta: float) -> void:
 				# stop_dist — колебание цели ВНУТРИ коридора манёвр не прерывает.
 				var stop_dist: float = fire_range * _attack_reach_frac
 				var dist_now: float = _body.global_position.distance_to(_current_target.global_position)
-				if _attack_maneuvering and dist_now > stop_dist + attack_maneuver_radius:
+				# [ДОБАВЛЕНО, по прямому запросу — "против мортирщиков манёвр не нужен, пусть
+				# развернётся и начнёт сближение, как было до манёвра, по принципу MORTAR_ATTACK"]
+				# Мортирщика нужно догнать и добить, а не кружить вокруг него на боевой дистанции —
+				# манёвр форсированно выключен, ниже всегда простое сближение `_drive_to_point()`
+				# (тот же паттерн, что и у самого MORTAR_ATTACK/ATTACK_OBJECTIVE: едет прямо, встаёт
+				# на stop_dist). Проверяется КАЖДЫЙ кадр (не только на входе в манёвр) — если бот
+				# уже маневрировал вокруг цели, которая ОКАЗАЛАСЬ мортирщиком (переключение цели
+				# через приоритетный путь), манёвр снимается немедленно, тем же кадром.
+				if _is_mortar_carrier(_current_target):
 					_attack_maneuvering = false
-				if not _attack_maneuvering and dist_now <= stop_dist:
-					_attack_maneuvering = true
-					# Свежий заход — точка манёвра стартует с ТЕКУЩЕГО пеленга бота относительно
-					# цели (см. doc-comment у _attack_maneuver_angle), без рывка на входе.
-					var from_target: Vector3 = _body.global_position - _current_target.global_position
-					from_target.y = 0.0
-					_attack_maneuver_angle = atan2(from_target.z, from_target.x) if from_target.length() > 0.01 else 0.0
-					_attack_maneuver_dist = stop_dist
-					_attack_maneuver_timer = 0.0  # форсируем пересчёт дистанции на первом же кадре
+				else:
+					if _attack_maneuvering and dist_now > stop_dist + attack_maneuver_radius:
+						_attack_maneuvering = false
+					if not _attack_maneuvering and dist_now <= stop_dist:
+						_attack_maneuvering = true
+						# Свежий заход — точка манёвра стартует с ТЕКУЩЕГО пеленга бота относительно
+						# цели (см. doc-comment у _attack_maneuver_angle), без рывка на входе.
+						var from_target: Vector3 = _body.global_position - _current_target.global_position
+						from_target.y = 0.0
+						_attack_maneuver_angle = atan2(from_target.z, from_target.x) if from_target.length() > 0.01 else 0.0
+						_attack_maneuver_dist = stop_dist
+						_attack_maneuver_timer = 0.0  # форсируем пересчёт дистанции на первом же кадре
 				if _attack_maneuvering:
 					# [ПЕРЕДЕЛАНО В ТРЕТИЙ РАЗ, живьём — "боты крутятся на месте", "слишком близко
 					# сходятся", "должны объезжать друг друга и заходить в тыл в ATTACK"] Прошлая
@@ -1848,11 +1859,29 @@ func _think() -> void:
 		# «Спалился, пока прятался» — заметил врага обычным сканом → в бой (доворот башни/движение
 		# в ATTACK сам уронит маскировку). Уважает тумблер enemy_reaction_enabled.
 		if state == State.DISGUISE and enemy_reaction_enabled:
+			# [ДОБАВЛЕНО, по прямому запросу — "мортирщика встречает бот-защитник в стейте засады —
+			# приоритетная атака не срабатывает"] Проверяем ДО обычного скана — эта ветка иначе
+			# завершается собственным return выше по функции, основной приоритетный блок никогда не
+			# достигается.
+			if _try_enter_priority_mortar_attack():
+				return
 			var seen: Node = _scan_for_target()
 			if seen != null:
 				_enter_attack(seen)
 		return
 	elif state == State.DISGUISE_APPROACH:
+		# [ИСПРАВЛЕНО, живьём — "поймал мортирщика в прицел, но не сагрился"] Приоритетная проверка
+		# мортирщика ДОЛЖНА идти ПЕРВОЙ, до ALERT-guard ниже: тот безусловно переписывает `state =
+		# State.IDLE` в ЭТОМ ЖЕ тике, и последующая проверка `state == State.DISGUISE_APPROACH`
+		# (которая раньше стояла тут ПЕРВОЙ) тут же перестаёт совпадать — приоритетный вызов молча
+		# пропускался целиком на тик, где `_alert_is_active()` истинен (обычная и вполне частая
+		# ситуация — objective под обстрелом кем-то ещё). Спасало только то, что на СЛЕДУЮЩЕМ тике
+		# `state` уже не DISGUISE_APPROACH и код проваливался в главный приоритетный блок ниже по
+		# функции — но за этот один пропущенный тик цель успевала уйти из виду. Проверяем мортирщика
+		# раньше вообще любого другого решения этой ветки — приоритет должен игнорировать всё
+		# остальное, в т.ч. и переключение в ALERT.
+		if enemy_reaction_enabled and _try_enter_priority_mortar_attack():
+			return
 		# [ДОБАВЛЕНО, по прямому запросу — "если включается общий ALERT, для защитников это выше
 		# приоритета похода в засаду, а то сейчас при возникновении тревоги бот доезжает до места
 		# засады, включает маскировку, и только после реагирует"] Только сценарий 3 (защитник) —
@@ -1872,13 +1901,17 @@ func _think() -> void:
 		# ниже — другое дело, там оставлен старый полный вход, см. их комментарии), замеченный враг
 		# получает только лёгкий прицельный огонь (`_snap_fire_target`, см. её doc-comment) — бот
 		# продолжает ехать к точке засады, отстреливаясь по пути, а не бросает план на первом же
-		# замеченном танке.
+		# замеченном танке. Мортирщик уже обработан выше — сюда попадают только обычные цели.
 		if state == State.DISGUISE_APPROACH and enemy_reaction_enabled:
 			_snap_fire_target = _scan_for_target()
 		else:
 			_snap_fire_target = null
 		return
 	elif state == State.DISGUISE_PREP:
+		# [ИСПРАВЛЕНО, живьём — тот же порядок бага, что и в DISGUISE_APPROACH выше] Приоритетная
+		# проверка мортирщика — ПЕРЕД ALERT-guard, по той же причине.
+		if enemy_reaction_enabled and _try_enter_priority_mortar_attack():
+			return
 		# Тот же ALERT-guard, что у DISGUISE_APPROACH выше — раньше здесь проверялось только
 		# "спалился" (фаза доворота башни, сам доворот — в _physics_process).
 		if not _body.is_attacker() and _alert_is_active():
@@ -1923,21 +1956,12 @@ func _think() -> void:
 	# только имея хотя бы 1 патрон. Не заменяет обычный приоритет "видит цель" ниже — тот всё ещё
 	# нужен для ЛЮБОГО другого видимого врага (без мортиры) и для держания уже захваченной цели
 	# через grace-период при манёвре (см. его комментарий) — эта проверка только ПЕРЕХВАТЫВАЕТ
-	# раньше времени, если противник именно с мортирой.
-	if not _body.is_attacker() and _objective_node != null and is_instance_valid(_objective_node):
-		var priority_carrier: Node = _scan_for_mortar_carrier()
-		if priority_carrier != null:
-			# [ИСПРАВЛЕНО, живьём] Этот путь возвращается СРАЗУ, минуя обычный блок видимости ниже
-			# (1887+), где иначе обновляется _last_known_target_pos — без явной записи здесь поле
-			# годами держало бы значение из последнего ОБЫЧНОГО боя (или нулевой дефолт), и потеря
-			# приоритетной цели гнала бы PURSUE не туда. _scan_for_mortar_carrier() сам построен на
-			# _can_see(), так что видимость здесь уже подтверждена по-настоящему.
-			_last_known_target_pos = priority_carrier.global_position
-			if _has_mortar():
-				_enter_mortar_attack(priority_carrier)
-			else:
-				_enter_attack(priority_carrier)
-			return
+	# раньше времени, если противник именно с мортирой. Вынесено в отдельную функцию
+	# (`_try_enter_priority_mortar_attack()`) — по прямому запросу этот же приоритет должен
+	# срабатывать и из веток маскировки (DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE), которые
+	# завершаются собственным `return` ЗАДОЛГО до этой точки — см. их вызовы этой же функции.
+	if _try_enter_priority_mortar_attack():
+		return
 
 	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ с мортирой в слоте бьёт по objective и СТАРАЕТСЯ
 	# НЕ ВСТУПАТЬ В БОЙ: не сканируем танки-цели вообще, сразу навесная атака objective. Если
@@ -2019,8 +2043,12 @@ func _think() -> void:
 		# (та обнуляет _current_target) — теряем именно приоритетную цель (защитник, цель несла
 		# мортиру), а не любую обычную. force_pursue пробрасывается в _on_target_lost(), которая
 		# обычно входит в State.PURSUE только для KILLER — здесь форсируем её и для ACHIEVER-защитника
-		# тоже, ровно на этот один случай.
-		var lost_priority_carrier: bool = not _body.is_attacker() and _current_target != null and _is_mortar_carrier(_current_target)
+		# тоже, ровно на этот один случай. [ИСПРАВЛЕНО, по прямому запросу — "убил мортирщика —
+		# воспринимается как потеря цели, а не обычное уничтожение"] Форсированная погоня к последней
+		# позиции имеет смысл только когда цель РЕАЛЬНО скрылась из виду живой — уничтоженную цель
+		# гнать некуда и незачем, это победа, не потеря (см. _is_target_alive()).
+		var lost_priority_carrier: bool = not _body.is_attacker() and _current_target != null \
+				and _is_target_alive(_current_target) and _is_mortar_carrier(_current_target)
 		_on_target_lost(lost_priority_carrier)
 		if lost_priority_carrier:
 			return  # уже в PURSUE на последнюю видимую позицию — см. её ветку в _physics_process()
@@ -2777,6 +2805,12 @@ func _enter_mortar_attack(tgt: Node) -> void:
 	state = State.MORTAR_ATTACK
 	_snap_fire_target = null  # полный бой — снапфайр/прочёсывание больше не при делах
 	_hit_sweep_active = false
+	# [ДОБАВЛЕНО, по прямому запросу — приоритетная атака мортирщика из веток маскировки] Симметрично
+	# _enter_attack() — «спалился» из APPROACH/PREP/DISGUISE (теперь и через
+	# _try_enter_priority_mortar_attack(), когда своя мортира уже в слоте) — hide-зона больше не
+	# занята нами. Безусловно и безопасно — no-op, если не прятались.
+	_current_hide_zone = null
+	_is_s3_ambush = false
 	if _nav_agent.is_inside_tree():
 		_nav_agent.target_position = tgt.global_position
 
@@ -3042,6 +3076,16 @@ func _remaining_hits(t: Node) -> int:
 		return 9999
 	return int(health.max_hits) - int(health.current_hits)
 
+## [ДОБАВЛЕНО, по прямому запросу — "убил мортирщика — воспринимается как потеря цели, а не
+## обычное уничтожение"] Жив ли ЧУЖОЙ танк прямо сейчас — RespawnController._on_destroyed() ставит
+## HealthComponent.is_alive=false СРАЗУ на смерть, но НЕ clear_slot()'ит модификацию (это делает
+## только _on_respawn_timeout(), через несколько секунд респавна) — без этой проверки убитый
+## мортирщик ещё какое-то время после смерти продолжал бы читаться _is_mortar_carrier() как живая
+## приоритетная цель. Нет HealthComponent — defensive, считаем живым.
+func _is_target_alive(t: Node) -> bool:
+	var health: Node = t.get_node_or_null("HealthComponent")
+	return health == null or bool(health.is_alive)
+
 ## [ДОБАВЛЕНО, по прямому запросу — см. её вызов в _think()] Ищет СРЕДИ ВСЕХ видимых вражеских
 ## танков того, кто прямо сейчас несёт готовую к применению модификацию (в игре сейчас только
 ## мортира — то же самое `ai_usable()`, что и у _has_mortar() для СВОЕГО слота, здесь читается на
@@ -3087,6 +3131,34 @@ func _scan_for_mortar_carrier() -> Node:
 		if _is_mortar_carrier(other):
 			return other
 	return null
+
+## [ДОБАВЛЕНО, по прямому запросу — "мортирщика встречает бот-защитник в стейте следования в
+## засаду — приоритетная атака не срабатывает, а надо чтобы бот переключался"] Общая точка входа
+## приоритетной атаки мортирщика — вызывается и из основного раннего блока `_think()`, и из всех
+## трёх веток маскировки (DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE), которые иначе завершаются
+## СВОИМ ранним `return` до того, как код доходит до основного блока — защитник, идущий/готовящийся/
+## уже спрятавшийся в засаде, никогда не сканировал на мортирщика вообще, максимум видел его как
+## обычную цель (снапфайр на APPROACH, обычный `_enter_attack()` на PREP/DISGUISE — без форсированного
+## PURSUE на потере и без `_enter_mortar_attack()`, если своя мортира есть). Возвращает `true`, если
+## приоритетная цель найдена и вход в бой произошёл — вызывающий должен `return`'уть немедленно.
+## `_enter_attack()`/`_enter_mortar_attack()` сами безопасно снимают claim на hide-зону изнутри
+## (см. их doc-comment) — вызывающему из маскировки ничего дополнительно чистить не нужно.
+func _try_enter_priority_mortar_attack() -> bool:
+	if _body.is_attacker() or _objective_node == null or not is_instance_valid(_objective_node):
+		return false
+	var priority_carrier: Node = _scan_for_mortar_carrier()
+	if priority_carrier == null:
+		return false
+	# [ИСПРАВЛЕНО, живьём] Пишем ДО входа в бой, минуя обычный блок видимости в _think(), где иначе
+	# обновляется _last_known_target_pos — без явной записи здесь поле годами держало бы значение
+	# из последнего ОБЫЧНОГО боя (или нулевой дефолт), и потеря приоритетной цели гнала бы PURSUE не
+	# туда. _scan_for_mortar_carrier() сам построен на _can_see(), видимость уже подтверждена.
+	_last_known_target_pos = priority_carrier.global_position
+	if _has_mortar():
+		_enter_mortar_attack(priority_carrier)
+	else:
+		_enter_attack(priority_carrier)
+	return true
 
 ## Несёт ли этот (уже видимый — сама видимость не проверяется здесь) танк готовую к применению
 ## модификацию (сейчас — только мортира) — вынесено отдельным хелпером из _scan_for_mortar_carrier(),
