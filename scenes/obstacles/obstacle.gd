@@ -37,6 +37,10 @@ extends StaticBody3D
 
 func _ready() -> void:
 	_apply()
+	# Динамический пресет препятствий (см. map_scene.gd._apply_dynamic_obstacles /
+	# dynamic_obstacle_placer.gd) находит и убирает статические кубы карты по этой группе.
+	if not Engine.is_editor_hint():
+		add_to_group("obstacles")
 
 ## Sub-ресурсы в `Obstacle.tscn` помечены `resource_local_to_scene = true` — у каждого инстанса
 ## свои `BoxShape3D` / `BoxMesh` / `StandardMaterial3D`, правка `size`/`color` одного инстанса не

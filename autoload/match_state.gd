@@ -60,6 +60,20 @@ var debug_spawn_bots_on_start: bool = true
 ## Живучесть через reload_current_scene() как у debug_enabled; reset_series() его не трогает.
 var bots_ignore_player: bool = false
 
+## Динамическая расстановка препятствий (см. корневой CLAUDE.md "Dynamic obstacle system",
+## Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md §9). Ставится галочкой в меню (main_menu.gd), как
+## debug_enabled — синхронно, ПЕРЕД сменой сцены. false (дефолт) — карта берёт статический пресет
+## препятствий из редактора. true — map_scene.gd перед стартом убирает статические Obstacle.tscn,
+## расставляет до 30 случайных кубов (dynamic_obstacle_placer.gd) и перепекает навмеш. НЕ трогает
+## непроходимые зоны (HazardZone*) — они editor-placed. Живучесть через reload_current_scene() как
+## у debug_enabled; reset_series() флаг НЕ трогает (задаётся только меню).
+var dynamic_obstacles: bool = false
+## Зерно раскладки. 0 = ещё не выбрано; map_scene.gd выбирает случайное на первом раунде и ДЕРЖИТ
+## его весь матч — раскладка одна на все раунды, переживает reload_current_scene(). reset_series()
+## (меню / «Новый матч») зануляет → новый матч = новая раскладка. Между игровыми сессиями не
+## хранится. Для будущего сетевого кода: хост шлёт это число, каждый пир строит идентичную карту.
+var dynamic_obstacles_seed: int = 0
+
 var total_rounds: int = 3
 var current_round_num: int = 1
 var series_wins_attack: int = 0
@@ -70,6 +84,7 @@ func reset_series() -> void:
 	player_team = 0
 	series_wins_attack = 0
 	series_wins_defense = 0
+	dynamic_obstacles_seed = 0  # новый матч — новая раскладка динамических препятствий (флаг dynamic_obstacles не трогаем: его ставит меню)
 
 ## Переход к следующему раунду — вызывается ИМЕННО при старте нового раунда (не при конце текущего).
 func advance_round() -> void:

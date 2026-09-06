@@ -95,6 +95,9 @@ func _ready() -> void:
 		return
 	if not zone_role.is_empty():
 		add_to_group(zone_role)
+	# ВСЕ круглые зоны-маркеры (spawn / waypoint / alert / ammo / hide), независимо от zone_role —
+	# keep-out для динамической расстановки препятствий (dynamic_obstacle_placer.gd).
+	add_to_group("zone_circles")
 	# Круг на земле — отладочный визуал (зоны спавна + круги зон сброса ящиков): только в
 	# debug-режиме (MatchState.debug_enabled, галочка в меню). show_debug_circle остаётся
 	# вложенным per-instance фильтром.

@@ -574,6 +574,55 @@ All three sub-resources in each prefab are `resource_local_to_scene = true` so p
 add/move/resize/delete the per-map NavMesh still needs a manual re-bake
 (`Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md`).
 
+`obstacle.gd`/`hazard_zone.gd` each self-register into a group at runtime (`"obstacles"` /
+`"hazard_zones"`, editor-hint-guarded); `spawn_zone.gd` registers **every** circular zone marker
+into `"zone_circles"` (on top of its optional `zone_role`). These three groups exist for the
+dynamic-obstacle system below.
+
+### Dynamic obstacle system — random pre-match layout (per-map, opt-in)
+
+Two presets per map: **static** (obstacles hand-placed in the editor — the default, the
+`Obstacle*` nodes in the `.tscn`) or **dynamic** (up to 30 brown cubes placed at random before
+the match, so networked players can't memorise cover / disguise spots). Chosen by a menu checkbox
+→ `MatchState.dynamic_obstacles` (plain flag, not debug-gated; survives `reload_current_scene()`
+like `debug_enabled`). **HazardZones are never touched** — always editor-placed, and they act as
+placement constraints for the dynamic pass.
+
+- `scenes/obstacles/dynamic_obstacle_placer.gd` (`extends RefCounted`, no `class_name`, static
+  API `populate(map_root, nav_region, seed) -> int`) — MVP rules: ≤ `MAX_OBSTACLES` (30) cubes,
+  none inside any `"zone_circles"` circle (+ clearance), none inside any `"hazard_zones"` /
+  `Objective` / `"turrets"` AABB (+ clearance), no cube-cube overlap (centre distance ≥
+  `OBSTACLE_SIZE.x + OBSTACLE_GAP`), all within `Ground` minus `EDGE_MARGIN`. One `Obstacle.tscn`
+  type only for now. Fully analytic + synchronous (one down-ray per cube for ground Y);
+  `RandomNumberGenerator` with an explicit `seed`, calls in fixed order → **deterministic**: same
+  seed ⇒ byte-identical layout on any machine (verified). That's the netcode hook — host sends one
+  int, every peer builds the same map.
+- `map_scene.gd._apply_dynamic_obstacles()` (`await`-ed from `_ready()` right after
+  `_build_map_borders()`, before `TeamSpawner.spawn_team()`) — sets the region's
+  `geometry_parsed_geometry_type = PARSED_GEOMETRY_STATIC_COLLIDERS` (colliders only — fast, no
+  GPU→CPU mesh readback / no "parse RenderingServer meshes at runtime" warning), then loops:
+  `remove_child` every `"obstacles"` node (static cubes first pass, own dynamic cubes on a
+  re-roll) → `populate()` → `bake_navigation_mesh()` + `await bake_finished` + `await physics_frame`
+  → **connectivity check** (`NavigationServer3D.map_get_path` for attack-spawn↔defense-spawn and
+  each spawn↔objective; a partial path — last point > 5 m from target — counts as broken). If a
+  layout isolates something it **re-rolls the seed** (up to `_DYNAMIC_MAX_REROLLS` = 4), then
+  proceeds with a `push_warning` if still broken. The seed left in `MatchState` is the one that
+  produced a connected map — that's what rounds 2–3 and (future) netcode peers use. Bots lazy-init
+  after `_ready()` so they start on the fresh nav map.
+- **Layout lifetime = one match.** `dynamic_obstacles_seed` is held across rounds
+  (`reload_current_scene()` keeps the autoload) so rounds 2–3 replay the same layout; zeroed by
+  `MatchState.reset_series()` (menu / «Новый матч») → next match re-rolls. Not persisted between
+  sessions.
+- **HazardZones don't carve the navmesh** — never did, in either bake mode
+  (`geometry_collision_mask = 5` effectively only cuts layer 1; verified against the shipped
+  editor navmesh too). Bots avoid hazards **reactively** — the AI's `_cast_ray_dist` avoidance
+  rays (`collide_with_areas`, mask includes layer 3) see the `Area3D`, so the A* path may cross a
+  hazard but gap-scan / emergency-brake deflect the bot. `STATIC_COLLIDERS` for the dynamic rebake
+  therefore changes nothing about hazard behaviour. True carving would need `NavigationObstacle3D`
+  (`affect_navigation_mesh`) — out of scope.
+- Benign per-bake log noise: `agent_max_climb / agent_radius ... loses precision` — the map's
+  navmesh values aren't multiples of `cell_size`/`cell_height`; fires for the editor bake too.
+
 ### Stationary turret system — `scenes/turret/` (universal, any map / any mode)
 
 `Turret.tscn` is its own prefab — a "tank that can't move", dropped as an instance into any map's

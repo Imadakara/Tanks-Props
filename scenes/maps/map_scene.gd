@@ -32,6 +32,7 @@ extends Node3D
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const MatchManagerScript := preload("res://scenes/main/match_manager.gd")
 const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_state.gd")
+const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obstacle_placer.gd")
 
 ## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TargetObjectiveMap.tscn` = 0,
 ## `TeamArenaMap.tscn` = 1), не детектится по наличию узла Objective. Значения совпадают с
@@ -85,6 +86,11 @@ var _alert_state := ObjectiveAlertStateScript.new()
 ## корневой CLAUDE.md, "Scene bring-up ordering").
 func _ready() -> void:
 	_build_map_borders()
+	# Динамический пресет препятствий (галочка в меню → MatchState.dynamic_obstacles). Держим
+	# старт раунда до конца асинхронной перепечки навмеша — боты/менеджер матча заводятся уже по
+	# новой карте проходимости.
+	if MatchState.dynamic_obstacles:
+		await _apply_dynamic_obstacles()
 	if MatchState.debug_enabled:
 		_setup_invincibility_toggle_button()
 		_setup_bot_spawn_buttons()
@@ -108,6 +114,11 @@ func _ready() -> void:
 ## стена всё равно не даёт выехать.
 const _BORDER_HEIGHT := 3.0
 const _BORDER_THICKNESS := 1.0
+
+## Динамическая расстановка: сколько раз перекатить зерно, если раскладка отрезала спавны/цель
+## (см. _apply_dynamic_obstacles). 30 кубов 2×2 на 72×72 практически никогда не заваливают
+## проход — это страховка, не нормальный путь.
+const _DYNAMIC_MAX_REROLLS := 4
 
 func _build_map_borders() -> void:
 	if not map_border_enabled:
@@ -159,6 +170,86 @@ func _build_map_borders() -> void:
 		body.add_child(mesh_inst)
 		container.add_child(body)
 		body.global_position = Vector3(xz.x, top_y + _BORDER_HEIGHT * 0.5, xz.y)
+
+## Динамический пресет препятствий (см. корневой CLAUDE.md "Dynamic obstacle system",
+## Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md §9). Убирает статические Obstacle.tscn карты
+## (HazardZone* остаются — они editor-placed и ограничивают поле), расставляет до 30 случайных
+## кубов по правилам dynamic_obstacle_placer.gd и ПЕРЕПЕКАЕТ навмеш; если раскладка отрезала
+## спавны/цель друг от друга — перекатывает зерно (до _DYNAMIC_MAX_REROLLS раз). Bake асинхронный
+## — вызывающий _ready() ждёт этот метод (await), чтобы боты стартовали уже по новой проходимости
+## (см. Obstacles_Navmesh_Guide §7.3). Раскладка одна на весь матч: зерно в MatchState переживает
+## reload_current_scene(), зануляется в reset_series() (меню / «Новый матч»). Финальное зерно =
+## то, что дало связную карту — оно и держится для раундов 2-3 (и его же слал бы хост в сетевой игре).
+func _apply_dynamic_obstacles() -> void:
+	var nav := get_node_or_null("NavigationRegion3D") as NavigationRegion3D
+	if nav == null:
+		push_warning("map_scene: NavigationRegion3D не найден — динамические препятствия пропущены")
+		return
+	# Парсим ТОЛЬКО статические коллайдеры (Ground/Obstacle — StaticBody, слой 1) — быстро, без
+	# GPU→CPU readback визуальных мешей (тот на рантайме стопорит рендер, WARNING
+	# navigation_mesh_source_geometry_data_3d). HazardZone это НЕ меняет: она и в editor-запечке
+	# `BOTH` навмеш не вырезала (проверено — `geometry_collision_mask=5` на деле режет только слой
+	# 1), боты обходят зоны реактивно лучами объезда — см. hazard_zone.gd. Статические карты навмеш
+	# не перепекают, их .tscn parsed_geometry_type не хранит (дефолт ресурса — BOTH).
+	if nav.navigation_mesh != null:
+		nav.navigation_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
+
+	var link_pairs := _dynamic_layout_link_pairs()
+	if MatchState.dynamic_obstacles_seed == 0:
+		MatchState.dynamic_obstacles_seed = randi() % 2147483646 + 1  # 1..2^31-2, никогда 0
+
+	var attempt := 0
+	while true:
+		attempt += 1
+		# Убрать всё в группе "obstacles": на 1-й итерации — статические кубы карты, на реролле —
+		# свои динамические с прошлой попытки. remove_child синхронно, перепечка их уже не увидит.
+		for obs in get_tree().get_nodes_in_group("obstacles"):
+			if is_instance_valid(obs):
+				obs.get_parent().remove_child(obs)
+				obs.queue_free()
+		var placed := DynamicObstaclePlacerScript.populate(self, nav, MatchState.dynamic_obstacles_seed)
+		nav.bake_navigation_mesh()
+		await nav.bake_finished
+		await get_tree().physics_frame  # NavigationServer синкает карту на физ-кадре после запечки
+		var connected := _dynamic_layout_connected(nav, link_pairs)
+		if connected or attempt >= _DYNAMIC_MAX_REROLLS:
+			if MatchState.debug_enabled:
+				print("map_scene: динамический пресет — %d препятствий, seed %d, попыток %d, связно=%s"
+					% [placed, MatchState.dynamic_obstacles_seed, attempt, connected])
+			if not connected:
+				push_warning("map_scene: динамическая раскладка после %d попыток рвёт связность спавнов/цели — оставляю как есть" % attempt)
+			return
+		MatchState.dynamic_obstacles_seed = randi() % 2147483646 + 1  # реролл
+
+## Пары точек, которые ОБЯЗАНЫ остаться связными по навмешу после расстановки (иначе раунд
+## непроходим): спавн атаки ↔ спавн обороны всегда; + каждый спавн ↔ objective, если он на карте.
+func _dynamic_layout_link_pairs() -> Array:
+	var out: Array = []
+	var atk := get_tree().current_scene.find_child("AttackSpawnZone", true, false) as Node3D
+	var dfn := get_tree().current_scene.find_child("DefenseSpawnZone", true, false) as Node3D
+	var obj := get_tree().current_scene.find_child("Objective", true, false) as Node3D
+	if atk != null and dfn != null:
+		out.append([atk.global_position, dfn.global_position])
+	if obj != null and atk != null:
+		out.append([atk.global_position, obj.global_position])
+	if obj != null and dfn != null:
+		out.append([dfn.global_position, obj.global_position])
+	return out
+
+## true — по всем парам _dynamic_layout_link_pairs() навмеш даёт СВЯЗНЫЙ путь. map_get_path с
+## optimize возвращает частичный путь до ближайшей достижимой точки, если цель отрезана — поэтому
+## мало проверить size()>=2, надо ещё что последняя точка реально рядом с целью.
+func _dynamic_layout_connected(nav: NavigationRegion3D, pairs: Array) -> bool:
+	var nav_map: RID = nav.get_navigation_map()
+	for pair in pairs:
+		var from: Vector3 = pair[0]
+		var to: Vector3 = pair[1]
+		var path: PackedVector3Array = NavigationServer3D.map_get_path(nav_map, from, to, true)
+		if path.size() < 2:
+			return false
+		if path[path.size() - 1].distance_to(to) > 5.0:
+			return false
+	return true
 
 ## [УДАЛЕНО, по прямому запросу — "общая универсальная система для зон, единый визуал"] Раньше
 ## здесь жила отдельная пунктирная рисовалка кругов под вейпоинтами (`_build_waypoint_debug()`,
