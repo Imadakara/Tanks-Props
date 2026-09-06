@@ -445,6 +445,39 @@ func _fov_local_point(deg: float, radius: float, height: float) -> Vector3:
 	var r: float = deg_to_rad(deg)
 	return Vector3(-sin(r) * radius, height, -cos(r) * radius)
 
+## Дистанция до первого препятствия по горизонтальному лучу НА УРОВНЕ ЗЕМЛИ (`_GROUND_TARGET_Y`,
+## тот же мировой Y, на котором лежит сам debug-веер — см. `h` ниже), не из настоящего "глаза"
+## турели. Используется ТОЛЬКО debug-отрисовкой, маска та же (environment+tanks), что у реального
+## LOS в _can_see().
+##
+## [ИСПРАВЛЕНО, по прямому запросу — "для вижена турели на objective не работает"] Первая версия
+## пускала луч из настоящего глаза (`_barrel`/`_turret.global_position`) в точку на земле на краю
+## радиуса — не сработало: ObjectiveTurret стоит на макушке objective (пьедестал +2, плюс
+## TurretPivot/Barrel ещё +1.6 локально), ствол на world Y ~3.6. Луч от такой высоты к дальней
+## наземной точке (18м) идёт полого — на 6м пути он ещё на Y≈2.44, выше любого обычного препятствия
+## (~1.25-2м, `obstacle.gd`) — технически ВЕРНО (турель правда видит поверх низкой стены цель ЗА
+## ней), но для плоского веера "один радиус на угол" такую вилку не нарисовать (пришлось бы рисовать
+## два отдельных сегмента радиуса с разрывом), и практически видимого среза не было почти нигде —
+## обычные препятствия ближе ~12м от турели вообще не давали обрезки ни при каком направлении.
+## Вместо честной (и в общем случае разрывной) геометрии "вижу с высоты" — та же ПЛОСКАЯ проверка на
+## уровне земли, что у обычного танка/наземной турели: луч НЕ из настоящего ствола, а от XZ-позиции
+## турели на высоте самого веера. Дешевле честной версии (один луч, без трассировки), даёт
+## интуитивно ожидаемую картинку "стена режет конус", и НЕДО-показывает реальную дальность турели
+## (никогда не завышает) — приемлемый компромисс для debug-оверлея, реальную детекцию (`_can_see()`)
+## не трогает.
+const _GROUND_TARGET_Y: float = 0.12  # тот же мировой Y, что и плоскость debug-веера (см. `h` ниже)
+
+func _fov_obstacle_dist(local_deg: float, max_range: float) -> float:
+	var world_yaw: float = _origin.rotation.y + deg_to_rad(local_deg)
+	var dir := Vector3(-sin(world_yaw), 0.0, -cos(world_yaw))
+	var origin: Vector3 = _origin.global_position
+	origin.y = _GROUND_TARGET_Y
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * max_range)
+	query.exclude = [_origin]
+	query.collision_mask = 1 | 2  # environment + tanks — та же маска, что _can_see()
+	var result: Dictionary = _origin.get_world_3d().direct_space_state.intersect_ray(query)
+	return max_range if result.is_empty() else origin.distance_to(result["position"])
+
 func _update_fov_debug() -> void:
 	var mesh: ImmediateMesh = _fov_mesh.mesh
 	mesh.clear_surfaces()
@@ -468,13 +501,19 @@ func _update_fov_debug() -> void:
 			# SEARCH: жёлтый, если ведём цель, переданную по ALERT; иначе розовый (как у танка).
 			fill = Color(0.95, 0.85, 0.15, 0.24) if _alert_target != null and is_instance_valid(_alert_target) else Color(0.95, 0.25, 0.55, 0.24)
 
+	# Обрезка по препятствиям (см. doc-comment _fov_obstacle_dist()) — один луч на угол сегмента,
+	# переиспользуется для заливки/контура (vision_range) и обеих внутренних дуг на том же угле.
+	var clip: Array[float] = []
+	for i in range(SEGMENTS + 1):
+		clip.append(_fov_obstacle_dist(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), vision_range))
+
 	# Заливка конуса обнаружения (радиус vision_range) — треугольниками от центра.
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 	mesh.surface_set_color(fill)
-	var prev: Vector3 = _fov_local_point(cone_min, vision_range, h)
+	var prev: Vector3 = _fov_local_point(cone_min, clip[0], h)
 	for i in range(1, SEGMENTS + 1):
 		var deg: float = lerp(cone_min, cone_max, float(i) / float(SEGMENTS))
-		var cur: Vector3 = _fov_local_point(deg, vision_range, h)
+		var cur: Vector3 = _fov_local_point(deg, clip[i], h)
 		mesh.surface_add_vertex(center)
 		mesh.surface_add_vertex(prev)
 		mesh.surface_add_vertex(cur)
@@ -486,7 +525,7 @@ func _update_fov_debug() -> void:
 	mesh.surface_set_color(Color(fill.r, fill.g, fill.b, 0.9))
 	mesh.surface_add_vertex(center)
 	for i in range(SEGMENTS + 1):
-		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), vision_range, h))
+		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), clip[i], h))
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
@@ -494,7 +533,7 @@ func _update_fov_debug() -> void:
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
 	for i in range(SEGMENTS + 1):
-		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), fire_range, h))
+		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), minf(fire_range, clip[i]), h))
 	mesh.surface_end()
 
 	# Ближняя мёртвая зона (min_fire_range) — та же дуга, но у самого центра, ярко-красная:
@@ -502,7 +541,7 @@ func _update_fov_debug() -> void:
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	mesh.surface_set_color(Color(1.0, 0.1, 0.1, 0.95))
 	for i in range(SEGMENTS + 1):
-		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), min_fire_range, h))
+		mesh.surface_add_vertex(_fov_local_point(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), minf(min_fire_range, clip[i]), h))
 	mesh.surface_end()
 
 	# Точное направление ствола — жёлтая линия от центра до vision_range.

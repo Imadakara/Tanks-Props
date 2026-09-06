@@ -485,6 +485,9 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
   **not** gated — it always applies.
 - `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays (setup **and**
   the `_physics_process` update calls, so the overlay meshes/labels are never touched when null).
+  The FOV cones visually clip at the first obstacle/tank blocking line of sight (one raycast per
+  fan segment, same collision mask as `_can_see()`) instead of drawing through walls — detail and
+  cost analysis in the Bot AI vault doc, §17.
 - `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is now
   this one script/one visual** (per-instance `@export radius`, movable/scalable in the editor, no
   separate hardcoded radius anywhere): spawn zones, the ammo/mod drop-zone circle (the
@@ -662,7 +665,10 @@ placement constraints for the dynamic pass.
 - Debug FOV/fire-sector overlay (`show_fov_debug`, gated by `MatchState.debug_enabled`) — an
   `ImmediateMesh` child of the turret root, ground-plane fan rotated by the live turret yaw:
   detection-cone fill (colour by state), `fire_range` arc, `min_fire_range` inner arc, barrel line.
-  Same spirit as `TankAIController`'s FOV debug.
+  Same spirit as `TankAIController`'s FOV debug, including the obstacle-clip raycasts — cast
+  ground-level (not from the actual elevated barrel; see `Tank_Prop_Hunt_Turrets.md` §4 for why
+  `ObjectiveTurret` specifically needed that), since a barrel-height ray from its perch atop the
+  objective sails over normal-height obstacles.
 
 ### Map inventory
 

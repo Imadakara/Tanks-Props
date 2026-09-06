@@ -4402,6 +4402,24 @@ func _local_point(local_deg: float, radius: float, height: float) -> Vector3:
 	var rad: float = deg_to_rad(local_deg)
 	return Vector3(-sin(rad) * radius, height, -cos(rad) * radius)
 
+## Дистанция до первого препятствия по лучу из башни (та же точка отсчёта, что реальный LOS в
+## _can_see()) в направлении local_deg — той же локальной системе отсчёта, что _local_point()
+## (0° = вперёд по корпусу). Используется ТОЛЬКО debug-отрисовкой (_update_fov_debug_draw()), чтобы
+## заливка/дуги конуса визуально обрывались на стене/танке, а не рисовались сквозь них — маска
+## та же (environment+tanks), что у реального _can_see(), так нарисованный веер зрительно совпадает
+## с тем, что бот реально видит. Считается РАЗ на угол, не на каждый радиус отдельно — fire_range
+## всегда <= vision_range (см. @export-блок), одна и та же обрезка годится для обеих дуг на одном
+## угле.
+func _fov_obstacle_dist(local_deg: float, max_range: float) -> float:
+	var world_yaw: float = _body.rotation.y + deg_to_rad(local_deg)
+	var dir := Vector3(-sin(world_yaw), 0.0, -cos(world_yaw))
+	var origin: Vector3 = _turret.global_position
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * max_range)
+	query.exclude = [_body]
+	query.collision_mask = _LAYER_ENVIRONMENT | _LAYER_TANKS
+	var result: Dictionary = _body.get_world_3d().direct_space_state.intersect_ray(query)
+	return max_range if result.is_empty() else origin.distance_to(result["position"])
+
 func _update_fov_debug_draw() -> void:
 	var mesh: ImmediateMesh = _fov_debug_mesh.mesh
 	mesh.clear_surfaces()
@@ -4440,14 +4458,22 @@ func _update_fov_debug_draw() -> void:
 	var cone_min_deg: float = -look_cone_deg * 0.5
 	var cone_max_deg: float = look_cone_deg * 0.5
 
+	# Обрезка по препятствиям (см. doc-comment _fov_obstacle_dist()) — один луч на угол сегмента,
+	# переиспользуется ниже и для заливки/контура (радиус vision_range), и для дуги fire_range на
+	# том же угле.
+	var main_clip: Array[float] = []
+	for i in range(SEGMENTS + 1):
+		var t0: float = float(i) / float(SEGMENTS)
+		main_clip.append(_fov_obstacle_dist(lerp(cone_min_deg, cone_max_deg, t0), radius))
+
 	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 	mesh.surface_set_color(fill_color)
-	var prev_point: Vector3 = _local_point(cone_min_deg, radius, HEIGHT)
+	var prev_point: Vector3 = _local_point(cone_min_deg, main_clip[0], HEIGHT)
 	for i in range(1, SEGMENTS + 1):
 		var t: float = float(i) / float(SEGMENTS)
 		var deg: float = lerp(cone_min_deg, cone_max_deg, t)
-		var cur_point: Vector3 = _local_point(deg, radius, HEIGHT)
+		var cur_point: Vector3 = _local_point(deg, main_clip[i], HEIGHT)
 		mesh.surface_add_vertex(center)
 		mesh.surface_add_vertex(prev_point)
 		mesh.surface_add_vertex(cur_point)
@@ -4462,7 +4488,7 @@ func _update_fov_debug_draw() -> void:
 	for i in range(SEGMENTS + 1):
 		var t2: float = float(i) / float(SEGMENTS)
 		var deg2: float = lerp(cone_min_deg, cone_max_deg, t2)
-		mesh.surface_add_vertex(_local_point(deg2, radius, HEIGHT))
+		mesh.surface_add_vertex(_local_point(deg2, main_clip[i], HEIGHT))
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
@@ -4475,7 +4501,7 @@ func _update_fov_debug_draw() -> void:
 	for i in range(SEGMENTS + 1):
 		var t2b: float = float(i) / float(SEGMENTS)
 		var deg2b: float = lerp(cone_min_deg, cone_max_deg, t2b)
-		mesh.surface_add_vertex(_local_point(deg2b, fire_range, HEIGHT))
+		mesh.surface_add_vertex(_local_point(deg2b, minf(fire_range, main_clip[i]), HEIGHT))
 	mesh.surface_end()
 
 	# Текущее РЕАЛЬНОЕ направление башни (куда башня уже физически довернула, не куда стремится) —
@@ -4492,13 +4518,19 @@ func _update_fov_debug_draw() -> void:
 	# не заливка — чтобы не забивать читаемость главного конуса поверх него.
 	var sec_min_deg: float = turret_local_deg - secondary_cone_deg * 0.5
 	var sec_max_deg: float = turret_local_deg + secondary_cone_deg * 0.5
+	# Своя обрезка по углу — сектор башни смотрит в другую сторону от главного конуса корпуса
+	# (турель может быть довёрнута), угол-в-угол с main_clip не совпадает.
+	var sec_clip: Array[float] = []
+	for i in range(SEGMENTS + 1):
+		var t3s: float = float(i) / float(SEGMENTS)
+		sec_clip.append(_fov_obstacle_dist(lerp(sec_min_deg, sec_max_deg, t3s), radius))
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	mesh.surface_set_color(Color(1.0, 1.0, 1.0, 0.6))
 	mesh.surface_add_vertex(center)
 	for i in range(SEGMENTS + 1):
 		var t3: float = float(i) / float(SEGMENTS)
 		var deg3: float = lerp(sec_min_deg, sec_max_deg, t3)
-		mesh.surface_add_vertex(_local_point(deg3, radius, HEIGHT))
+		mesh.surface_add_vertex(_local_point(deg3, sec_clip[i], HEIGHT))
 	mesh.surface_add_vertex(center)
 	mesh.surface_end()
 
@@ -4510,7 +4542,7 @@ func _update_fov_debug_draw() -> void:
 	for i in range(SEGMENTS + 1):
 		var t3b: float = float(i) / float(SEGMENTS)
 		var deg3b: float = lerp(sec_min_deg, sec_max_deg, t3b)
-		mesh.surface_add_vertex(_local_point(deg3b, fire_range, HEIGHT))
+		mesh.surface_add_vertex(_local_point(deg3b, minf(fire_range, sec_clip[i]), HEIGHT))
 	mesh.surface_end()
 
 	# Целевой угол блуждания башни (_look_yaw — куда башня СЕЙЧАС стремится довернуться, "линия",
