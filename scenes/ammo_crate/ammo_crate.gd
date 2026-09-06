@@ -1,5 +1,5 @@
 extends Area3D
-## AmmoCrate — подбираемый ящик патронов (ТЗ §8.4). Доступен любому танку любой команды;
+## AmmoCrate — подбираемый ящик патронов. Доступен любому танку любой команды;
 ## при подборе выдаёт `ammo_amount` патронов (0 → GameConfig.ammo_per_crate) и исчезает.
 ## Спавнится зоной сброса `scenes/ammo_crate/ammo_drop_zone.gd` (префаб AmmoDropZone.tscn в
 ## углах карт) — та ставит `ammo_amount` и сразу зовёт `fall_to()`.

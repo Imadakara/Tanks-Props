@@ -1,5 +1,5 @@
 extends Node
-## HealthComponent — многоударное разрушение (ТЗ §7), настраивается через max_hits;
+## HealthComponent — многоударное разрушение, настраивается через max_hits;
 ## переиспользуется и для Objective режима "Destroy Target". Танки читают max_hits из JSON-конфига
 ## игрока/бота (config/*_tank_config.json, 3 у обоих, см. team_spawner.gd), Objective — из
 ## GameConfig.objective_hits_required (см. match_manager.gd). Дефолт @export (3) — страховка для

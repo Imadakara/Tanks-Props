@@ -1,13 +1,13 @@
 extends Node
 ## Autoload: GameConfig — единая точка настройки баланса MVP (ТЗ 11.4).
 ## Значения по умолчанию соответствуют ТЗ; часть параметров (objective_hits_required,
-## defense_wins_ties, ai_can_see_disguised_tanks) — решения по открытым вопросам ТЗ §14,
+## defense_wins_ties, ai_can_see_disguised_tanks) — решения по открытым вопросам баланса,
 ## подлежат пересмотру на плейтесте.
 
 @export var disguise_duration_sec: float = 30.0
 @export var disguise_cooldown_sec: float = 10.0
 
-## Маскировка имитирует объект-препятствие карты (ТЗ §6; см. Tank_Prop_Hunt_Disguise.md). Выбор
+## Маскировка имитирует объект-препятствие карты (см. Tank_Prop_Hunt_Disguise.md). Выбор
 ## конкретного объекта позже уедет в мета-гейм — для MVP параметры объекта имитации фиксированы
 ## здесь, а не задаются узлом на карте. Дефолт = коричневая коробка `Obstacle*`
 ## (scenes/maps/TargetObjectiveMap.tscn): размер и цвет совпадают с её BoxMesh/StandardMaterial3D.
@@ -64,5 +64,5 @@ extends Node
 ## Читается TankAIController._can_see() (disguise_controller.gd — реализация самой маскировки). false
 ## (дефолт) — бот НЕ видит замаскированного противника, даже если тот в конусе обзора/обстрела, пока
 ## маскировка не спадёт. true — «читерский» режим для отладки/калибровки, гейт маскировки отключён
-## целиком. Открытый вопрос ТЗ §14, подлежит пересмотру на плейтесте.
+## целиком. Открытый вопрос баланса, подлежит пересмотру на плейтесте.
 @export var ai_can_see_disguised_tanks: bool = false

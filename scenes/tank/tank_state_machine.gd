@@ -1,10 +1,10 @@
 extends Node
 class_name TankStateMachine
-## TankStateMachine — состояния танка и переходы между ними (ТЗ §5).
+## TankStateMachine — состояния танка и переходы между ними.
 ## Публичный контракт для остальных компонентов танка (WeaponController,
 ## DisguiseController, TurretController, TankMovement, столкновения):
 ## request_fire(), request_disguise(), break_disguise(reason), can_fire(),
-## can_enter_disguise(). Тайминги берутся из автозагрузки GameConfig (ТЗ §11.4).
+## can_enter_disguise(). Тайминги берутся из автозагрузки GameConfig.
 
 signal state_changed(old_state: State, new_state: State)
 
@@ -52,7 +52,7 @@ func can_enter_disguise() -> bool:
 	return state == State.NORMAL
 
 ## Выстрел. Вызывается WeaponController. Возвращает false только в RELOAD. Выстрел из DISGUISED
-## снимает маскировку в момент выстрела и переводит сразу в RELOAD, минуя NORMAL (ТЗ §5.1, §7).
+## снимает маскировку в момент выстрела и переводит сразу в RELOAD, минуя NORMAL.
 ## Выстрел из DISGUISE_COOLDOWN досрочно завершает кулдаун (глушим CooldownTimer) и тоже уводит
 ## в RELOAD — дальше обычная перезарядка, потом NORMAL.
 func request_fire() -> bool:
@@ -76,7 +76,7 @@ func request_disguise() -> bool:
 	return true
 
 ## Досрочное снятие маскировки: поворот башни / начало движения / столкновение с
-## движущимся танком (ТЗ §5.1, §5.2). Не действует, если маскировка уже не активна.
+## движущимся танком. Не действует, если маскировка уже не активна.
 func break_disguise(_reason: String) -> void:
 	if state != State.DISGUISED:
 		return

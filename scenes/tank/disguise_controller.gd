@@ -1,5 +1,5 @@
 extends Node3D
-## DisguiseController — маскировка танка под объект-препятствие карты (ТЗ §6; полное описание —
+## DisguiseController — маскировка танка под объект-препятствие карты (полное описание —
 ## Tank_Prop_Hunt_Disguise.md в vault).
 ##
 ## Активация: клавиша `toggle_disguise` (M, US-раскладка), ТОЛЬКО у игрока (is_player_controlled).

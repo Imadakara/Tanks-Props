@@ -12,12 +12,20 @@ conflict.
 
 Full design docs live outside this repo, in `C:\Users\PC\Documents\Personal Vault\Tank Props Docs\`.
 Code comments frequently say "see vault" — that's this folder, not anything inside the repo. Read
-the relevant doc before doing non-trivial work on a system it covers — they record *why*, not just
-what the code does, including reasoning behind changes that were tried and reverted.
+the relevant doc before doing non-trivial work on a system it covers. The reference docs below
+describe how each system works **now**, not how it got there — deep history is in `git log` and in
+the retired `Tank_Prop_Hunt_MVP_Dev_Plan.md` / `Tank_Prop_Hunt_TZ_MVP_Godot.md` (both superseded by
+`Tank_Prop_Hunt_Development_Plan.md`).
 
-- `Tank_Prop_Hunt_Gameplay_Concept.md` — design concept.
-- `Tank_Prop_Hunt_TZ_MVP_Godot.md` — spec / ТЗ.
-- `Tank_Prop_Hunt_MVP_Dev_Plan.md` — dev plan with per-stage implementation history and gotchas.
+- `Tank_Prop_Hunt_Gameplay_Concept.md` — **the design doc**: vision, pillars, core loop, feature
+  list, the horizontal progression model (specializations / modules / build / mastery), target
+  F2P meta shape. "What the game is", not implementation.
+- `Tank_Prop_Hunt_Disguise_Progression_Model.md` — source doc for the progression model
+  (sidegrade-not-upgrade; account → specializations → modules → build → mastery).
+- `Tank_Prop_Hunt_Development_Plan.md` — **the roadmap** (supersedes the now-deprecated
+  `Tank_Prop_Hunt_TZ_MVP_Godot.md` + `Tank_Prop_Hunt_MVP_Dev_Plan.md`): §2 enumerates what's
+  already built, then phases A–F (core stabilization → data/art → specialization+module system →
+  meta shell & progression → networking → production) with per-stage DoD.
 - `Tank_Prop_Hunt_Game_Modes.md` — **current-state reference for the game modes**
   (TARGET_OBJECTIVE / TEAM_ARENA): rules, round/series flow, HUD block, round-loop code, full map
   list. The "Game modes" section below is a summary; that doc is the detail.
@@ -119,7 +127,9 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   player-usable: key **M** anywhere → tank looks like a `GameConfig`-configured obstacle prop (brown
   box for MVP; the meta-game picks the prop later — no per-map `DisguiseSlot` markers, that system is
   deleted). The disguising player sees the prop with an x-ray silhouette of their tank through it;
-  everyone else sees the prop only. Bots never activate or seek disguise. A bot **won't acquire** a
+  everyone else sees the prop only. Bots activate disguise only via three scripted ambush scenarios
+  (`disguise_bot_enabled` + `disguise_s1/s2/s3_enabled` from the roster — `config/roster_target_objective.json`
+  enables all three; see `Tank_Prop_Hunt_Disguise.md` §5.2), never opportunistically. A bot **won't acquire** a
   disguised enemy (`TankAIController._can_see()` returns false in `_scan_for_target()` while the
   target's `TankStateMachine` is `DISGUISED`, unless `GameConfig.ai_can_see_disguised_tanks`) — but a
   bot **already in `ATTACK` on that tank keeps firing** through the disguise (`_can_see(target,
@@ -540,10 +550,10 @@ zones; nothing there → straight back to normal) and lob at the objective while
 though a visible tank shooting them after the shot takes priority; defenders grab a seen crate and
 lob at tanks; a low-ammo bot grabs a mortar if the zone has no ammo crate; full detail in
 `Tank_Prop_Hunt_Modifications.md`). Objective/waypoint/ammo-zone lookups are group- or recursive-search based, not
-name- or scene-structure-specific, so the same file works unmodified on any map. Bots don't activate
-or seek disguise; `_can_see()` hides a `DISGUISED` enemy from *acquisition* but not from a bot
-already fighting it (`ignore_disguise` param — see `DisguiseController` above and
-`Tank_Prop_Hunt_Disguise.md`).
+name- or scene-structure-specific, so the same file works unmodified on any map. Bots activate
+disguise only via scripted ambush scenarios (`disguise_s1/s2/s3`, roster-gated); `_can_see()` hides
+a `DISGUISED` enemy from *acquisition* but not from a bot already fighting it (`ignore_disguise`
+param — see `DisguiseController` above and `Tank_Prop_Hunt_Disguise.md` §5).
 
 **Full architecture reference — states, priority ladder, driving-stack internals, per-tier
 parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_Prop_Hunt_Bot_AI_Sandbox.md`),

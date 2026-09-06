@@ -1,5 +1,5 @@
 extends Node
-## ScoreManager — счёт команд по уничтожениям (ТЗ §8.4, §10). Подключается к
+## ScoreManager — счёт команд по уничтожениям. Подключается к
 ## HealthComponent.destroyed(killer) каждого танка из группы "tanks" (Tank._ready()
 ## регистрирует себя в группе).
 

@@ -1,5 +1,5 @@
 extends Node
-## WeaponController — стрельба по параболе (ТЗ §7, правка учёта наклона дула). Направление
+## WeaponController — стрельба по параболе. Направление
 ## выстрела берётся напрямую из ориентации Barrel (yaw башни + питч дула, см.
 ## turret_controller.gd/barrel_controller.gd) — сама дуга по-прежнему от гравитации
 ## снаряда. Привязан к TankStateMachine.request_fire() (обрабатывает и обычный выстрел, и

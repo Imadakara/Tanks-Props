@@ -1,5 +1,5 @@
 extends Node
-## TankMovement — гусеничное движение танка: вперёд/назад + поворот корпуса (ТЗ §4).
+## TankMovement — гусеничное движение танка: вперёд/назад + поворот корпуса.
 ## Источник ввода зависит от is_player_controlled: игрок — Input Actions, бот —
 ## ai_move_input/ai_turn_input, которые пишет TankAIController (единственный ИИ проекта, см.
 ## scenes/tank/tank_ai_controller.gd), не дублируя эту ноду отдельным путём движения.
@@ -51,8 +51,8 @@ func _physics_process(delta: float) -> void:
 		last_move_input = 0.0
 		return
 
-	# Корпус зафиксирован во время маскировки (ТЗ §6); попытка движения — триггер
-	# досрочного снятия маскировки (ТЗ §5.1), сам ход применяется уже следующим кадром,
+	# Корпус зафиксирован во время маскировки; попытка движения — триггер
+	# досрочного снятия маскировки, сам ход применяется уже следующим кадром,
 	# когда состояние сменится на DISGUISE_COOLDOWN.
 	if _state_machine != null and _state_machine.state == TankStateMachineScript.State.DISGUISED:
 		if turn_input != 0.0 or move_input != 0.0:
