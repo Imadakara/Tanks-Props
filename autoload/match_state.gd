@@ -29,9 +29,10 @@ enum Mode { TARGET_OBJECTIVE, TEAM_ARENA }
 var player_team: int = 0  # 0 = сторона атаки в этом раунде, 1 = сторона обороны
 var match_mode: int = Mode.TARGET_OBJECTIVE
 
-## Единый выключатель всей отладочной обвязки (оверлеи ИИ: конус обзора / путь / brain-панель /
-## reaction-кнопка; тумблеры «Игрок: бессмертие» и «Objective ON/OFF»; камеры-клавиши 1/2/3;
-## debug-круги зон спавна/сброса). Ставится галочкой в меню выбора карт (main_menu.gd) ПЕРЕД
+## Единый выключатель всей отладочной обвязки (оверлеи ИИ: конус обзора / путь / brain-панель;
+## тумблеры «Игрок: бессмертие», «Objective ON/OFF», «Реакция ботов на игрока ON/OFF»;
+## камеры-клавиши 1/2/3; debug-круги зон спавна/сброса). Ставится галочкой в меню выбора карт
+## (main_menu.gd) ПЕРЕД
 ## сменой сцены; ДЕФОЛТ true — прямой запуск карты из редактора/`run_project` (в обход меню)
 ## остаётся отладочным. Живёт в autoload (нужен уже в _ready() карты/зон/ИИ, до этого autoload
 ## уже поднят) и переживает reload_current_scene(); reset_series() его НЕ трогает — задаётся
@@ -50,6 +51,14 @@ var debug_enabled: bool = true
 ## spawn_one_bot()). Тот же принцип живучести через reload_current_scene(), что у debug_enabled —
 ## значение не должно молча откатываться на рестарте раунда; reset_series() его не трогает.
 var debug_spawn_bots_on_start: bool = true
+
+## Дебаг-тумблер "реакция ботов на игрока" — кнопка «Реакция ботов на игрока ON/OFF» в левом
+## нижнем углу (map_scene.gd, только debug_enabled). true — боты НЕ воспринимают танк игрока как
+## врага: TankAIController._can_see() возвращает false на узел "PlayerTank" (ни обнаружение, ни
+## удержание в ATTACK), а _on_damaged() игнорирует попадание от игрока. Бот-против-бота не
+## затронут. Заменил прежние per-bot кнопки "reaction ON/OFF" (те гасили реакцию на ВСЕХ врагов).
+## Живучесть через reload_current_scene() как у debug_enabled; reset_series() его не трогает.
+var bots_ignore_player: bool = false
 
 var total_rounds: int = 3
 var current_round_num: int = 1

@@ -69,6 +69,7 @@ const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_st
 var _objective_health: Node = null
 var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
+var _ignore_player_toggle_button: Button
 var _bot_spawn_buttons: Array[Button] = []  # debug-кнопки «+ Бот», гасятся на конце раунда
 
 ## ALERT-таймер/гео-проверка живут ЗДЕСЬ (корень сцены) — никогда не замораживаются на респавне
@@ -87,6 +88,7 @@ func _ready() -> void:
 	if MatchState.debug_enabled:
 		_setup_invincibility_toggle_button()
 		_setup_bot_spawn_buttons()
+		_setup_ignore_player_toggle_button()
 	$TeamSpawner.spawn_team()
 	_setup_match_context()
 	# ObjectiveCamera смотрит на саму цель (не хардкод-точка): позиция берётся с узла Objective,
@@ -223,8 +225,7 @@ func _on_round_ended_teardown(_winner: String) -> void:
 			hc.force_destroy()
 
 ## Бессмертие игрока — тумблер «Игрок: бессмертие ON/OFF» (низ-справа), ПО УМОЛЧАНИЮ ВКЛ. Тот же
-## паттерн, что Objective On/Off и bot reaction (tank_ai_controller.gd). Низ-справа, на слот выше
-## кнопки Objective On/Off (та на самом низу).
+## паттерн, что Objective On/Off. Низ-справа, на слот выше кнопки Objective On/Off (та на самом низу).
 func _setup_invincibility_toggle_button() -> void:
 	_player_health.invincible = true
 	var layer := CanvasLayer.new()
@@ -250,6 +251,36 @@ func _on_invincibility_toggle_pressed() -> void:
 
 func _update_invincibility_toggle_button() -> void:
 	_invincibility_toggle_button.text = "Игрок: бессмертие %s" % ("ON" if _player_health.invincible else "OFF")
+
+## Одна кнопка «Реакция ботов на игрока ON/OFF» (низ-СЛЕВА — правый низ занят бессмертием/objective/
+## спавном ботов). Заменила прежние per-bot кнопки "reaction ON/OFF" из tank_ai_controller.gd,
+## которые гасили реакцию бота на ВСЕХ врагов и висели по одной на бота. OFF → MatchState.
+## bots_ignore_player = true: боты перестают воспринимать танк игрока как врага (гейт в
+## TankAIController._can_see()/_on_damaged(), см. там); бой бот-против-бота не затронут.
+func _setup_ignore_player_toggle_button() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "IgnorePlayerToggleLayer"
+	var button := Button.new()
+	button.name = "IgnorePlayerToggleButton"
+	button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	button.offset_left = 16.0
+	button.offset_top = -56.0
+	button.offset_right = 256.0
+	button.offset_bottom = -16.0
+	button.pressed.connect(_on_ignore_player_toggle_pressed)
+	layer.add_child(button)
+	_ignore_player_toggle_button = button
+	# Без call_deferred — скрипт на корне сцены, его _ready() идёт последним (см. остальные
+	# _setup_*_button() этого файла), дерево готово.
+	add_child(layer)
+	_update_ignore_player_toggle_button()
+
+func _on_ignore_player_toggle_pressed() -> void:
+	MatchState.bots_ignore_player = not MatchState.bots_ignore_player
+	_update_ignore_player_toggle_button()
+
+func _update_ignore_player_toggle_button() -> void:
+	_ignore_player_toggle_button.text = "Реакция ботов на игрока: %s" % ("OFF" if MatchState.bots_ignore_player else "ON")
 
 ## [ДОБАВЛЕНО, по прямому запросу — "2 кнопки в HUD для дебаг-режима для спавна ботов (на каждую
 ## сторону) — клик спавнит бота"] Тот же паттерн CanvasLayer+Button, что остальные debug-тумблеры
@@ -332,9 +363,8 @@ func _setup_objective_ui() -> void:
 func _on_objective_damaged(_current_hits: int, _max_hits: int, _killer: Node = null) -> void:
 	_alert_state.reset()  # сбрасывается на КАЖДЫЙ удар, см. ObjectiveAlertState.reset()
 
-## Тот же паттерн, что кнопки-тумблеры tank_ai_controller.gd (_setup_reaction_toggle_button) —
-## отдельный CanvasLayer, не трогаем разметку HUD.tscn. Правый низ — левый низ уже занят
-## reaction-toggle кнопками ботов (см. debug_ui_slot), правый верх — brain-debug панелями.
+## Отдельный CanvasLayer, не трогаем разметку HUD.tscn. Правый низ — левый низ занят кнопкой
+## «Реакция ботов на игрока», правый верх — brain-debug панелями ботов.
 func _setup_objective_toggle_button() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "ObjectiveToggleLayer"

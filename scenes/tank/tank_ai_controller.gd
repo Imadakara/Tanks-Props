@@ -717,15 +717,11 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## Текстовая панель "что сейчас в голове у бота" — роль/сложность/стейт/цель/объезд — в правом
 ## верхнем углу экрана (отдельный CanvasLayer поверх HUD, не часть его разметки).
 @export var show_brain_debug: bool = true
-## Кнопка на экране, переключающая enemy_reaction_enabled ниже (по прямому запросу — гонять
-## поведение вживую, катаясь на PlayerTank, без правки кода/рестарта).
-@export var show_reaction_toggle_button: bool = true
-## Несколько ботов с show_brain_debug/show_reaction_toggle_button на ОДНОЙ карте (по прямому
-## запросу — второй ACHIEVER на TargetObjectiveMap.tscn) иначе рисуют оба виджета РОВНО в одном месте экрана,
-## поверх друг друга, нечитаемо (нашли живьём на скриншоте с двумя ботами). debug_ui_slot сдвигает
-## оба виджета этого конкретного бота вниз (brain-панель от верхнего края) / вверх (кнопка от
-## нижнего) на debug_ui_slot× их собственную высоту — 0 (дефолт) даёт СТАРОЕ положение, не трогает
-## уже настроенного defense-бота; второй бот на карте — 1, третий — 2, и т.д.
+## Несколько ботов с show_brain_debug на ОДНОЙ карте (по прямому запросу — второй ACHIEVER на
+## TargetObjectiveMap.tscn) иначе рисуют панель РОВНО в одном месте экрана, поверх друг друга,
+## нечитаемо (нашли живьём на скриншоте с двумя ботами). debug_ui_slot сдвигает brain-панель
+## этого конкретного бота вниз от верхнего края на debug_ui_slot× её высоту — 0 (дефолт) даёт
+## СТАРОЕ положение, не трогает уже настроенного defense-бота; второй бот на карте — 1, третий — 2.
 @export var debug_ui_slot: int = 0
 
 ## EASY/HARD — множители/значения поверх полей выше (MEDIUM = как объявлены, без изменений).
@@ -1139,17 +1135,12 @@ var _detour_target_world_yaw: float = 0.0
 
 var _brain_debug_label: Label
 
-## Тумблер "реакция на противников" (по прямому запросу) — обычная var, НЕ @export: регулируется
-## В РАНТАЙМЕ кнопкой (_setup_reaction_toggle_button()), а не настройкой инстанса при старте.
-## ВЫКЛ означает: бот продолжает домашнее поведение роли (патруль/ожидание), не сканирует и не
-## реагирует на попадания (см. гейты в _think()/_on_damaged()) — но физически всё ещё считает
-## противника препятствием: _check_emergency_brake() смотрит на слои environment+tanks и вообще не
-## завязан на _think()/_current_target, так что тормозит перед игроком независимо от этого флага —
-## ровно то разделение "игнорирует как цель, но объезжает как объект", которое просили. Габарит
-## объекта имитации замаскированного танка (слой disguise_obstacle) учитывает _scan_gap() при
-## выборе объезда — см. _cast_ray_dist()/_check_emergency_brake().
+## Раньше — рантайм-тумблер "реакция на ВСЕХ противников" с кнопкой на экране. Кнопка убрана;
+## флаг остался всегда true (домашнее поведение / гейты в _think()/_on_damaged() читают его как
+## обычно, просто ветка "выключено" больше не достижима). Игрок-специфичный аналог ("боты не
+## воспринимают танк игрока как врага") теперь — MatchState.bots_ignore_player, гейтится в
+## _can_see()/_on_damaged() и НЕ трогает бой бот-против-бота.
 var enemy_reaction_enabled: bool = true
-var _reaction_toggle_button: Button
 
 ## Статистика для дебаг-панели (по прямому запросу) — обе копятся с _ready(), никогда не
 ## сбрасываются сами (переживают смену стейта/цели, в отличие от вейпоинт-прогресса):
@@ -1292,8 +1283,6 @@ func _initialize() -> void:
 			_setup_path_debug_draw()
 		if show_brain_debug:
 			_setup_brain_debug_label()
-		if show_reaction_toggle_button:
-			_setup_reaction_toggle_button()
 
 ## MEDIUM ничего не меняет (числа выше УЖЕ тюнинг medium). EASY/HARD перезаписывают поля
 ## значениями из _DIFFICULTY_PRESETS — правки конкретных @export-полей в инспекторе этого
@@ -2017,10 +2006,9 @@ func _think() -> void:
 	if not _ammo.has_ammo():
 		_enter_ammo_seek()
 		return
-	# Тумблер выключен (см. @export-блок про show_reaction_toggle_button) — не сканируем и не
-	# держим цель вообще, сразу домашнее поведение роли. Если бот был в ATTACK в момент выключения
-	# (нажали кнопку прямо во время боя) — выходим из него тем же путём, что при обычной потере
-	# цели, максимум через один think_interval_sec.
+	# enemy_reaction_enabled сейчас всегда true (кнопка убрана, см. её объявление) — ветка мёртвая,
+	# оставлена как есть. Игрок-специфичный "игнор" (MatchState.bots_ignore_player) работает не
+	# здесь, а точечно в _can_see()/_on_damaged().
 	if not enemy_reaction_enabled:
 		if state == State.ATTACK:
 			_on_target_lost()
@@ -3340,6 +3328,13 @@ func _enemy_is_disguised(t: Node) -> bool:
 func _can_see(target: Node3D, ignore_disguise: bool = false) -> bool:
 	if not target.visible:
 		return false
+	# Дебаг-тумблер "реакция ботов на игрока" (кнопка в левом нижнем углу, map_scene.gd): включён —
+	# бот вообще не воспринимает танк игрока как врага (ни обнаружение _scan_for_target(), ни
+	# удержание уже захваченной цели в _think(), ни реакция на обстрел _on_damaged() — все три идут
+	# через _can_see()). Бот-против-бота не затронут. Игрок опознаётся по имени узла "PlayerTank" —
+	# та же конвенция, что в hud.gd / team_spawner.gd / _player_sees_me().
+	if MatchState.bots_ignore_player and target.name == &"PlayerTank":
+		return false
 	# Маскировка (disguise_controller.gd): пока вражеский танк замаскирован под объект-препятствие,
 	# бот его НЕ видит — ни в главном конусе, ни в прицельном, ни как killer при обстреле — ЕСЛИ бот
 	# не держал его целью до маскировки (ignore_disguise=false). Сброс маскировки (по любой причине,
@@ -3601,6 +3596,10 @@ func _on_damaged(_current_hits: int, _max_hits: int, killer: Node) -> void:
 	if not enemy_reaction_enabled:
 		return
 	if killer == null or not is_instance_valid(killer) or killer == _body:
+		return
+	# Тумблер "реакция ботов на игрока" (см. _can_see) — попадание от танка игрока игнорируется
+	# целиком: ни доворота башни на стрелка, ни поиска его в слепой зоне. От бота — как обычно.
+	if MatchState.bots_ignore_player and killer.name == &"PlayerTank":
 		return
 	_look_yaw = _yaw_to_world_point(_turret.global_position, killer.global_position)
 	_wander_holding = false
@@ -4631,38 +4630,6 @@ func _setup_brain_debug_label() -> void:
 	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
 	get_tree().current_scene.add_child.call_deferred(layer)
 
-## Тот же приём, что и у _setup_brain_debug_label() — отдельный CanvasLayer, не трогаем разметку
-## HUD.tscn. Внизу слева (HUD занимает левый верх, brain debug — правый верх, тут свободно).
-func _setup_reaction_toggle_button() -> void:
-	const SLOT_HEIGHT := 48.0
-	var slot_offset: float = debug_ui_slot * SLOT_HEIGHT
-	var layer := CanvasLayer.new()
-	layer.name = "BotReactionToggleLayer_%s" % _body.name  # уникально — см. debug_ui_slot
-	var button := Button.new()
-	button.name = "BotReactionToggleButton_%s" % _body.name  # click_element резолвит по имени — с
-	# одинаковым именем на двух ботах кликнул бы по ПЕРВОМУ попавшемуся, не обязательно нужному
-	button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	button.offset_left = 16.0
-	button.offset_top = -56.0 - slot_offset
-	button.offset_right = 236.0
-	button.offset_bottom = -16.0 - slot_offset
-	button.pressed.connect(_on_reaction_toggle_pressed)
-	layer.add_child(button)
-	_reaction_toggle_button = button
-	# call_deferred по той же причине, что и у остальных дебаг-узлов (см. _setup_fov_debug_draw) —
-	# сцена ещё строится в момент, когда доходит очередь до этого (последнего) сиблинга.
-	get_tree().current_scene.add_child.call_deferred(layer)
-	_update_reaction_toggle_button()
-
-func _on_reaction_toggle_pressed() -> void:
-	enemy_reaction_enabled = not enemy_reaction_enabled
-	_update_reaction_toggle_button()
-
-func _update_reaction_toggle_button() -> void:
-	if _reaction_toggle_button == null:
-		return
-	_reaction_toggle_button.text = "%s reaction: %s" % [_body.name, "ON" if enemy_reaction_enabled else "OFF"]
-
 func _update_brain_debug_label() -> void:
 	if _brain_debug_label == null:
 		return
@@ -4678,7 +4645,7 @@ func _update_brain_debug_label() -> void:
 			"=== BOT BRAIN: %s ===" % _body.name,
 			"session: -   record leg: -",
 			"role: -   difficulty: -",
-			"state: DEAD   reaction: -",
+			"state: DEAD   ignore player: %s" % ("YES" if MatchState.bots_ignore_player else "no"),
 			"ammo: %d/%d" % [_ammo.current_ammo, _ammo.max_ammo],
 			"respawn in: %.1fs" % respawn_left,
 			"look: -",
@@ -4688,7 +4655,7 @@ func _update_brain_debug_label() -> void:
 	lines.append("=== BOT BRAIN: %s ===" % _body.name)
 	lines.append("session: %.1f min   record leg: %.1fs" % [_total_time_sec / 60.0, _max_leg_time_sec])
 	lines.append("role: %s   difficulty: %s" % [Role.keys()[role], Difficulty.keys()[difficulty]])
-	lines.append("state: %s   reaction: %s" % [State.keys()[state], "ON" if enemy_reaction_enabled else "OFF"])
+	lines.append("state: %s   ignore player: %s" % [State.keys()[state], "YES" if MatchState.bots_ignore_player else "no"])
 	lines.append("ammo: %d/%d" % [_ammo.current_ammo, _ammo.max_ammo])
 	match state:
 		State.ATTACK:

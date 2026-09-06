@@ -271,7 +271,7 @@ an array of "squad" dicts:
   full-team map would set it on both squads.
 - Any subset of `TankAIController` fields (`role`, `difficulty`, `waypoint_name_prefix`,
   `waypoints_one_way`, `hunt_area_center`/`_half_extents`, `forward_look_bias`, `debug_ui_slot`,
-  the four `show_*_debug` flags) — applied only if the key is present (`_apply_squad_to_brain()`),
+  the three `show_*_debug` flags) — applied only if the key is present (`_apply_squad_to_brain()`),
   an omitted key keeps the script's own `@export` default.
 
 Physical tank stats are a separate, unrelated JSON layer — `config/player_tank_config.json`/
@@ -476,13 +476,15 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
 - `map_scene.gd` — the `Игрок: бессмертие ON/OFF` button *and* the forced `_player_health.invincible
   = true` it sets (so with debug OFF the player is mortal); the `Objective: ON/OFF` button; the
   1/2/3 observer-camera keys (`_unhandled_input`); the `+ Бот (атака)`/`+ Бот (оборона)` buttons
-  (`_setup_bot_spawn_buttons()`, calls `TeamSpawner.spawn_one_bot(team)`).
+  (`_setup_bot_spawn_buttons()`, calls `TeamSpawner.spawn_one_bot(team)`); the single
+  `Реакция ботов на игрока ON/OFF` button (`_setup_ignore_player_toggle_button()`, toggles
+  `MatchState.bots_ignore_player` — off = bots stop perceiving the `PlayerTank` node as an enemy,
+  gated in `TankAIController._can_see()`/`_on_damaged()`; bot-vs-bot unaffected).
 - `tank.gd` — the billboard `Label3D` "HP N/M" above each tank (`_setup_hp_label()`), refreshed on
   `damaged`/`destroyed`/`on_respawned()`. The team-colour mesh tint (`apply_team_visuals()`) is
   **not** gated — it always applies.
-- `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays and the
-  per-bot reaction-toggle button (setup **and** the `_physics_process` update calls, so the
-  overlay meshes/labels are never touched when null).
+- `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays (setup **and**
+  the `_physics_process` update calls, so the overlay meshes/labels are never touched when null).
 - `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is now
   this one script/one visual** (per-instance `@export radius`, movable/scalable in the editor, no
   separate hardcoded radius anywhere): spawn zones, the ammo/mod drop-zone circle (the

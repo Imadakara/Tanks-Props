@@ -130,8 +130,8 @@ func _find_spawn_zone(node_name: String) -> Node3D:
 func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, index: int) -> void:
 	var bot: CharacterBody3D = BotTankScene.instantiate()
 	# Дефолтное имя инстанса Tank.tscn при instantiate() — движковое "@CharacterBody3D@N" (root
-	# без явно заданного unique-имени в самой сцене) — нечитаемо в дебаг-виджетах бота (кнопка
-	# reaction-тумблера, "BOT BRAIN"-панель, обе используют _body.name, см. tank_ai_controller.gd).
+	# без явно заданного unique-имени в самой сцене) — нечитаемо в дебаг-виджете бота
+	# ("BOT BRAIN"-панель использует _body.name, см. tank_ai_controller.gd).
 	# Явное имя по команде+порядку — до add_child(), чтобы дебаг-узлы бота уже создавались под ним.
 	bot.name = "%sBot%d" % ["Attack" if team == 0 else "Defense", index]
 	# CameraRig.is_active гасит Camera3D.current уже В СВОЁМ _ready() — тот срабатывает
@@ -238,8 +238,6 @@ func _apply_squad_to_brain(brain: Node, squad: Dictionary) -> void:
 		brain.show_path_debug = bool(squad["show_path_debug"])
 	if squad.has("show_brain_debug"):
 		brain.show_brain_debug = bool(squad["show_brain_debug"])
-	if squad.has("show_reaction_toggle_button"):
-		brain.show_reaction_toggle_button = bool(squad["show_reaction_toggle_button"])
 	# Маскировка бота (см. vault Tank_Prop_Hunt_Disguise.md) — мастер-тумблер + по-сценарные
 	# флаги/пороги. Всё дефолтно выкл, включается только тут.
 	if squad.has("disguise_bot_enabled"):
