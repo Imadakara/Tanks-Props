@@ -682,16 +682,20 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 ## [ИЗМЕНЕНО, по прямому запросу — "уменьши скорость движения всех танков в полтора раза (езда и
 ## поворот корпуса), общий MEDIUM-пресет"] Было `1.0`, потом `1.0 / 1.5` (замедление показалось
-## СЛИШКОМ сильным на живой обкатке) — [ИЗМЕНЕНО, по прямому запросу — "чот слишком медленно,
-## ускорь на четверть"] теперь `(1.0 / 1.5) * 1.25` поверх замедленного значения, не поверх
-## исходного `1.0`. Единственный экспорт, управляющий ОБОИМИ — и скоростью поворота башни
-## (применяется на Turret при `_ready()`, см. `turret_controller.gd`, тем же значением — скорость
-## блуждания обзора), И скоростью поворота КОРПУСА бота (`_initialize()` переопределяет
-## `TankMovement.turn_speed = turret_turn_speed / 1.1` — корпус ВСЕГДА на 10% медленнее собственной
-## башни бота, инвариант из живой отладки манёвра в бою, см. секцию "Наводка и стрельба" — трогать
-## саму пропорцию нельзя, ломает контр-кручение башни при манёвре). Меняя ЭТОТ экспорт, поправка
-## применяется к обоим (башня и корпус) СИНХРОННО, инвариант 10% остаётся точным.
-@export var turret_turn_speed: float = (1.0 / 1.5) * 1.25  # рад/сек — MEDIUM-пресет (EASY/HARD — свои абсолютные значения в _DIFFICULTY_PRESETS)
+## СЛИШКОМ сильным на живой обкатке), потом `(1.0/1.5)*1.25` (та же правка вместе с move_speed) —
+## [ИЗМЕНЕНО, по прямому запросу — "боты нерасторопные после общего снижения скорости передвижения,
+## увеличь скорость поворота (в т.ч. на месте) на четверть"] ещё раз `*1.25`, ТОЛЬКО поворот на этот
+## раз — `move_speed_multiplier` ниже НЕ трогаем, запрос сузился строго до вращения. Итог
+## `(1.0/1.5)*1.25*1.25 ≈ 1.042` — уже ЧУТЬ БЫСТРЕЕ исходного MEDIUM `1.0`: осознанно, движение
+## осталось медленным (см. move_speed_multiplier), а доворот/разворот на месте должен ощущаться
+## бодрее, не завязан на скорость езды. Единственный экспорт, управляющий ОБОИМИ — и скоростью
+## поворота башни (применяется на Turret при `_ready()`, см. `turret_controller.gd`, тем же
+## значением — скорость блуждания обзора), И скоростью поворота КОРПУСА бота (`_initialize()`
+## переопределяет `TankMovement.turn_speed = turret_turn_speed / 1.1` — корпус ВСЕГДА на 10%
+## медленнее собственной башни бота, инвариант из живой отладки манёвра в бою, см. секцию "Наводка и
+## стрельба" — трогать саму пропорцию нельзя, ломает контр-кручение башни при манёвре). Меняя ЭТОТ
+## экспорт, поправка применяется к обоим (башня и корпус) СИНХРОННО, инвариант 10% остаётся точным.
+@export var turret_turn_speed: float = (1.0 / 1.5) * 1.25 * 1.25  # рад/сек — MEDIUM-пресет (EASY/HARD — свои абсолютные значения в _DIFFICULTY_PRESETS)
 ## Множитель к TankMovement.move_speed (см. _ready()) — по прямому запросу боты EASY/MEDIUM должны
 ## быть медленнее танка игрока, 0.75 = на 25% медленнее. HARD возвращает полную скорость игрока
 ## обратно в своём пресете (см. _DIFFICULTY_PRESETS) — сложность в первую очередь про осведомлённость
@@ -2743,6 +2747,14 @@ func _has_mortar() -> bool:
 	return _mod.ai_usable()
 
 ## Красный ящик В ПРЕДЕЛАХ РАДИУСА зоны от её центра (аналог _find_crate_in_zone для патронов).
+## [ИСПРАВЛЕНО, живьём — "бот прибыл на зону сброса и впал в ступор, крутится на месте"] ЖДЁМ
+## приземления (`_falling == false`) — `fall_to()` (mod_crate.gd/ammo_crate.gd) ставит X/Z СРАЗУ на
+## финальную точку, а Y падает постепенно (кинематическое падение с высокого DropOrigin), так что
+## XZ-проверка радиуса зоны выше находила ящик, ещё летящий по воздуху — `_nav_agent.target_position`
+## получал реальный (высокий) Y ящика, NavMesh не может проложить путь к точке над землёй, pure
+## pursuit вырождался — бот крутился на месте бесконечно (`ai_move_input=0`, `ai_turn_input` в
+## насыщении), позиция буквально замирала. Живым тестом воспроизведено: подобрали летящий mod-ящик
+## (`nav_target.y == 14`), бот застрял в `MOD_RETRIEVE`, вращаясь, десятки кадров без движения.
 func _find_mod_crate_in_zone(zone: Node) -> Node:
 	var area: Node3D = _ammo_zone_area(zone)
 	if area == null:
@@ -2750,7 +2762,7 @@ func _find_mod_crate_in_zone(zone: Node) -> Node:
 	var radius: float = float(area.get("radius"))
 	var center: Vector3 = area.global_position
 	for crate in get_tree().get_nodes_in_group("mod_crates"):
-		if not is_instance_valid(crate):
+		if not is_instance_valid(crate) or bool(crate.get("_falling")):
 			continue
 		if Vector2(crate.global_position.x - center.x, crate.global_position.z - center.z).length() <= radius:
 			return crate
@@ -2760,7 +2772,9 @@ func _find_mod_crate_in_zone(zone: Node) -> Node:
 ## любой из двух конусов (главный/корпус ИЛИ прицельный/башня, как _can_see) + LOS по environment.
 func _visible_mod_crate() -> Node:
 	for crate in get_tree().get_nodes_in_group("mod_crates"):
-		if is_instance_valid(crate) and _point_in_view(crate.global_position):
+		# _falling — см. doc-comment у _find_mod_crate_in_zone() выше, тот же класс бага: целиться
+		# в ещё летящий ящик (Y высоко над землёй) вырождает NavMesh-путь, бот крутится на месте.
+		if is_instance_valid(crate) and not bool(crate.get("_falling")) and _point_in_view(crate.global_position):
 			return crate
 	return null
 
@@ -4165,6 +4179,9 @@ func _ammo_zone_area(zone: Node) -> Node3D:
 ## Валидный (is_instance_valid) — ящик, который кто-то только что подобрал, ещё "существует" один
 ## кадр как невалидная ссылка, если её вообще где-то держали, но из свежего group-запроса уже не
 ## вернётся вовсе (queue_free() убирает из группы синхронно). Null — ни одного в радиусе.
+## [ИСПРАВЛЕНО, живьём — тот же класс, что и _find_mod_crate_in_zone() выше] Пропускаем ещё
+## падающие ящики (`_falling == true`, ammo_crate.gd) — X/Z уже на месте, Y ещё высоко, целиться в
+## такую точку заставляет NavMesh-путь вырождаться, бот крутится на месте вместо движения.
 func _find_crate_in_zone(zone: Node) -> Node:
 	var area: Node3D = _ammo_zone_area(zone)
 	if area == null:
@@ -4172,7 +4189,7 @@ func _find_crate_in_zone(zone: Node) -> Node:
 	var radius: float = float(area.get("radius"))
 	var center: Vector3 = area.global_position
 	for crate in get_tree().get_nodes_in_group("ammo_crates"):
-		if not is_instance_valid(crate):
+		if not is_instance_valid(crate) or bool(crate.get("_falling")):
 			continue
 		var dist: float = Vector2(crate.global_position.x - center.x, crate.global_position.z - center.z).length()
 		if dist <= radius:
@@ -4202,7 +4219,8 @@ func _ammo_zone_containing_bot() -> Node:
 ## (группа "ammo_crates", та же, что _find_crate_in_zone() выше).
 func _visible_ammo_crate() -> Node:
 	for crate in get_tree().get_nodes_in_group("ammo_crates"):
-		if is_instance_valid(crate) and _point_in_view(crate.global_position):
+		# _falling — тот же класс бага, см. _find_crate_in_zone() выше.
+		if is_instance_valid(crate) and not bool(crate.get("_falling")) and _point_in_view(crate.global_position):
 			return crate
 	return null
 
