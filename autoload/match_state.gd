@@ -60,6 +60,19 @@ var debug_spawn_bots_on_start: bool = true
 ## Живучесть через reload_current_scene() как у debug_enabled; reset_series() его не трогает.
 var bots_ignore_player: bool = false
 
+## [ДОБАВЛЕНО, по прямому запросу — "сделай функцию обрезания вижена опциональной в дебаг-режиме
+## боя, по умолчанию выкл, отображение обрезания нужно только при тестах"] Читается ТОЛЬКО когда
+## debug_enabled (как и остальные под-тумблеры этого файла). false (дефолт) — debug-веер обзора
+## бота/турели (`tank_ai_controller.gd`/`turret_ai.gd`, `_update_fov_debug_draw()`/
+## `_update_fov_debug()`) рисуется на полный радиус, БЕЗ обрезки по препятствиям, и НИ ОДНОГО
+## лишнего raycast'а не кастуется — `_fov_obstacle_dist()` вызывается только когда флаг true. true —
+## включает визуальную обрезку конусов по первой стене/танку на пути (см. Bot AI vault doc §17,
+## `Tank_Prop_Hunt_Turrets.md` §4) — нужна только при точечной проверке LOS-геометрии, не как
+## повседневный вид дебаг-режима. Никакого UI-тумблера нет намеренно — включать точечно из
+## `run_script`/кода при тестировании. Живучесть через reload_current_scene() как у debug_enabled;
+## reset_series() его не трогает.
+var fov_debug_clip_obstacles: bool = false
+
 ## Динамическая расстановка препятствий (см. корневой CLAUDE.md "Dynamic obstacle system",
 ## Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md §9). Ставится галочкой в меню (main_menu.gd), как
 ## debug_enabled — синхронно, ПЕРЕД сменой сцены. false (дефолт) — карта берёт статический пресет

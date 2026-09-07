@@ -503,9 +503,15 @@ func _update_fov_debug() -> void:
 
 	# Обрезка по препятствиям (см. doc-comment _fov_obstacle_dist()) — один луч на угол сегмента,
 	# переиспользуется для заливки/контура (vision_range) и обеих внутренних дуг на том же угле.
+	# [ОПЦИОНАЛЬНО, по прямому запросу — "обрезание вижена опционально в дебаг-режиме, по умолчанию
+	# выкл"] Только когда MatchState.fov_debug_clip_obstacles — иначе ни одного raycast'а, веер на
+	# полный радиус (см. её doc-comment в match_state.gd).
 	var clip: Array[float] = []
 	for i in range(SEGMENTS + 1):
-		clip.append(_fov_obstacle_dist(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), vision_range))
+		if MatchState.fov_debug_clip_obstacles:
+			clip.append(_fov_obstacle_dist(lerp(cone_min, cone_max, float(i) / float(SEGMENTS)), vision_range))
+		else:
+			clip.append(vision_range)
 
 	# Заливка конуса обнаружения (радиус vision_range) — треугольниками от центра.
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)

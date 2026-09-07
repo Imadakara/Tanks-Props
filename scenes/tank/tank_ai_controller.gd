@@ -4459,11 +4459,17 @@ func _update_fov_debug_draw() -> void:
 
 	# Обрезка по препятствиям (см. doc-comment _fov_obstacle_dist()) — один луч на угол сегмента,
 	# переиспользуется ниже и для заливки/контура (радиус vision_range), и для дуги fire_range на
-	# том же угле.
+	# том же угле. [ОПЦИОНАЛЬНО, по прямому запросу — "обрезание вижена опционально в дебаг-режиме,
+	# по умолчанию выкл"] Только когда MatchState.fov_debug_clip_obstacles — иначе НИ ОДНОГО
+	# raycast'а не кастуется, веер рисуется на полный радиус как раньше (см. её doc-comment в
+	# match_state.gd — это точечный тумблер для проверки LOS-геометрии, не повседневный вид дебага).
 	var main_clip: Array[float] = []
 	for i in range(SEGMENTS + 1):
-		var t0: float = float(i) / float(SEGMENTS)
-		main_clip.append(_fov_obstacle_dist(lerp(cone_min_deg, cone_max_deg, t0), radius))
+		if MatchState.fov_debug_clip_obstacles:
+			var t0: float = float(i) / float(SEGMENTS)
+			main_clip.append(_fov_obstacle_dist(lerp(cone_min_deg, cone_max_deg, t0), radius))
+		else:
+			main_clip.append(radius)
 
 	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -4521,8 +4527,11 @@ func _update_fov_debug_draw() -> void:
 	# (турель может быть довёрнута), угол-в-угол с main_clip не совпадает.
 	var sec_clip: Array[float] = []
 	for i in range(SEGMENTS + 1):
-		var t3s: float = float(i) / float(SEGMENTS)
-		sec_clip.append(_fov_obstacle_dist(lerp(sec_min_deg, sec_max_deg, t3s), radius))
+		if MatchState.fov_debug_clip_obstacles:
+			var t3s: float = float(i) / float(SEGMENTS)
+			sec_clip.append(_fov_obstacle_dist(lerp(sec_min_deg, sec_max_deg, t3s), radius))
+		else:
+			sec_clip.append(radius)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	mesh.surface_set_color(Color(1.0, 1.0, 1.0, 0.6))
 	mesh.surface_add_vertex(center)
