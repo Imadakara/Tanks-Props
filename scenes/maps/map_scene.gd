@@ -32,6 +32,7 @@ extends Node3D
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const MatchManagerScript := preload("res://scenes/main/match_manager.gd")
 const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_state.gd")
+const ContainerManagerScript := preload("res://scenes/main/container_manager.gd")
 const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obstacle_placer.gd")
 
 ## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TargetObjectiveMap.tscn` = 0,
@@ -42,7 +43,7 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 ## каждый раз вырезал строку `match_mode = 0` из TargetObjectiveMap.tscn (равно дефолту → не
 ## пишется), а пропавший `match_mode` молча читается как TARGET_OBJECTIVE — на карте, которой
 ## нужен TEAM_ARENA, это тихая поломка. Проверка на -1 — в _setup_match_context().
-@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA") var match_mode: int = -1
+@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA", "CONTAINER_EXTRACTION") var match_mode: int = -1
 
 ## Опция карты: наступает ли финальная стадия (доп. время + продолжающийся сброс ящиков), когда
 ## основное время раунда вышло, а у всех живых танков кончился боезапас. Условие/логику см.
@@ -58,6 +59,25 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 ## явно ставит false.
 @export var map_border_enabled: bool = true
 
+## Опция карты: печь ли навмеш ЗАНОВО при каждом старте сцены, вместо того чтобы хранить готовый
+## в .tscn. Дефолт false — обе «плоские» карты (TargetObjectiveMap/TeamArenaMap) держат запечённый
+## редактором навмеш в файле сцены, как и раньше, строки в их .tscn нет.
+## true имеет смысл на карте, геометрию которой активно двигают: ручная перепечка кнопкой
+## «Bake NavigationMesh» в редакторе после КАЖДОЙ правки (см. Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md)
+## — главный тормоз итераций, а для многоуровневой карты правок в разы больше, чем для плоской.
+## Механизм тот же, что у динамической расстановки (_apply_dynamic_obstacles): bake_navigation_mesh()
+## + await bake_finished + физ.кадр на синк NavigationServer, до спавна ботов. Когда геометрия
+## устоится — выключить и запечь в .tscn руками, чтобы не платить запечкой на каждом старте.
+@export var bake_navmesh_on_start: bool = false
+
+## Опция карты: применима ли к ней вообще динамическая расстановка препятствий (галочка в меню →
+## MatchState.dynamic_obstacles). Дефолт true — строки в .tscn у «плоских» карт нет.
+## false обязателен для карты, чья геометрия собрана из Obstacle-подобных узлов НЕ как сменное
+## укрытие: _apply_dynamic_obstacles() безусловно сносит всю группу "obstacles". Кухня свою мебель
+## держит на Structure (группа "structures", см. structure.gd) и потому уцелела бы, но случайные
+## кубы, разбросанные по XZ без понятия об этажах, на многоуровневой карте всё равно бессмысленны.
+@export var dynamic_obstacles_supported: bool = true
+
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
 @onready var _player_health: Node = $PlayerTank/HealthComponent
 @onready var _objective_camera: Camera3D = $ObjectiveCamera
@@ -68,6 +88,7 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 @onready var _alert_zone: Node3D = find_child("ObjectiveAlertZone", true, false)
 
 var _objective_health: Node = null
+var _container_manager: Node = null  # только в режиме CONTAINER_EXTRACTION, иначе null
 var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
 var _ignore_player_toggle_button: Button
@@ -85,12 +106,22 @@ var _alert_state := ObjectiveAlertStateScript.new()
 ## через ScoreManager/MatchManager.begin_match()/setup(), должна видеть уже полный состав (см.
 ## корневой CLAUDE.md, "Scene bring-up ordering").
 func _ready() -> void:
+	# ПЕРВЫМ ДЕЛОМ, до любого await ниже. Раньше режим проставлялся в _setup_match_context() в
+	# конце _ready(), и это работало, пока _ready() был синхронным: чужие ленивые инициализации
+	# (ammo_drop_zone.gd в своём первом _process) гарантированно шли после него. Как только в
+	# _ready() появились ожидания (запечка навмеша, динамические препятствия), гарантия исчезла —
+	# зона сброса успевала прочитать MatchState.match_mode ДО присвоения и получала режим прошлой
+	# сцены (кухня заводила мортирный каденс по правилам TARGET_OBJECTIVE, 30с вместо 75с).
+	# Присвоение режима ничего из дерева не требует, поэтому его можно и нужно делать до ожиданий.
+	_apply_match_mode_to_state()
 	_build_map_borders()
 	# Динамический пресет препятствий (галочка в меню → MatchState.dynamic_obstacles). Держим
 	# старт раунда до конца асинхронной перепечки навмеша — боты/менеджер матча заводятся уже по
 	# новой карте проходимости.
-	if MatchState.dynamic_obstacles:
+	if MatchState.dynamic_obstacles and dynamic_obstacles_supported:
 		await _apply_dynamic_obstacles()
+	elif bake_navmesh_on_start:
+		await _bake_navmesh()
 	if MatchState.debug_enabled:
 		_setup_invincibility_toggle_button()
 		_setup_bot_spawn_buttons()
@@ -170,6 +201,35 @@ func _build_map_borders() -> void:
 		body.add_child(mesh_inst)
 		container.add_child(body)
 		body.global_position = Vector3(xz.x, top_y + _BORDER_HEIGHT * 0.5, xz.y)
+
+## Режим карты → MatchState. Вызывается ПЕРВОЙ строкой _ready(), до любых ожиданий (см. там).
+## match_mode дефолт = -1 (см. @export выше). Если он всё ещё -1 — строку `match_mode` вырезали
+## из .tscn (GUI-сейв при значении = старому дефолту 0) либо новая карта её не задала. Не молчим:
+## 0/1/2 теперь НЕ-дефолтны, редактор их не режет; -1 здесь = реальная ошибка конфигурации карты.
+func _apply_match_mode_to_state() -> void:
+	if match_mode < 0:
+		push_error("map_scene: match_mode не задан на корне %s — выставь в .tscn (0=TARGET_OBJECTIVE, 1=TEAM_ARENA, 2=CONTAINER_EXTRACTION). Фолбэк на TARGET_OBJECTIVE." % scene_file_path)
+		match_mode = MatchState.Mode.TARGET_OBJECTIVE
+	MatchState.match_mode = match_mode
+	# Формат матча — свойство режима, не общая константа (экстракшен — один раунд, остальные —
+	# best-of-3). Ставим при КАЖДОЙ загрузке карты: autoload переживает смену сцены, иначе число
+	# протекло бы с предыдущей карты (см. MatchState.apply_mode_defaults).
+	MatchState.apply_mode_defaults(match_mode)
+
+## Перепечь навмеш карты на старте (@export bake_navmesh_on_start, см. его doc-comment). Ждётся
+## вызывающим _ready() — боты лениво инициализируются уже после него и стартуют по готовой карте
+## проходимости. Тип парсинга форсируем на STATIC_COLLIDERS по той же причине, что и в
+## _apply_dynamic_obstacles(): на рантайме читать визуальные меши обратно с GPU дорого и шумит
+## варнингом, а вся геометрия карты — StaticBody3D на слое 1 (Ground/Structure/ToyRamp/Obstacle).
+func _bake_navmesh() -> void:
+	var nav := get_node_or_null("NavigationRegion3D") as NavigationRegion3D
+	if nav == null or nav.navigation_mesh == null:
+		push_warning("map_scene: bake_navmesh_on_start включён, но NavigationRegion3D/navigation_mesh не найден — запечка пропущена")
+		return
+	nav.navigation_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
+	nav.bake_navigation_mesh()
+	await nav.bake_finished
+	await get_tree().physics_frame  # NavigationServer синкает карту на физ.кадре после запечки
 
 ## Динамический пресет препятствий (см. корневой CLAUDE.md "Dynamic obstacle system",
 ## Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md §9). Убирает статические Obstacle.tscn карты
@@ -269,11 +329,6 @@ func _setup_match_context() -> void:
 	# match_mode дефолт = -1 (см. @export выше). Если он всё ещё -1 — строку `match_mode` вырезали
 	# из .tscn (GUI-сейв при значении = старому дефолту 0) либо новая карта её не задала. Не молчим:
 	# 0/1 теперь НЕ-дефолтны, редактор их не режет; -1 здесь = реальная ошибка конфигурации карты.
-	if match_mode < 0:
-		push_error("map_scene: match_mode не задан на корне %s — выставь в .tscn (0=TARGET_OBJECTIVE, 1=TEAM_ARENA). Фолбэк на TARGET_OBJECTIVE." % scene_file_path)
-		match_mode = MatchState.Mode.TARGET_OBJECTIVE
-	MatchState.match_mode = match_mode
-
 	var score_manager := Node.new()
 	score_manager.name = "ScoreManager"
 	score_manager.set_script(ScoreManagerScript)
@@ -282,7 +337,21 @@ func _setup_match_context() -> void:
 
 	var objective := get_tree().current_scene.find_child("Objective", true, false)
 	var objective_health: Node = objective.get_node_or_null("HealthComponent") if objective != null else null
-	var round_sec: float = GameConfig.team_arena_round_sec if match_mode == MatchState.Mode.TEAM_ARENA else GameConfig.round_timer_sec
+	var round_sec: float = GameConfig.round_timer_sec
+	if match_mode == MatchState.Mode.TEAM_ARENA:
+		round_sec = GameConfig.team_arena_round_sec
+	elif match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+		round_sec = GameConfig.container_round_sec
+
+	# Правила экстракшена (раскладка контейнеров, доставка на базу, выброс при гибели носителя) —
+	# отдельный менеджер, заводится ДО MatchManager: тот подписывается на его all_delivered, чтобы
+	# закрыть раунд досрочно. Тот же паттерн «узел из кода в корне сцены», что у ScoreManager.
+	if match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+		_container_manager = Node.new()
+		_container_manager.name = "ContainerManager"
+		_container_manager.set_script(ContainerManagerScript)
+		add_child(_container_manager)
+		_container_manager.setup()
 
 	# Полноценный постраундовый цикл (см. match_manager.gd): TARGET_OBJECTIVE — уничтожение цели →
 	# победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель по убийствам; плюс
@@ -292,7 +361,7 @@ func _setup_match_context() -> void:
 	match_manager.name = "MatchManager"
 	match_manager.set_script(MatchManagerScript)
 	add_child(match_manager)
-	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled)
+	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled, _container_manager)
 	match_manager.round_ended.connect(_on_round_ended_teardown)
 
 ## Конец раунда зафиксирован (чья-то победа) — в рамках MVP «замораживаем» поле: глушим спавнеры
@@ -303,6 +372,10 @@ func _setup_match_context() -> void:
 ## MatchManager._end_round). Порядок в цикле: halt() РАНЬШЕ force_destroy() того же танка, иначе
 ## RespawnController._on_destroyed успеет запустить таймер респавна.
 func _on_round_ended_teardown(_winner: String) -> void:
+	# ПЕРЕД force_destroy() ниже: иначе «заморозка поля» высыпала бы контейнеры из слотов всех
+	# погибших от неё носителей (см. container_manager.gd._on_tank_destroyed).
+	if _container_manager != null:
+		_container_manager.halt()
 	$TeamSpawner.halt()
 	for button in _bot_spawn_buttons:
 		if is_instance_valid(button):

@@ -5,6 +5,7 @@ extends CanvasLayer
 ##   строка 1 — «Раунд N/M | MM:SS» (N = MatchState.current_round(), инкремент при СТАРТЕ раунда);
 ##   строка 2 — общий счёт по MatchState.match_mode: TARGET_OBJECTIVE — серия раундов «Ты/Противник»;
 ##             TEAM_ARENA — убийства команд-цветов в раунде + серия, всё по «Красные/Синие»;
+##             CONTAINER_EXTRACTION — доставленные контейнеры по цветам + сколько их осталось на карте;
 ##   строка 3 — «Цель: N/M попаданий», здоровье objective-цели (только TARGET_OBJECTIVE);
 ##   строка 4 — «Респаун через N с», обратный отсчёт до респауна игрока (видна только пока идёт).
 ## В TEAM_ARENA стороны — постоянные команды-цвета (Красные = команда 0, Синие = команда 1),
@@ -37,6 +38,7 @@ var _respawn: Node  # RespawnController танка игрока — для ст�
 var _match_manager: Node
 var _score_manager: Node
 var _objective_health: Node  # HealthComponent objective-цели (режим TARGET_OBJECTIVE), резолвится лениво
+var _container_manager: Node  # ContainerManager (режим CONTAINER_EXTRACTION), резолвится лениво
 var _round_timer: Timer
 var _barrel: Node3D
 var _camera: Camera3D
@@ -142,6 +144,24 @@ func _resolve_round_timer() -> Timer:
 		_round_timer = scene.get_node_or_null("RoundTimer") as Timer
 	return _round_timer
 
+## Режимы с ПОСТОЯННЫМИ командами-цветами (Красные = команда 0 = «attack», Синие = команда 1 =
+## «defense»): TEAM_ARENA и CONTAINER_EXTRACTION. В них нет смены сторон между раундами, поэтому
+## HUD везде говорит «Красные/Синие», а не «Атака/Оборона» (те осмысленны только в TARGET_OBJECTIVE,
+## где роли реально чередуются). Одна проверка вместо четырёх независимых сравнений с TEAM_ARENA.
+func _is_color_team_mode() -> bool:
+	return MatchState.match_mode == MatchState.Mode.TEAM_ARENA \
+		or MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION
+
+## ContainerManager заводится map_scene.gd из кода уже ПОСЛЕ _ready() HUD — резолвится лениво, как
+## MatchManager/ScoreManager. null на картах любого другого режима.
+func _resolve_container_manager() -> Node:
+	if _container_manager != null and is_instance_valid(_container_manager):
+		return _container_manager
+	var scene := get_tree().current_scene
+	if scene != null:
+		_container_manager = scene.get_node_or_null("ContainerManager")
+	return _container_manager
+
 func _resolve_score_manager() -> Node:
 	if _score_manager != null and is_instance_valid(_score_manager):
 		return _score_manager
@@ -166,7 +186,7 @@ func _update_round_line() -> void:
 ## _ready(), поэтому обновляем лениво в _process. В TEAM_ARENA стороны — команды-цвета
 ## (Красные/Синие), никаких «атака/оборона».
 func _update_team_label() -> void:
-	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+	if _is_color_team_mode():
 		_team_label.text = "Команда: Красные" if MatchState.player_team == 0 else "Команда: Синие"
 	else:
 		_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
@@ -176,11 +196,21 @@ func _update_team_label() -> void:
 func _series_by_color() -> Array:
 	return [MatchState.series_wins_attack, MatchState.series_wins_defense]
 
-## Строка 2 (верх-центр): общий счёт. TARGET_OBJECTIVE — серия раундов по стороне
+## Строка 2 (верх-центр): общий счёт. CONTAINER_EXTRACTION — доставленные контейнеры по цветам
+## команд плюс «осталось на карте» (не доставленные — и лежащие, и в чужих слотах): матч из одного
+## раунда, серию показывать незачем. TARGET_OBJECTIVE — серия раундов по стороне
 ## («Атака : Оборона» — игрок меняет сторону между раундами, «Ты» не имеет смысла);
 ## TEAM_ARENA — убийства команд-цветов в текущем раунде И через разделитель серия раундов, всё
 ## по цветам (Красные = команда 0 = attack_kills, Синие = команда 1 = defense_kills).
 func _update_match_score_line() -> void:
+	if MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+		var cm := _resolve_container_manager()
+		if cm == null:
+			_score_label.text = "Контейнеры  Красные 0 : 0 Синие"
+			return
+		_score_label.text = "Контейнеры  Красные %d : %d Синие      Осталось на карте: %d" % \
+			[cm.attack_delivered, cm.defense_delivered, cm.remaining()]
+		return
 	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
 		var sm := _resolve_score_manager()
 		var red_kills: int = sm.attack_kills if sm != null else 0
@@ -242,7 +272,7 @@ func _on_round_ended(winner: String) -> void:
 ## Итог серии — по стороне-победителю. TEAM_ARENA — по цвету; TARGET_OBJECTIVE — по атака/оборона
 ## (игрок мог помогать обеим сторонам за матч, «выиграл/проиграл» от лица игрока не однозначно).
 func _series_verdict() -> String:
-	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+	if _is_color_team_mode():
 		var s := _series_by_color()  # [красные, синие]
 		var res: String
 		if s[0] > s[1]:
@@ -261,7 +291,13 @@ func _series_verdict() -> String:
 ## TARGET_OBJECTIVE — «Победа атакующих/обороняющихся» (сторона и есть команда).
 ## TEAM_ARENA — «Красные/Синие победили» + счёт убийств раунда, никаких атака/оборона.
 func _round_result_head(winner: String) -> String:
-	if MatchState.match_mode != MatchState.Mode.TEAM_ARENA:
+	if MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+		var cm := _resolve_container_manager()
+		var red: int = cm.attack_delivered if cm != null else 0   # attack == команда 0 == Красные
+		var blue: int = cm.defense_delivered if cm != null else 0  # defense == команда 1 == Синие
+		return "%s победили (контейнеры %d : %d)" % \
+			["Красные" if winner == "attack" else "Синие", red, blue]
+	if not _is_color_team_mode():
 		return "Победа атакующих" if winner == "attack" else "Победа обороняющихся"
 	var sm := _resolve_score_manager()
 	var red_kills: int = sm.attack_kills if sm != null else 0   # attack == команда 0 == Красные
@@ -273,7 +309,7 @@ func _round_result_head(winner: String) -> String:
 ## чередуются между раундами. В TEAM_ARENA стороны — постоянные команды-цвета (Красные/Синие),
 ## игрок весь матч в одной; инверсия player_team рассинхронила бы HUD с реальным полем.
 func _has_side_swap() -> bool:
-	if MatchState.match_mode == MatchState.Mode.TEAM_ARENA:
+	if _is_color_team_mode():
 		return false
 	var scene := get_tree().current_scene
 	return scene != null and scene.get_node_or_null("TeamSpawner") != null

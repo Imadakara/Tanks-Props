@@ -1,0 +1,9 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/modifications/modification.gd" id="1_container"]
+
+[resource]
+script = ExtResource("1_container")
+id = &"container"
+display_name = "Контейнер"
+hud_short = "КОНТЕЙНЕР"

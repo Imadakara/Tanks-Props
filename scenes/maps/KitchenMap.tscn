@@ -1,0 +1,378 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_tank"]
+[ext_resource type="Script" path="res://scenes/maps/map_scene.gd" id="2_map"]
+[ext_resource type="Script" path="res://scenes/tank/tank.gd" id="3_tankgd"]
+[ext_resource type="PackedScene" path="res://scenes/hud/HUD.tscn" id="4_hud"]
+[ext_resource type="Script" path="res://scenes/hud/hud.gd" id="5_hudgd"]
+[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="6_zone"]
+[ext_resource type="PackedScene" path="res://scenes/ammo_crate/AmmoDropZone.tscn" id="7_drop"]
+[ext_resource type="Script" path="res://scenes/main/team_spawner.gd" id="8_spawner"]
+[ext_resource type="PackedScene" path="res://scenes/obstacles/Obstacle.tscn" id="9_obst"]
+[ext_resource type="PackedScene" path="res://scenes/obstacles/Structure.tscn" id="10_struct"]
+[ext_resource type="PackedScene" path="res://scenes/obstacles/ToyRamp.tscn" id="11_ramp"]
+[ext_resource type="Environment" path="res://scenes/maps/sky_environment.tres" id="12_env"]
+
+[sub_resource type="NavigationMesh" id="NavigationMesh_kitchen"]
+geometry_parsed_geometry_type = 1
+geometry_collision_mask = 1
+cell_size = 0.25
+cell_height = 0.25
+agent_height = 2.0
+agent_radius = 1.0
+agent_max_climb = 0.5
+agent_max_slope = 40.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(108, 0.5, 84)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
+albedo_color = Color(0.82, 0.8, 0.75, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(108, 0.5, 84)
+
+[node name="KitchenMap" type="Node3D"]
+script = ExtResource("2_map")
+match_mode = 2
+map_border_enabled = false
+bake_navmesh_on_start = true
+dynamic_obstacles_supported = false
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = ExtResource("12_env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49999997, -0.49999997, 0.70710677, 0.49999997, 0, 0, 0)
+light_energy = 1.4
+shadow_enabled = true
+
+[node name="PlayerTank" type="CharacterBody3D" parent="." instance=ExtResource("1_tank")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 19, 26)
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("3_tankgd")
+
+[node name="TeamSpawner" type="Node" parent="."]
+script = ExtResource("8_spawner")
+roster_config_path = "res://config/roster_kitchen.json"
+
+[node name="HUD" type="CanvasLayer" parent="." instance=ExtResource("4_hud")]
+script = ExtResource("5_hudgd")
+
+[node name="ObjectiveCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 46, 34)
+
+[node name="OverviewCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 130, 0)
+projection = 1
+size = 116.0
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="."]
+navigation_mesh = SubResource("NavigationMesh_kitchen")
+
+[node name="Ground" type="StaticBody3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="NavigationRegion3D/Ground"]
+shape = SubResource("BoxShape3D_ground")
+
+[node name="GroundMesh" type="MeshInstance3D" parent="NavigationRegion3D/Ground"]
+material_override = SubResource("StandardMaterial3D_ground")
+mesh = SubResource("BoxMesh_ground")
+
+[node name="WallBack" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 30, -43.5)
+size = Vector3(114, 60, 3)
+color = Color(0.9, 0.88, 0.83, 1)
+
+[node name="WallLeft" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -55.5, 30, 0)
+size = Vector3(3, 60, 90)
+color = Color(0.9, 0.88, 0.83, 1)
+
+[node name="BorderRight" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55.5, 4, 0)
+size = Vector3(3, 8, 90)
+color = Color(0.72, 0.7, 0.66, 1)
+
+[node name="BorderFront" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 43.5)
+size = Vector3(114, 8, 3)
+color = Color(0.72, 0.7, 0.66, 1)
+
+[node name="Fridge" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -44.4, 21.6, -32.4)
+size = Vector3(19.2, 43.2, 19.2)
+color = Color(0.93, 0.93, 0.96, 1)
+
+[node name="CounterLeft" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24.6, 10.8, -32.4)
+size = Vector3(20.4, 21.6, 19.2)
+color = Color(0.78, 0.74, 0.68, 1)
+
+[node name="Sink" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.4, 7.8, -32.4)
+size = Vector3(24, 15.6, 19.2)
+color = Color(0.58, 0.6, 0.63, 1)
+
+[node name="CounterRight" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15.6, 10.8, -32.4)
+size = Vector3(12, 21.6, 19.2)
+color = Color(0.78, 0.74, 0.68, 1)
+
+[node name="DishCabinet" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37.8, 15, -32.4)
+size = Vector3(32.4, 30, 19.2)
+color = Color(0.82, 0.78, 0.72, 1)
+
+[node name="Microwave" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 27.6, -27)
+size = Vector3(8, 12, 8)
+color = Color(0.25, 0.25, 0.28, 1)
+
+[node name="WallShelf1" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 29, -36)
+size = Vector3(30, 2, 12)
+color = Color(0.72, 0.55, 0.35, 1)
+
+[node name="WallShelf2" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -25.7, 42.2, -37.8)
+size = Vector3(22.6, 2, 8.4)
+color = Color(0.72, 0.55, 0.35, 1)
+
+[node name="StoolBox" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -42, 5.4, -5)
+size = Vector3(14, 10.8, 16)
+color = Color(0.65, 0.45, 0.25, 1)
+
+[node name="TableTop" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 16.8, 20)
+size = Vector3(36, 2.4, 28)
+color = Color(0.62, 0.42, 0.24, 1)
+
+[node name="TableLeg1" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11.6, 8.4, 8.6)
+size = Vector3(2.4, 16.8, 2.4)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="TableLeg2" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19.6, 8.4, 8.6)
+size = Vector3(2.4, 16.8, 2.4)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="TableLeg3" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11.6, 8.4, 31.4)
+size = Vector3(2.4, 16.8, 2.4)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="TableLeg4" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19.6, 8.4, 31.4)
+size = Vector3(2.4, 16.8, 2.4)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="ChairASeat" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 9.6, 20)
+size = Vector3(14, 2.4, 14)
+color = Color(0.62, 0.42, 0.24, 1)
+
+[node name="ChairAPost" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 4.8, 20)
+size = Vector3(5, 9.6, 5)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="ChairABack" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -36, 17.8, 14)
+size = Vector3(14, 14, 2)
+color = Color(0.62, 0.42, 0.24, 1)
+
+[node name="ChairBSeat" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 9.6, 20)
+size = Vector3(14, 2.4, 14)
+color = Color(0.62, 0.42, 0.24, 1)
+
+[node name="ChairBPost" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 4.8, 20)
+size = Vector3(5, 9.6, 5)
+color = Color(0.5, 0.33, 0.18, 1)
+
+[node name="ChairBBack" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 17.8, 26)
+size = Vector3(14, 14, 2)
+color = Color(0.62, 0.42, 0.24, 1)
+
+[node name="PropCerealBox" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -48, 7, 32)
+size = Vector3(10, 14, 4)
+color = Color(0.85, 0.35, 0.2, 1)
+
+[node name="PropCan" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 3.5, -4)
+size = Vector3(5, 7, 5)
+color = Color(0.55, 0.6, 0.65, 1)
+
+[node name="PropBookStack" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, -12)
+size = Vector3(8, 4, 12)
+color = Color(0.3, 0.5, 0.7, 1)
+
+[node name="PropMug" parent="NavigationRegion3D" instance=ExtResource("10_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 20.5, 10)
+size = Vector3(5, 5, 5)
+color = Color(0.9, 0.9, 0.92, 1)
+
+[node name="RampSponge" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -4.4, 15.6, -27)
+run = 14.0
+rise = 6.0
+width = 8.0
+color = Color(0.95, 0.85, 0.35, 1)
+
+[node name="RampCounterToShelf1" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -28, 21.6, -38)
+run = 22.0
+rise = 8.4
+width = 7.0
+
+[node name="RampShelf1ToShelf2" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 16.6, 30, -37.8)
+run = 31.0
+rise = 13.2
+width = 7.0
+
+[node name="RampFloorToStool" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0, 29)
+run = 26.0
+rise = 10.8
+width = 8.0
+
+[node name="RampStoolToCounter" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.7655, 0, -0.6433, 0, 1, 0, 0.6433, 0, 0.7655, -46, 10.8, 1)
+run = 31.09
+rise = 10.8
+width = 8.0
+
+[node name="RampFloorToChairA" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.3901, 0, 0.9220, 0, 1, 0, -0.9220, 0, 0.3901, -6, 0, 38)
+run = 28.2
+rise = 10.8
+width = 7.0
+
+[node name="RampChairALanding" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.3901, 0, 0.9220, 0, 1, 0, -0.9220, 0, 0.3901, -32, 10.8, 27)
+run = 6.0
+rise = 0.0
+width = 7.0
+
+[node name="RampChairAToTable" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -31.5, 10.8, 20)
+run = 17.5
+rise = 7.2
+width = 8.0
+
+[node name="RampFloorToChairB" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 30, 0, -13)
+run = 26.0
+rise = 10.8
+width = 8.0
+
+[node name="RampTrack" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.9196, 0, 0.3869, 0, 1, 0, -0.3869, 0, 0.9196, 50, 0, 39)
+run = 67.2
+rise = 30.0
+width = 8.0
+thickness = 1.2
+color = Color(0.95, 0.45, 0.1, 1)
+
+[node name="RampSinkBridge" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -14.4, 21.6, -38)
+run = 24.0
+rise = 0.0
+width = 7.0
+color = Color(0.75, 0.75, 0.8, 1)
+
+[node name="RampStoolToCounterLanding" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.7655, 0, -0.6433, 0, 1, 0, 0.6433, 0, 0.7655, -26, 21.6, -22.8)
+run = 6.0
+rise = 0.0
+width = 8.0
+
+[node name="RampTrackLanding" parent="NavigationRegion3D" instance=ExtResource("11_ramp")]
+transform = Transform3D(0.9196, 0, 0.3869, 0, 1, 0, -0.3869, 0, 0.9196, 24, 30, -22.8)
+run = 8.0
+rise = 0.0
+width = 8.0
+color = Color(0.95, 0.45, 0.1, 1)
+
+[node name="Obstacle1" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.625, 4)
+
+[node name="Obstacle2" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -24, 0.625, -16)
+
+[node name="Obstacle3" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0.625, -14)
+
+[node name="Obstacle4" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.625, 24)
+
+[node name="Obstacle5" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 18.625, 12)
+
+[node name="Obstacle6" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 22.225, -26)
+
+[node name="Obstacle7" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 30.625, -37)
+
+[node name="Obstacle8" parent="NavigationRegion3D" instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 30.625, -30)
+
+[node name="AttackSpawnZone" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 18, 20)
+script = ExtResource("6_zone")
+radius = 8.0
+
+[node name="DefenseSpawnZone" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29, 21.6, -33)
+script = ExtResource("6_zone")
+radius = 5.0
+
+[node name="AmmoDropZone" type="Node3D" parent="." instance=ExtResource("7_drop")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 36)
+radius = 6.0
+
+[node name="AmmoDropZone2" type="Node3D" parent="." instance=ExtResource("7_drop")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, -8)
+radius = 8.0
+
+[node name="ContainerSpawn1" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0, 14)
+script = ExtResource("6_zone")
+radius = 3.0
+zone_role = "ContainerSpawn"
+
+[node name="ContainerSpawn2" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9, 15.6, -27)
+script = ExtResource("6_zone")
+radius = 3.0
+zone_role = "ContainerSpawn"
+
+[node name="ContainerSpawn3" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 10.8, 20)
+script = ExtResource("6_zone")
+radius = 3.0
+zone_role = "ContainerSpawn"
+
+[node name="ContainerSpawn4" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 44, 30, -32)
+script = ExtResource("6_zone")
+radius = 3.0
+zone_role = "ContainerSpawn"
+
+[node name="ContainerSpawn5" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -44.4, 43.2, -32.4)
+script = ExtResource("6_zone")
+radius = 3.0
+zone_role = "ContainerSpawn"

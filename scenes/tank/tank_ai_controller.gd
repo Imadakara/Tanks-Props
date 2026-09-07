@@ -239,7 +239,7 @@ extends Node
 ## нужна ТОЛЬКО когда придерживали руль ради точности прицела (см. git log), а руль
 ## здесь ничем не придерживается вообще — корпус и башня наводятся независимо, ровно как у
 ## `ATTACK_OBJECTIVE`.
-enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE, OBJECTIVE_CHECK }
+enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE, OBJECTIVE_CHECK, CONTAINER_SEEK, CONTAINER_DELIVER }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -250,6 +250,9 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 const _PROJECTILE_GRAVITY := 9.8
 ## Для чтения состояния маскировки чужого танка в _can_see() (см. _enemy_is_disguised()).
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
+## Тот же ресурс, что кладёт в слот `container_pickup.gd` — сравнение по идентичности ресурса, не по
+## строке `id`: отличает носителя контейнера от носителя мортиры без разбора текстовых имён.
+const ContainerMod := preload("res://scenes/modifications/container.tres")
 
 ## [ДОБАВЛЕНО, по прямому запросу — "два набора ботов, тестовый и продакшен, это путаница, боты
 ## должны быть одной универсальной системой, деплоящейся на любую карту"] Раньше этот компонент
@@ -510,6 +513,12 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## поле работает, только если у вейпоинта НЕТ такого скрипта (немигрированная карта).
 @export var waypoint_radius: float = 7.5  # ~4.2 корпуса танка (корпус 1.8м) — фолбэк, если у узла нет radius
 @export var waypoint_reach_dist: float = 1.5
+## Допуск ПО ВЫСОТЕ для «доехал» (см. _drive_to_point). Дистанция до цели меряется по XZ — на
+## плоской карте это то же самое, что 3D, но на многоуровневой значит «стою этажом ниже ровно под
+## целью» тоже считалось бы прибытием. Порог берём больше любой штатной разницы высот между ботом и
+## целью, до которой он реально доехал (заезд с пандуса на площадку — 1-2 юнита), но меньше
+## наименьшего расстояния между уровнями кухни (раковина→столешница, 6).
+@export var reach_height_tolerance: float = 3.0
 ## Роль (Godot group, см. spawn_zone.gd @export zone_role) вейпоинтов этого бота — РАЗНАЯ на
 ## разных ботах одной карты (по прямому запросу — второй ACHIEVER, атакующий, должен идти к
 ## objective по СВОИМ вейпоинтам, не по тем же, что defense-бот патрулирует вокруг objective).
@@ -677,6 +686,39 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## новый путь от неё может быть удобнее старого.
 @export var stuck_detour_sec: float = 1.2
 @export var stuck_detour_probe_range: float = 4.5
+
+## --- Проверка обрыва по курсу (только многоуровневые карты) ------------------------------------
+## Весь driving-стек выше щупает мир ГОРИЗОНТАЛЬНЫМИ лучами: он видит стену, но не видит края
+## столешницы — там впереди пусто, и «пусто» для него значит «еду». На плоских картах это никогда не
+## было проблемой (падать некуда), на кухне бот съезжает с полки и получает урон от падения.
+##
+## КЛЮЧЕВОЕ: перепад вниз сам по себе НЕ означает обрыв — спуск по пандусу это тоже перепад, и
+## запрещать его нельзя, иначе бот не сможет вернуться с верхних уровней. Отличаем по КРУТИЗНЕ:
+## щупаем землю на двух расстояниях вперёд и сравниваем перепад с тем, который дал бы проезжий
+## склон той же длины (`dist * tan(ledge_max_slope_deg) + ledge_slack`). Пандус 24° на 1.4 юнита
+## вперёд опускается на 0.62 — проходит с запасом; край столешницы даёт 21.6 на том же расстоянии —
+## не проходит. Земли под щупом не нашлось вовсе (пропасть/край карты) — считаем обрывом.
+##
+## Дефолт ВЫКЛ: на плоских картах это чистая трата лучей. Включается через ростер карты
+## (`team_spawner.gd._apply_squad_to_brain()`), см. `config/roster_kitchen.json`.
+@export var ledge_check_enabled: bool = false
+## Порог крутизны «это ещё съезд, а не обрыв». Выше реальных уклонов карты (кухня — максимум 24°),
+## чтобы штатный спуск никогда не читался как край.
+@export var ledge_max_slope_deg: float = 32.0
+## Постоянная добавка к допустимому перепаду — гасит мелкие пороги/стыки полотен, на которых
+## геометрия на пол-юнита «ступенькой» ниже, чем идеальный склон.
+@export var ledge_slack: float = 0.7
+## Два расстояния вперёд, на которых щупаем землю. Ближний — успеть затормозить, дальний — заметить
+## край чуть раньше, чем корпус на него выедет.
+@export var ledge_probe_near: float = 1.4
+@export var ledge_probe_far: float = 3.2
+## Полуразброс боковых щупов у аварийного тормоза. Узкий НАМЕРЕННО (шире габарита корпуса, но
+## заметно уже, чем `emergency_brake_spread_deg`): на пандусе шириной 7-8 юнитов широкий веер
+## смотрел бы мимо полотна в пустоту по бокам и «тормозил» бота посреди штатного спуска.
+@export var ledge_probe_spread_deg: float = 8.0
+## Откуда вверх начинается щуп (чтобы перешагнуть низкий бортик) и как глубоко он идёт вниз.
+@export var ledge_probe_up: float = 1.5
+@export var ledge_probe_depth: float = 80.0
 
 @export var think_interval_sec: float = 0.1  # реже физ.кадра — проверка "вижу/не вижу", не сама наводка
 ## [ИЗМЕНЕНО, по прямому запросу — "уменьши скорость движения всех танков в полтора раза (езда и
@@ -1029,6 +1071,14 @@ var _ammo_wait_timer: float = 0.0
 ## «фаза подготовки».
 var _mod_target_crate: Node = null
 var _mod_zone: Node = null
+
+## --- Режим CONTAINER_EXTRACTION (State.CONTAINER_SEEK/CONTAINER_DELIVER) ---------------------
+## Конкретный контейнер, за которым едем. Выбирается `_pick_container_target()` с координацией
+## между ботами одной команды (двое не едут за одним и тем же), пере-выбирается, если наш исчез.
+var _container_target: Node = null
+## Круг спавна СВОЕЙ команды — он же точка сдачи контейнера (саму доставку засчитывает
+## container_manager.gd по факту въезда в радиус). Резолвится один раз в _initialize().
+var _own_base_zone: Node3D = null
 var _mortar_target_node: Node = null
 var _mortar_prep_timer: float = 0.0
 
@@ -1235,6 +1285,7 @@ func _initialize() -> void:
 	if role == Role.ACHIEVER and _objective_node == null:
 		role = Role.KILLER
 	_find_alert_zone()
+	_find_own_base_zone()
 	# Ammo-стейты (AMMO_SEEK/RETRIEVE/WAIT, см. их doc-comment у enum State) — зоны сброса те же,
 	# что уже использует ammo_drop_zone.gd (группа "ammo_drop_zones"), кэшируем один раз: карта без
 	# зон сброса не должна давать боту вечно спотыкаться об этот механизм (см. проверку в
@@ -1813,6 +1864,34 @@ func _physics_process(delta: float) -> void:
 				_drive_to_point(delta, _mod_target_crate.global_position, waypoint_reach_dist)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.CONTAINER_SEEK:
+			# Едем к конкретному контейнеру; подбор ФИЗИЧЕСКИЙ (Container.body_entered → install), как у
+			# MOD_RETRIEVE с красным ящиком — отдельного «взять» тут нет. Слот занялся → решение примет
+			# _think() следующим тиком (уведёт в CONTAINER_DELIVER). Контейнер исчез (успел подобрать
+			# кто-то другой) — пробуем следующий, и только если свободных не осталось, возвращаемся
+			# к обычным делам.
+			if not _mod.can_pick_up():
+				state = State.IDLE
+				_clear_stale_nav_target_flags()
+			elif not is_instance_valid(_container_target):
+				if not _pick_container_target():
+					state = State.IDLE
+					_clear_stale_nav_target_flags()
+			else:
+				_drive_to_point(delta, _container_target.global_position, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.CONTAINER_DELIVER:
+			# Везём контейнер на свою базу. Сама сдача — не наше дело: ContainerManager видит танк с
+			# контейнером в радиусе его зоны спавна и чистит слот. Слот опустел (сдали ЛИБО потеряли) —
+			# обратно к обычным делам.
+			if _mod.can_pick_up() or not is_instance_valid(_own_base_zone):
+				state = State.IDLE
+				_clear_stale_nav_target_flags()
+			else:
+				_drive_to_point(delta, _own_base_zone.global_position, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.MORTAR_ATTACK:
 			_process_mortar_attack(delta)
 		State.DISGUISE_APPROACH:
@@ -1995,6 +2074,16 @@ func _think() -> void:
 				_enter_attack(seen_prep)
 		return
 
+	# [РЕЖИМ CONTAINER_EXTRACTION] Несём контейнер — единственная задача довезти его до своей базы:
+	# в бой не ввязываемся (тот же принцип, что у атакующего с мортирой), но отстреливаемся снапфайром
+	# по замеченному врагу. Проверка ВЫШЕ гейта «нет боезапаса» ниже: доставка ценнее пополнения,
+	# ехать на базу надо и безоружным.
+	if _is_extraction_mode() and _carrying_container():
+		if state != State.CONTAINER_DELIVER:
+			_enter_container_deliver()
+		_snap_fire_target = _scan_for_target() if enemy_reaction_enabled else null
+		return
+
 	# [ИСПРАВЛЕНО, живьём] Пустой боезапас — драться нечем, ПОЛНОСТЬЮ пропускаем сканирование/
 	# ATTACK, пока не подберём патроны. Не только в момент, когда патроны кончились (см.
 	# _on_ammo_depleted() — тот сигнал даёт мгновенную реакцию РОВНО один раз), а КАЖДЫЙ think-тик,
@@ -2033,6 +2122,12 @@ func _think() -> void:
 	if _try_enter_priority_mortar_attack():
 		return
 
+	# [РЕЖИМ CONTAINER_EXTRACTION] Вражеский носитель контейнера — приоритетная цель, выше любых
+	# мирных поручений ниже (тот же приоритет, что мортирщик в TARGET_OBJECTIVE). Работает для ОБЕИХ
+	# сторон: ролей «атака/оборона» в этом режиме нет, обе команды и добывают, и мешают.
+	if _is_extraction_mode() and _try_enter_priority_carrier_attack():
+		return
+
 	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ с мортирой в слоте бьёт по objective и СТАРАЕТСЯ
 	# НЕ ВСТУПАТЬ В БОЙ: не сканируем танки-цели вообще, сразу навесная атака objective. Если
 	# objective нет/уничтожен — мортира атакующему бесполезна, падаем в обычный цикл (мортира
@@ -2062,7 +2157,8 @@ func _think() -> void:
 	# match state:) — сам wander/driving этих состояний не трогаем. Эти состояния самоуправляемые
 	# (не проходят через _ensure_home_state(), см. её exception-guard) — ранний return их не портит.
 	if state == State.SEARCH or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE \
-			or state == State.AMMO_WAIT or state == State.MOD_SEEK or state == State.MOD_RETRIEVE:
+			or state == State.AMMO_WAIT or state == State.MOD_SEEK or state == State.MOD_RETRIEVE \
+			or state == State.CONTAINER_SEEK:
 		_snap_fire_target = _scan_for_target()
 		return
 	_snap_fire_target = null
@@ -2545,7 +2641,8 @@ func _ensure_home_state() -> void:
 			or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE or state == State.AMMO_WAIT \
 			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK \
 			or state == State.DISGUISE or state == State.DISGUISE_PREP or state == State.DISGUISE_APPROACH \
-			or state == State.OBJECTIVE_CHECK:
+			or state == State.OBJECTIVE_CHECK \
+			or state == State.CONTAINER_SEEK or state == State.CONTAINER_DELIVER:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -2582,6 +2679,11 @@ func _ensure_home_state() -> void:
 		desired = State.AMMO_RETRIEVE  # конкретный ящик под рукой — не гонять в случайную зону вслепую
 	elif not _ammo_zones.is_empty() and _ammo.current_ammo == 1:
 		desired = State.AMMO_SEEK
+	# [РЕЖИМ CONTAINER_EXTRACTION] Слот свободен и на карте есть неразобранный контейнер — едем за
+	# ним. НИЖЕ ammo-веток: безоружный добытчик бесполезен, сначала патроны. Ветки objective/ALERT
+	# ниже в этом режиме и так спят (карта без Objective, _alert_zone == null).
+	elif _is_extraction_mode() and _mod.can_pick_up() and _nearest_free_container() != null:
+		desired = State.CONTAINER_SEEK
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
 	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
 	# версия (гео-проверка "враг физически в круге") оказалась СЛИШКОМ строгой КАК ЕДИНСТВЕННОЕ
@@ -2689,6 +2791,7 @@ func _ensure_home_state() -> void:
 		var entering_ammo_retrieve_direct: bool = desired == State.AMMO_RETRIEVE and ammo_crate_nearby != null
 		var entering_mod_seek: bool = desired == State.MOD_SEEK
 		var entering_mod_retrieve: bool = desired == State.MOD_RETRIEVE
+		var entering_container_seek: bool = desired == State.CONTAINER_SEEK
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
@@ -2724,6 +2827,113 @@ func _ensure_home_state() -> void:
 			_mod_target_crate = _visible_mod_crate()
 			if _mod_target_crate != null and _nav_agent.is_inside_tree():
 				_nav_agent.target_position = _mod_target_crate.global_position
+		if entering_container_seek:
+			_pick_container_target()
+
+## --- Режим CONTAINER_EXTRACTION: помощники (State.CONTAINER_SEEK/CONTAINER_DELIVER) ------------
+## Экстракшен-цикл бота целиком: пусто в слоте и есть свободный контейнер → CONTAINER_SEEK (едем к
+## конкретному контейнеру, подбор физический); контейнер в слоте → CONTAINER_DELIVER (везём в круг
+## своей базы, сдачу засчитывает container_manager.gd); вражеский носитель в поле зрения →
+## приоритетная атака. Ролей ACHIEVER/KILLER этот цикл не различает: в режиме нет сторон
+## «атака/оборона», обе команды делают одно и то же.
+
+## Карта играет режим экстракшена. Читаем MatchState (его проставляет корневой _ready() карты, тот
+## идёт ДО ленивой _initialize() бота), а не «есть ли контейнеры на карте»: контейнеры кончаются по
+## ходу раунда, режим — свойство карты.
+func _is_extraction_mode() -> bool:
+	return MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION
+
+## В слоте лежит контейнер (а не мортира и не пусто). Сравнение по идентичности ресурса — см.
+## ContainerMod в шапке файла.
+func _carrying_container() -> bool:
+	return _mod.current_mod == ContainerMod
+
+## Круг спавна своей команды = точка сдачи. Тот же рекурсивный поиск по имени, что у
+## respawn_controller.gd._pick_spawn_zone() — единственная существующая в проекте конвенция «зона
+## своей команды», заводить под доставку второй механизм незачем.
+func _find_own_base_zone() -> void:
+	var zone_name: String = "AttackSpawnZone" if _body.is_attacker() else "DefenseSpawnZone"
+	_own_base_zone = get_tree().current_scene.find_child(zone_name, true, false) as Node3D
+
+## Ближайший СВОБОДНЫЙ контейнер: лежит на карте и не выбран целью другим живым ботом своей команды.
+## Дистанция ПО ПРЯМОЙ, не длина пути по навмешу: путь пришлось бы строить для каждого контейнера
+## каждый think-тик, а ошибка выбора здесь дёшева — доехав, бот просто возьмёт следующий.
+func _nearest_free_container() -> Node:
+	var best: Node = null
+	var best_dist: float = INF
+	for c in get_tree().get_nodes_in_group("containers"):
+		if not is_instance_valid(c) or _container_taken_by_other_bot(c):
+			continue
+		var d: float = _body.global_position.distance_to(c.global_position)
+		if d < best_dist:
+			best_dist = d
+			best = c
+	return best
+
+## Тот же приём координации, что _zone_taken_by_other_bot() для мортирных зон: живой бот СВОЕЙ
+## команды, уже едущий за этим контейнером, «занимает» его — иначе оба уезжают за одним и тем же, а
+## остальные контейнеры стоят нетронутыми. Игрок в координации не участвует (у него нет
+## AI-состояния) — та же осознанная фикция «свои в курсе», что и у мортиры.
+func _container_taken_by_other_bot(c: Node) -> bool:
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other) or other.team != _body.team:
+			continue
+		var brain: Node = other.get_node_or_null("TankAIController")
+		if brain == null or not brain.enabled:
+			continue
+		if brain.state == State.CONTAINER_SEEK and brain._container_target == c:
+			return true
+	return false
+
+## Выбрать цель и навести на неё nav-агента. false — свободных контейнеров не осталось (вызывающий
+## возвращает бота к обычным делам).
+func _pick_container_target() -> bool:
+	_container_target = _nearest_free_container()
+	if _container_target == null:
+		return false
+	if _nav_agent.is_inside_tree():
+		_nav_agent.target_position = _container_target.global_position
+	return true
+
+## Вражеский танк с контейнером в слоте. Сбить носителя дешевле, чем искать контейнеры по карте:
+## контейнер выпадет на месте гибели (container_manager.gd) — фактически это перехват уже
+## проделанной противником работы.
+func _scan_for_container_carrier() -> Node:
+	for other in get_tree().get_nodes_in_group("tanks"):
+		if other == _body or not is_instance_valid(other) or other.team == _body.team:
+			continue
+		if not _can_see(other):
+			continue
+		var enemy_mod: Node = other.get_node_or_null("ModificationController")
+		if enemy_mod != null and enemy_mod.current_mod == ContainerMod:
+			return other
+	return null
+
+## true — приоритетная цель найдена и вход в бой произошёл; вызывающий обязан немедленно вернуться.
+func _try_enter_priority_carrier_attack() -> bool:
+	var carrier: Node = _scan_for_container_carrier()
+	if carrier == null:
+		return false
+	# Пишем ДО входа в бой — та же причина, что в _try_enter_priority_mortar_attack(): обычный блок
+	# видимости _think() сюда не доходит, а на потере цели PURSUE поедет по этому полю.
+	_last_known_target_pos = carrier.global_position
+	if _has_mortar():
+		_enter_mortar_attack(carrier)
+	else:
+		_enter_attack(carrier)
+	return true
+
+## Переход в доставку. Сбрасываем все три driving-флага — по той же причине, что и любой другой
+## переход домашнего состояния (см. комментарий в _ensure_home_state()): иначе nav-цель осталась бы
+## от прерванного PATROL/HUNT и бот крутился бы на месте.
+func _enter_container_deliver() -> void:
+	state = State.CONTAINER_DELIVER
+	_container_target = null
+	_has_waypoint_target = false
+	_has_hunt_target = false
+	_has_alert_target = false
+	if is_instance_valid(_own_base_zone) and _nav_agent.is_inside_tree():
+		_nav_agent.target_position = _own_base_zone.global_position
 
 ## --- Модификации: помощники (см. заголовок файла, State.MOD_*/MORTAR_ATTACK) --------------------
 
@@ -3048,6 +3258,9 @@ func _on_respawned() -> void:
 	# и так его не считает (state == DEAD), но после респавна он не должен «держать» старую зону.
 	_mod_target_crate = null
 	_mod_zone = null
+	# Заявка на контейнер снимается вместе со старой жизнью — иначе другой бот команды продолжал бы
+	# считать этот контейнер занятым (см. _container_taken_by_other_bot).
+	_container_target = null
 	_mortar_target_node = null
 	_mortar_prep_timer = 0.0
 	_current_hide_zone = null  # новая жизнь без старой заявки на hide-зону (координация ботов)
@@ -3112,7 +3325,8 @@ func _on_target_lost(force_pursue: bool = false) -> void:
 ## "продолжить" постфактум.
 func _is_resumable_task_state(s: int) -> bool:
 	return s == State.MOD_SEEK or s == State.MOD_RETRIEVE \
-			or s == State.AMMO_SEEK or s == State.AMMO_RETRIEVE or s == State.AMMO_WAIT
+			or s == State.AMMO_SEEK or s == State.AMMO_RETRIEVE or s == State.AMMO_WAIT \
+			or s == State.CONTAINER_SEEK
 
 ## [ДОБАВЛЕНО, по прямому запросу — "бот поехал за мортирой, наткнулся на противника в зоне
 ## сброса, убил его, но мортиру так и не взял — ушёл патрулировать вместо этого"] Попытка вернуться
@@ -3152,6 +3366,14 @@ func _try_resume_pre_combat_state() -> bool:
 			if is_instance_valid(_ammo_target_crate):
 				state = State.AMMO_RETRIEVE
 				_nav_agent.target_position = _ammo_target_crate.global_position
+				return true
+		State.CONTAINER_SEEK:
+			# Контейнер могли подобрать, пока шёл бой — тогда поручение неактуально, падаем в обычную
+			# _ensure_home_state() (та при необходимости выберет новый).
+			if _mod.can_pick_up() and is_instance_valid(_container_target) \
+					and not _container_taken_by_other_bot(_container_target):
+				state = State.CONTAINER_SEEK
+				_nav_agent.target_position = _container_target.global_position
 				return true
 		State.AMMO_WAIT:
 			if is_instance_valid(_ammo_zone):
@@ -3853,8 +4075,14 @@ func _drive_to_point(delta: float, target_pos: Vector3, reach_dist: float) -> bo
 		return false
 
 	var to_target: Vector3 = target_pos - _body.global_position
+	# [ИСПРАВЛЕНО] Одной XZ-дистанции мало на многоуровневой карте: бот, стоящий ЭТАЖОМ НИЖЕ ровно
+	# под целью (под столом-базой кухни проходит открытый пол), давал to_target.length() ≈ 0 и
+	# «приезжал», ни разу к ней не поднявшись. Дальше движение останавливалось, а стейт вроде
+	# CONTAINER_DELIVER самоуправляем и сам себя не пересчитывает — носитель контейнера мог встать
+	# под собственной базой навсегда. На плоских картах разница высот ~0, поведение не меняется.
+	var height_diff: float = absf(to_target.y)
 	to_target.y = 0.0
-	if to_target.length() < reach_dist:
+	if to_target.length() < reach_dist and height_diff < reach_height_tolerance:
 		return true
 
 	# [ИСПРАВЛЕНО] get_current_navigation_path() САМ ПО СЕБЕ не обновляется — Godot пересчитывает
@@ -4026,7 +4254,43 @@ func _check_emergency_brake() -> bool:
 	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
 		if _cast_ray(offset_deg, emergency_brake_range, _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES):
 			return true
+	# Обрыв по курсу тормозит ровно так же, как стена, и дальше отрабатывает уже существующая
+	# машинерия: нет прогресса → детектор застревания → реверс + объезд по _scan_gap() (который
+	# края тоже учитывает, см. ниже). Отдельного «стейта у обрыва» не заводим.
+	# Веер УЖЕ, чем у обычного тормоза (см. ledge_probe_spread_deg) — иначе бот встал бы на
+	# собственном пандусе, увидев пустоту сбоку от полотна.
+	if ledge_check_enabled:
+		for offset_deg in [0.0, -ledge_probe_spread_deg, ledge_probe_spread_deg]:
+			if _ledge_ahead(offset_deg):
+				return true
 	return false
+
+## Обрыв по курсу под углом offset_deg (в градусах, 0 = прямо вперёд). См. @export-блок про
+## ledge_* — суть в том, что перепад сравнивается не с фиксированной высотой, а с тем, который
+## дал бы ПРОЕЗЖИЙ склон на этом же расстоянии: спуск по пандусу проходит, край площадки нет.
+func _ledge_ahead(offset_deg: float) -> bool:
+	if not ledge_check_enabled:
+		return false  # гейт и здесь, а не только у вызывающих: _scan_gap() зовёт это по каждому углу веера
+	for dist in [ledge_probe_near, ledge_probe_far]:
+		if _ground_drop_ahead(offset_deg, dist) > dist * tan(deg_to_rad(ledge_max_slope_deg)) + ledge_slack:
+			return true
+	return false
+
+## Насколько земля в точке «dist вперёд под углом offset_deg» ниже текущего положения корпуса.
+## INF — земли под щупом нет вообще (пропасть/за краем карты). Маска только environment: танки и
+## ящики полом не считаются, встать на них нельзя.
+func _ground_drop_ahead(offset_deg: float, dist: float) -> float:
+	var ray_yaw: float = _body.rotation.y + deg_to_rad(offset_deg)
+	var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
+	var origin: Vector3 = _body.global_position + dir * dist + Vector3.UP * ledge_probe_up
+	var space_state := _body.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * ledge_probe_depth)
+	query.exclude = [_body]
+	query.collision_mask = _LAYER_ENVIRONMENT
+	var result: Dictionary = space_state.intersect_ray(query)
+	if result.is_empty():
+		return INF
+	return _body.global_position.y - float(result["position"].y)
 
 ## Один луч от корпуса (высота +0.4, тот же принцип, что у аварийного тормоза), возвращает
 ## РАССТОЯНИЕ до хита (или range, если ничего не поймал) — не просто bool, нужно для _scan_gap()
@@ -4072,7 +4336,10 @@ func _scan_gap() -> float:
 	var clearance: float = stuck_detour_probe_range * stuck_detour_scan_clear_ratio
 	var clear: Array[bool] = []
 	for ang in angles:
-		clear.append(_cast_ray_dist(ang, stuck_detour_probe_range) >= clearance)
+		# Направление «открыто» = и горизонтально свободно, И не упирается в обрыв: без второй
+		# проверки объезд застревания охотно выбирал бы самый свободный по лучам сектор — воздух
+		# за краем площадки. Лучи тут кастуются только в момент застревания (редко), не каждый кадр.
+		clear.append(_cast_ray_dist(ang, stuck_detour_probe_range) >= clearance and not _ledge_ahead(ang))
 
 	var zero_idx := 0
 	var zero_dist := INF
@@ -4793,6 +5060,16 @@ func _update_brain_debug_label() -> void:
 			var _dt: Node = _state_machine.get_node_or_null("DisguiseTimer")
 			var _scenario_tag: String = " [S3 ambush]" if _is_s3_ambush else ""
 			lines.append("HIDDEN%s — %.1fs left" % [_scenario_tag, _dt.time_left if _dt != null else 0.0])
+		State.CONTAINER_SEEK:
+			if is_instance_valid(_container_target):
+				lines.append("container: %.1fm" % _body.global_position.distance_to(_container_target.global_position))
+			else:
+				lines.append("container: none free")
+			_append_nav_debug_lines(lines)
+		State.CONTAINER_DELIVER:
+			if is_instance_valid(_own_base_zone):
+				lines.append("delivering → base (%.1fm)" % _body.global_position.distance_to(_own_base_zone.global_position))
+			_append_nav_debug_lines(lines)
 		State.IDLE:
 			lines.append("looking around")
 	if _wander_holding:

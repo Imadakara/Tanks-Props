@@ -232,6 +232,11 @@ func _apply_squad_to_brain(brain: Node, squad: Dictionary) -> void:
 	if squad.has("hunt_area_half_extents"):
 		var e: Array = squad["hunt_area_half_extents"]
 		brain.hunt_area_half_extents = Vector2(float(e[0]), float(e[1]))
+	# Проверка обрыва по курсу (см. TankAIController @export ledge_*) — свойство КАРТЫ, не бота:
+	# нужна только там, где реально есть куда падать. Тюнинг порогов остаётся в дефолтах скрипта,
+	# ростер решает лишь «включено или нет».
+	if squad.has("ledge_check_enabled"):
+		brain.ledge_check_enabled = bool(squad["ledge_check_enabled"])
 	if squad.has("show_fov_debug"):
 		brain.show_fov_debug = bool(squad["show_fov_debug"])
 	if squad.has("show_path_debug"):

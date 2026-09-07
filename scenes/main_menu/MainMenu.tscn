@@ -49,6 +49,11 @@ custom_minimum_size = Vector2(380, 56)
 layout_mode = 2
 text = "Командный бой (TEAM_ARENA)"
 
+[node name="ExtractionButton" type="Button" parent="VBoxContainer" unique_id=1190121095]
+custom_minimum_size = Vector2(380, 56)
+layout_mode = 2
+text = "Захват контейнеров — кухня (CONTAINER_EXTRACTION)"
+
 [node name="DebugModeCheck" type="CheckBox" parent="VBoxContainer" unique_id=1190121094]
 custom_minimum_size = Vector2(380, 40)
 layout_mode = 2

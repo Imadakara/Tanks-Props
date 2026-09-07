@@ -59,6 +59,27 @@ extends Node
 @export var mortar_drop_interval_sec: float = 30.0  # раз в столько секунд боя красный ящик падает ОДНОВРЕМЕННО в каждой зоне сброса (только режим TARGET_OBJECTIVE)
 @export var mortar_fresh_window_sec: float = 10.0  # сколько секунд ПОСЛЕ сброса атакующий бот считает мортиру «свежей» и едет за ней (иначе продолжает атаковать objective)
 @export var mortar_prep_sec: float = 1.5  # «фаза подготовки» бота перед навесным выстрелом: сколько держать сведённый прицел до залпа
+## Режим CONTAINER_EXTRACTION (см. Tank_Prop_Hunt_Container_Extraction.md): на карте лежит
+## container_count белых контейнеров, каждый занимает слот модификации носителя и доставляется в
+## круг спавна своей команды. Раунд один, поэтому времени заметно больше, чем в остальных режимах.
+@export var container_round_sec: float = 300.0  # 5 минут на единственный раунд экстракшена
+@export var container_count: int = 5  # потолок контейнеров на карте; фактическое число — min(это, число точек ContainerSpawn)
+## Насколько танк может отличаться по высоте от центра своей зоны спавна, чтобы доставка засчиталась.
+## Круг зоны проверяется по XZ, но на многоуровневой карте под базой на столе есть пол — без этой
+## проверки контейнер сдавался бы этажом ниже базы.
+@export var container_delivery_height_tolerance: float = 4.0
+## Каденс красного ящика мортиры в режиме экстракшена — РЕЖЕ, чем в TARGET_OBJECTIVE (30с): слот
+## один на танк, и он нужен прежде всего под контейнер; мортира тут — эпизодическое усиление.
+@export var mortar_drop_interval_container_sec: float = 75.0
+
+## Урон от падения с высоты (нужен только на многоуровневых картах; на плоских танк с такой высоты
+## не падает вовсе). Порог — падение НИЖЕ fall_damage_min_height безвредно, чтобы прыжки на стыках
+## пандусов не наносили урона. Значения в юнитах мира; на кухонной карте 24 юнита = 1 метр, то есть
+## 8 ≈ высота стула, 16 ≈ высота стола, 28 ≈ высота полки.
+@export var fall_damage_min_height: float = 8.0   # ниже — 0 HP
+@export var fall_damage_2hp_height: float = 16.0  # от этого — 2 HP
+@export var fall_damage_3hp_height: float = 28.0  # от этого — 3 HP (для танка с max_hits 3 — смерть)
+
 @export var respawn_cooldown_sec: float = 10.0  # уничтоженный танк возвращается в игру через столько сек (пост-ревью, см. respawn_controller.gd)
 @export var defense_wins_ties: bool = true
 ## Читается TankAIController._can_see() (disguise_controller.gd — реализация самой маскировки). false

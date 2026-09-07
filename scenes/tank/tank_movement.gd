@@ -26,12 +26,31 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 var _body: CharacterBody3D
 var _state_machine: Node
 var _mod: Node
+var _health: Node
+
+## Урон от падения (см. _track_fall_damage). Живёт ЗДЕСЬ, а не отдельным компонентом: только этот
+## узел уже владеет вертикальной скоростью/гравитацией танка и знает про is_on_floor() — отдельный
+## сиблинг дублировал бы то же самое состояние. Актуально на многоуровневых картах (кухня); на
+## плоских танк с высоты не падает вовсе, механика просто спит.
+var _fall_peak_y: float = 0.0
+var _airborne: bool = false
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
 	assert(_body != null, "TankMovement must be a direct child of a CharacterBody3D")
 	_state_machine = get_parent().get_node_or_null("TankStateMachine")
 	_mod = get_parent().get_node_or_null("ModificationController")
+	_health = get_parent().get_node_or_null("HealthComponent")
+	_fall_peak_y = _body.global_position.y
+	# Респавн телепортирует танк (возможно, с большой высоты вниз) — без сброса отсчёта приземление
+	# на своей базе засчиталось бы как падение с той высоты, где танк погиб.
+	var respawn: Node = get_parent().get_node_or_null("RespawnController")
+	if respawn != null:
+		respawn.respawned.connect(_on_respawned)
+
+func _on_respawned() -> void:
+	_airborne = false
+	_fall_peak_y = _body.global_position.y
 
 func _physics_process(delta: float) -> void:
 	var turn_input: float
@@ -88,3 +107,33 @@ func _physics_process(delta: float) -> void:
 	var lateral_delta: float = actual_delta.dot(right)
 	_body.global_position -= right * lateral_delta
 	_body.velocity -= right * right.dot(_body.velocity)
+
+	_track_fall_damage()
+
+## Урон от падения: пока танк в воздухе — копим МАКСИМАЛЬНУЮ достигнутую высоту, на приземлении
+## считаем перепад от неё до точки касания. Именно перепад, а не вертикальная скорость: скорость
+## после отскока/скольжения по краю площадки занижена и недооценивает реальную высоту падения.
+## Порог `fall_damage_min_height` глушит мелкие отрывы на стыках пандусов (танк регулярно на кадр
+## теряет опору на переломе уклона — без порога это капало бы уроном на ровном месте).
+## Урон идёт через обычный take_hit(killer = null): дебаг-бессмертие его гасит (как и любой другой
+## урон), а ScoreManager смерть с killer == null не засчитывает никому — падение не «убийство».
+func _track_fall_damage() -> void:
+	var y: float = _body.global_position.y
+	if _body.is_on_floor():
+		if _airborne:
+			_airborne = false
+			_apply_fall_damage(_fall_peak_y - y)
+		_fall_peak_y = y
+		return
+	_airborne = true
+	_fall_peak_y = maxf(_fall_peak_y, y)
+
+func _apply_fall_damage(drop: float) -> void:
+	if _health == null or drop < GameConfig.fall_damage_min_height:
+		return
+	var damage: int = 1
+	if drop >= GameConfig.fall_damage_3hp_height:
+		damage = 3
+	elif drop >= GameConfig.fall_damage_2hp_height:
+		damage = 2
+	_health.take_hit(null, damage)

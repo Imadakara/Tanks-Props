@@ -1,0 +1,22 @@
+[
+  {
+    "team": 0,
+    "count": 1,
+    "role": "KILLER",
+    "difficulty": "MEDIUM",
+    "hunt_area_center": [0, 0, 0],
+    "hunt_area_half_extents": [48, 36],
+    "ledge_check_enabled": true,
+    "debug_ui_slot": 0
+  },
+  {
+    "team": 1,
+    "count": 1,
+    "role": "KILLER",
+    "difficulty": "MEDIUM",
+    "hunt_area_center": [0, 0, 0],
+    "hunt_area_half_extents": [48, 36],
+    "ledge_check_enabled": true,
+    "debug_ui_slot": 1
+  }
+]

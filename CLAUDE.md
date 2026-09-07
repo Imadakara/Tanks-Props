@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Tank Prop Hunt — a team tactical shooter with prop-hunt elements (disguise mechanic), Godot 4.7
-(GDScript), 3D, Jolt physics. Local prototype vs bots, no networking yet — the two maps are built
+(GDScript), 3D, Jolt physics. Local prototype vs bots, no networking yet — the three maps are built
 as reusable game-mode templates (see "Map inventory") with a future networked PvP mode in mind, so
 architecture favors universal/data-driven mechanisms over map-specific code wherever the two don't
 conflict.
@@ -29,6 +29,16 @@ the retired `Tank_Prop_Hunt_MVP_Dev_Plan.md` / `Tank_Prop_Hunt_TZ_MVP_Godot.md` 
 - `Tank_Prop_Hunt_Game_Modes.md` — **current-state reference for the game modes**
   (TARGET_OBJECTIVE / TEAM_ARENA): rules, round/series flow, HUD block, round-loop code, full map
   list. The "Game modes" section below is a summary; that doc is the detail.
+- `Tank_Prop_Hunt_Container_Extraction.md` — **current-state reference for the third mode**
+  (CONTAINER_EXTRACTION, `KitchenMap.tscn`): the 5 white containers and how they ride in the
+  modification slot, `ContainerManager` (layout / delivery / drop-on-death), the toy-scale kitchen
+  map with its six height tiers, the two new geometry prefabs (`Structure` / `ToyRamp`) and the
+  **hard-won ramp rules** (≤24° or a box tank stalls; how a ramp must meet a platform edge or the
+  navmesh silently disconnects), plus fall damage. Read it before touching that map's geometry.
+  Its §10 splits what is genuinely mode-specific (three files) from what rode on existing universal
+  systems — the reference for how cheap the *next* mode should be; §11 is the honest remaining-work
+  list for the prototype (composition is still 1×1, no carrier marker, no event feedback, bots'
+  disguise inert here, balance unplayed).
 - `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — the single, universal bot AI (`TankAIController`), used on
   every map: states/driving stack/params.
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
@@ -105,6 +115,13 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   via the bot-AI obstacle-avoidance work (see the Bot AI vault doc) when the bot visibly skidded
   sideways brushing a corner — same underlying `move_and_slide()` behavior applies to the player
   too, just less obvious since a human steers away from corners instinctively.
+  It also owns **fall damage** (`_track_fall_damage()`), for the same reason: this is the only node
+  that already holds vertical velocity, gravity and `is_on_floor()`. While airborne it tracks the
+  peak height and on landing charges the *height difference* (not impact speed — that under-reads
+  after a scrape along a ledge) as 0/1/2/3 HP by the `GameConfig.fall_damage_*` thresholds, via a
+  normal `take_hit(killer = null)` so debug invincibility still applies and `ScoreManager` credits
+  nobody. Reset on `RespawnController.respawned`. Only matters on multi-level maps; flat maps never
+  reach the 8-unit floor threshold.
 - `CameraRig` (`SpringArm3D`) — player only; free-look orbit independent of hull rotation. Its
   `rotation.y` is recomputed every physics frame as `world_yaw − body.rotation.y`, so turning the
   hull never drags the camera with it.
@@ -158,7 +175,11 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   `ai_fire_at` for `TankAIController` — null-safe. Base contract:
   `scenes/modifications/modification_behavior.gd` (`extends Node3D`, no `class_name`, all methods
   no-op). `weapon_controller`/`tank_movement`/`hud`/`tank_ai_controller` all talk to this contract —
-  no `id == &"mortar"` checks. The only behavior so far is the **mortar**
+  no `id == &"mortar"` checks. A `Modification` with `behavior_scene = null` is legitimate and
+  used: `scenes/modifications/container.tres` is exactly that — the CONTAINER_EXTRACTION container
+  occupies the slot and does nothing else, which is what gives "no other mod while carrying" for
+  free and keeps `ai_usable()` false so a carrier isn't mistaken for a mortar carrier.
+  The only behavior so far is the **mortar**
   (`scenes/modifications/mortar/{mortar_behavior.gd,Mortar.tscn}`): a two-press lobbed special shot
   (aim mode → ground ring reticle → `WeaponController.fire_special(dir, speed, damage)`), the one
   mortar-specific node in `Tank.tscn` being `Turret/MortarCamera`. Bots pick it up **and** use it
@@ -223,6 +244,20 @@ gets the stale default, because sibling `_ready()` order isn't the fix — readi
 that's set up before scene load (`MatchState`) is. Prefer that over reordering nodes when a value
 needs to be correct *during* `_ready()`.
 
+**`await` in the root's `_ready()` silently voids the "my `_ready()` beats everyone's `_process()`"
+assumption** that several nodes here lazily rely on (`ammo_drop_zone.gd`, `hud.gd`,
+`tank_ai_controller.gd` all defer their setup to a first `_process`/`_physics_process` tick
+*precisely because* the root finishes first). The moment the root started awaiting — navmesh bake,
+dynamic obstacles — those lazy inits began running **inside** the wait, seeing a half-built scene.
+Concrete damage found live: the ammo drop zone read `MatchState.match_mode` before it was assigned
+(kitchen ran the mortar cadence on TARGET_OBJECTIVE's 30 s instead of 75 s) and missed its
+`MatchManager.round_ended` subscription entirely (crates would keep dropping on the result screen).
+Two rules follow: (1) anything that needs no tree — like copying the map's `match_mode` into
+`MatchState` — goes at the **very top** of `_ready()`, before any `await`
+(`_apply_match_mode_to_state()`); (2) a lazy init that needs a code-created node must **wait for
+that node**, not for "one frame" (`ammo_drop_zone._process` now polls for `MatchManager` with a
+frame budget). Both bugs predate the kitchen map on any map with dynamic obstacles enabled.
+
 A related ordering pitfall specific to cameras: an about-to-be-activated bot's `CameraRig` also
 defaults `is_active = true` and steals `Camera3D.current` the instant it enters the tree, inside
 `CameraRig._ready()`. `team_spawner.gd` sets `is_active = false` on the orphaned instance *before*
@@ -237,7 +272,7 @@ only runs on the first `_physics_process()` tick, well after every sibling's `_r
 `get_tree().reload_current_scene()`, where ordinary `@export` fields on scene nodes don't).
 `MatchState` holds: `player_team: int` (the player's *side* this round, flipped by the HUD restart
 button — every map has a `TeamSpawner` node, see "Spawn system" below); `match_mode: Mode
-{TARGET_OBJECTIVE, TEAM_ARENA}` — a **per-map setting**, not runtime detection: `map_scene.gd` has
+{TARGET_OBJECTIVE, TEAM_ARENA, CONTAINER_EXTRACTION}` — a **per-map setting**, not runtime detection: `map_scene.gd` has
 `@export_enum var match_mode` set in each map's own scene file; the HUD reads it *lazily* since its
 own `_ready()` precedes the root's; and a round-series score (`series_wins_attack`/
 `series_wins_defense`, `total_rounds = 3`) tracked **by side, not by "the player's team"** —
@@ -370,7 +405,7 @@ handler must match the emitted arity exactly, or it's a runtime error, not a war
 
 Full reference: `Tank_Prop_Hunt_Game_Modes.md` in the vault. Summary below.
 
-Two modes, keyed off `MatchState.match_mode` (see Autoloads above), each map a template for one
+Three modes, keyed off `MatchState.match_mode` (see Autoloads above), each map a template for one
 mode (see "Map inventory"). **TARGET_OBJECTIVE** (`TargetObjectiveMap.tscn`): an `Objective` static
 body with a `HealthComponent` (`attackers_only = true`) sits on the map; **objective destroyed →
 round ends with an attack win; round timer expires with it intact → defense win**. Round timer for
@@ -390,8 +425,23 @@ circle sits on the ground), freed together with the objective and simply absent 
 (team 0) and **Синие** (team 1) — never "attack"/"defense"; the HUD `TeamLabel`, score line and
 result screen all say Красные/Синие in this mode (in TARGET_OBJECTIVE they say Атака/Оборона).
 
+**CONTAINER_EXTRACTION** (`KitchenMap.tscn`, mode 2) — full detail:
+`Tank_Prop_Hunt_Container_Extraction.md`. Five white `Container.tscn` pickups lie on the map; a
+container rides in the tank's **existing `ModificationController` slot** (a passive `Modification`
+with `behavior_scene = null`, so `can_pick_up()` alone enforces "no other mod while carrying" and
+`ai_usable()` stays false), is delivered by driving into your own team's `SpawnZone` circle, and
+drops at the death position when its carrier dies — capture-the-flag, not a respawning pickup.
+`ContainerManager` (node created by `map_scene.gd` like `ScoreManager`, **before** `MatchManager`,
+which subscribes to its `all_delivered`) owns layout / delivery polling / drop-on-death, and is
+`halt()`ed first in `_on_round_ended_teardown` so the result-screen freeze doesn't spill containers.
+Sides are fixed colour teams (Красные/Синие) as in TEAM_ARENA — `hud.gd._is_color_team_mode()`
+covers both. The match is a **single round** of `GameConfig.container_round_sec` (300 s):
+`MatchState.apply_mode_defaults(mode)` sets `total_rounds = 1` on every map load, so the existing
+`series_complete()` math ends the match after it; the round also ends early when all five are
+delivered. Winner = more deliveries, ties by `defense_wins_ties`.
+
 `match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
-= 0, `TeamArenaMap` = 1). Its script default is **`-1`, a deliberate invalid sentinel**: both real
+= 0, `TeamArenaMap` = 1, `KitchenMap` = 2). Its script default is **`-1`, a deliberate invalid sentinel**: both real
 values (0 and 1) are then non-default, so Godot's editor always serializes the line and a GUI
 scene-save can't silently strip it (the old default `0` meant `TargetObjectiveMap`'s
 `match_mode = 0` line — equal to the default — got dropped on every editor save). If the value is
@@ -453,11 +503,14 @@ three stay per-zone, only the interval + round-end stop are centralized on the l
 via `TankAIController`'s `AMMO_SEEK`/`AMMO_RETRIEVE`/`AMMO_WAIT` states, see the Bot AI vault doc).
 Full detail: `Tank_Prop_Hunt_Ammo_Drops.md`.
 
-**Modification crates** (`TARGET_OBJECTIVE` maps only): the same drop-zone leader also runs a
-`MortarDropTimer` (`GameConfig.mortar_drop_interval_sec`, 30 s) that drops one **red `ModCrate`**
-in *every* zone simultaneously (not one at a random zone like ammo). A `ModCrate` fills the tank's
-`ModificationController` slot with the mortar mod when the slot is empty. `TeamArenaMap.tscn`
-(`TEAM_ARENA`) starts no such timer. Full detail: `Tank_Prop_Hunt_Modifications.md`.
+**Modification crates** (`TARGET_OBJECTIVE` and `CONTAINER_EXTRACTION` maps): the same drop-zone
+leader also runs a `MortarDropTimer` that drops one **red `ModCrate`** in *every* zone
+simultaneously (not one at a random zone like ammo). A `ModCrate` fills the tank's
+`ModificationController` slot with the mortar mod when the slot is empty. Cadence is
+`GameConfig.mortar_drop_interval_sec` (30 s) in TARGET_OBJECTIVE and the rarer
+`mortar_drop_interval_container_sec` (75 s) in CONTAINER_EXTRACTION, where the slot is mainly
+wanted for the container. `TeamArenaMap.tscn` (`TEAM_ARENA`) starts no such timer. Full detail:
+`Tank_Prop_Hunt_Modifications.md`.
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`
 (N = `current_round_num`), line 2 the mode-dependent overall score — TARGET_OBJECTIVE: series only
@@ -537,10 +590,10 @@ a `project` memory — do not silently ship the visible checkbox.
 Single AI system for the whole project — every map deploys the exact same node/script, not a
 per-map or per-context system. Lives as a dormant sibling on every `Tank.tscn` instance (including
 the player's, see "Tank as a composed entity" above) and lazily self-inits on first enabled
-`_physics_process()` tick. A 19-state priority engine
+`_physics_process()` tick. A 21-state priority engine
 (`IDLE/PATROL/ATTACK/HUNT/PURSUE/SEARCH/ATTACK_OBJECTIVE/ALERT/DEAD/AMMO_SEEK/AMMO_RETRIEVE/
 AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK/DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE/
-OBJECTIVE_CHECK`) with a
+OBJECTIVE_CHECK/CONTAINER_SEEK/CONTAINER_DELIVER`) with a
 NavMesh-based driving stack (pure
 pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
 `ACHIEVER` self-degrades to `KILLER` behavior at init if the map has no objective), three difficulty
@@ -556,6 +609,20 @@ name- or scene-structure-specific, so the same file works unmodified on any map.
 disguise only via scripted ambush scenarios (`disguise_s1/s2/s3`, roster-gated); `_can_see()` hides
 a `DISGUISED` enemy from *acquisition* but not from a bot already fighting it (`ignore_disguise`
 param — see `DisguiseController` above and `Tank_Prop_Hunt_Disguise.md` §5).
+In CONTAINER_EXTRACTION the same brain runs a container loop with no new role: carrying a container
+outranks even the out-of-ammo gate (deliver first, snap-fire only, never commit to a fight); an
+enemy *carrier* is a priority target for both sides (mirrors the mortar-carrier priority);
+`CONTAINER_SEEK` counts as a "peaceful errand" alongside `AMMO_*`/`MOD_*` (resumable after combat)
+and sits below the ammo branches in `_ensure_home_state()`. Two bots won't chase the same container
+(`_container_taken_by_other_bot`, same idiom as `_zone_taken_by_other_bot`).
+**Ledge check** (`ledge_check_enabled`, roster-gated, default off — it's a map property, and flat
+maps would just burn raycasts): the driving stack only ever probed *horizontally*, so it sees a wall
+but not the edge of a counter. A downward probe ahead now feeds both `_check_emergency_brake()` and
+`_scan_gap()`. Crucially a drop is **not** judged by height — descending a ramp is a drop too — but
+by steepness: the drop at each probe distance is compared against what a drivable slope would give
+(`dist * tan(ledge_max_slope_deg) + ledge_slack`), so ramps pass and cliffs don't. Its fan is
+deliberately narrower than the brake's, or a bot would stop mid-descent on seeing the void beside
+its own ramp. Detail: `Tank_Prop_Hunt_Container_Extraction.md` §7.1.
 
 **Full architecture reference — states, priority ladder, driving-stack internals, per-tier
 parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_Prop_Hunt_Bot_AI_Sandbox.md`),
@@ -571,7 +638,7 @@ default scene, see below.
 
 ### Obstacle prefab system — `scenes/obstacles/` (universal, every map)
 
-Map obstacles are **instances of two prefab scenes**, not hand-built `StaticBody3D` +
+Map geometry is **instances of prefab scenes**, not hand-built `StaticBody3D` +
 `CollisionShape3D` + `MeshInstance3D` triples inside each map `.tscn`:
 
 - `Obstacle.tscn` (`obstacle.gd`, `@tool`, `extends StaticBody3D`) — any solid box: crate, block,
@@ -583,6 +650,18 @@ Map obstacles are **instances of two prefab scenes**, not hand-built `StaticBody
   `Objective`).
 - `HazardZone.tscn` (`hazard_zone.gd`, `@tool`, `extends Area3D`) — impassable area, `@export size`,
   fixed translucent-red material, `collision_layer=4`.
+- `Structure.tscn` (`structure.gd`, `@tool`) — **permanent level geometry** (furniture, walls,
+  counters, shelves): technically the same box as `Obstacle` (`@export size`/`color`), but in group
+  `"structures"`, not `"obstacles"`. That split is load-bearing, not cosmetic: the dynamic-obstacle
+  pass deletes the whole `"obstacles"` group, so a map built from `Obstacle` would be wiped to bare
+  floor by the menu checkbox. `Obstacle` stays what it always was — swappable cover that doubles as
+  the disguise prop.
+- `ToyRamp.tscn` (`toy_ramp.gd`, `@tool`) — the only incline primitive (ruler / book / race-track
+  piece / plank). `@export run`/`rise`/`width`/`thickness`/`color`; place the node at the **bottom**
+  of the incline and yaw it — the top end lands exactly `run` forward (along the node's -Z, the
+  project's usual forward) and `rise` up. `rise = 0` gives a flat plank (the sink bridge, and the
+  landing pads that make diagonal ramps connect to platforms). Needed because the tank has no
+  step-up: vertical connectivity rests entirely on slopes. Placement rules: see "Map inventory".
 
 All three sub-resources in each prefab are `resource_local_to_scene = true` so per-instance
 `size`/`color` don't bleed across instances. Nothing looks obstacles up by name. After
@@ -685,7 +764,7 @@ placement constraints for the dynamic pass.
 
 ### Map inventory
 
-`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, two buttons, each
+`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, three buttons, each
 just calls `get_tree().change_scene_to_file()` at one of the maps below; carries no game logic of
 its own. Launch either map directly via `run_project`'s `scene:` param (or repoint `run/main_scene`)
 to skip the menu:
@@ -701,6 +780,17 @@ to skip the menu:
   (`Tank_Prop_Hunt_Modifications.md` §8, `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.4).
 - `scenes/maps/TeamArenaMap.tscn` — TEAM_ARENA template: one `KILLER` bot roaming the whole map,
   described above.
+- `scenes/maps/KitchenMap.tscn` — CONTAINER_EXTRACTION template and the project's only
+  **multi-level** map: a toy-scale kitchen (**24 units = 1 m**, tank ≈ 7.5 cm) on a 108×84 floor,
+  six height tiers (floor 0 · chairs/stool 10.8 · sink 15.6 · table 18 · counter 21.6 ·
+  shelf+cabinet 30 · shelf+fridge 43.2) joined only by `ToyRamp` inclines. Bases sit on surfaces
+  (attack on the table, defense on the counter); five `ContainerSpawn`-role markers, one per tier.
+  It bakes its navmesh at load (`bake_navmesh_on_start`) instead of storing it, and opts out of
+  dynamic obstacles (`dynamic_obstacles_supported = false`). **Before editing its geometry read
+  `Tank_Prop_Hunt_Container_Extraction.md` §2.3** — ramps must stay ≤24° (a box `CharacterBody3D`
+  stalls dead at ~28° despite `floor_max_angle` 45°), must end exactly on a platform edge, must not
+  lie flat across a platform, and a diagonal ramp needs a flat coplanar landing or the navmesh
+  silently splits into islands.
 
 An earlier, separate "production" map (`Main.tscn`/`Map.tscn`, a 5×5 proof-of-concept predating
 stable bot behavior) was retired once these two became the real game-mode templates — recoverable

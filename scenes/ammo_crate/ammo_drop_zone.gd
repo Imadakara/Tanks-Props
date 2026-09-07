@@ -53,10 +53,10 @@ const _GROUP := "ammo_drop_zones"
 @export var max_pending_mortar_crates: int = 1
 
 const _PLACEMENT_ATTEMPTS: int = 20
-## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) — не ронять в стену/дом/танк/
-## чужой ящик (жёлтый или красный). Та же маска и приём (sphere query), что в
-## match_manager._find_free_crate_position.
-const _PROBE_MASK: int = 99
+## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) | containers(128) — не ронять в
+## стену/дом/танк/чужой ящик (жёлтый, красный или белый контейнер режима CONTAINER_EXTRACTION).
+## Та же маска и приём (sphere query), что в match_manager._find_free_crate_position.
+const _PROBE_MASK: int = 227
 const _PROBE_RADIUS: float = 0.6
 
 var _area: Node3D
@@ -65,6 +65,10 @@ var _mortar_timer: Timer  # только у лидера И только в ре
 var _pending: Array = []
 var _pending_mortar: Array = []
 var _inited: bool = false
+## Сколько кадров уже ждём появления "MatchManager" (см. _process). Потолок ~10с при 60fps — с
+## заведомым запасом на запечку навмеша карты; после него инициализируемся как есть.
+var _init_wait_frames: int = 0
+const _INIT_MAX_WAIT_FRAMES: int = 600
 
 ## --- Координация атакующих ботов вокруг мортиры (читают/пишут tank_ai_controller.gd) ---------
 ## true — мортира в ЭТОЙ зоне уже учтена в текущем цикле сброса: её забрал танк (`_mark_mortar_taken()`
@@ -90,11 +94,21 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _inited:
 		return
+	# [ИСПРАВЛЕНО] Ждём, пока корень карты закончит свой _ready() и заведёт узел "MatchManager".
+	# Раньше инициализация шла на ПЕРВОМ же _process — это было верно, пока `_ready()` карты был
+	# синхронным (тогда он гарантированно отрабатывал раньше любого _process). С появлением в нём
+	# ожиданий (запечка навмеша на старте, динамическая расстановка препятствий) гарантия исчезла:
+	# лидер зоны инициализировался посреди ожидания, не находил MatchManager и молча НЕ подписывался
+	# на round_ended — ящики продолжали бы падать уже на экране результата. По той же причине он
+	# читал ещё не проставленный MatchState.match_mode (см. map_scene._apply_match_mode_to_state()).
+	var mm: Node = get_tree().current_scene.get_node_or_null("MatchManager")
+	if mm == null and _init_wait_frames < _INIT_MAX_WAIT_FRAMES:
+		_init_wait_frames += 1
+		return  # ещё не готово; потолок кадров — страховка от карты, которая MatchManager не заводит вовсе
 	_inited = true
 	set_process(false)
 	if not _is_leader():
 		return  # не лидер — таймера нет, ждёт вызовов _try_drop() от лидера
-	var mm: Node = get_tree().current_scene.get_node_or_null("MatchManager")
 	if mm != null and mm.has_signal("round_ended"):
 		mm.round_ended.connect(_on_round_ended)
 	_timer = Timer.new()
@@ -105,10 +119,16 @@ func _process(_delta: float) -> void:
 	_timer.timeout.connect(_on_drop_tick)
 	_timer.start()
 
-	# Красные ящики модификации — только на картах режима TARGET_OBJECTIVE (ТЗ). MatchState.match_mode
-	# уже проставлен корневым _ready() карты (тот идёт до этого ленивого init, как и MatchManager выше).
-	if MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE:
+	# Красные ящики модификации — в TARGET_OBJECTIVE (ТЗ) и в CONTAINER_EXTRACTION, но в экстракшене
+	# РЕЖЕ (GameConfig.mortar_drop_interval_container_sec): слот там прежде всего под контейнер,
+	# мортира — эпизодическое усиление, а не постоянная опция. В TEAM_ARENA красных ящиков нет вовсе.
+	# MatchState.match_mode уже проставлен корневым _ready() карты (тот идёт до этого ленивого init,
+	# как и MatchManager выше).
+	if MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE \
+			or MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
 		var interval: float = mortar_drop_interval_sec if mortar_drop_interval_sec > 0.0 else GameConfig.mortar_drop_interval_sec
+		if MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+			interval = GameConfig.mortar_drop_interval_container_sec
 		_mortar_timer = Timer.new()
 		_mortar_timer.name = "MortarDropTimer"
 		_mortar_timer.one_shot = false

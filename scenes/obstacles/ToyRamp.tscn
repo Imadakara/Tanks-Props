@@ -1,0 +1,26 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/obstacles/toy_ramp.gd" id="1_ramp"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ramp"]
+resource_local_to_scene = true
+size = Vector3(8, 1, 26.32)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ramp"]
+resource_local_to_scene = true
+size = Vector3(8, 1, 26.32)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ramp"]
+resource_local_to_scene = true
+albedo_color = Color(0.85, 0.78, 0.55, 1)
+
+[node name="ToyRamp" type="StaticBody3D"]
+collision_mask = 0
+script = ExtResource("1_ramp")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_ramp")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_ramp")
+mesh = SubResource("BoxMesh_ramp")
