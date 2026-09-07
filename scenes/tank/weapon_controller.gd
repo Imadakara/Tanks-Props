@@ -19,8 +19,8 @@ signal fired()
 @export var muzzle_up_offset: float = 0.0
 
 @onready var _body: Node3D = get_parent()
-@onready var _turret: Node3D = get_parent().get_node("Turret")
-@onready var _barrel: Node3D = get_parent().get_node("Turret/Barrel")
+@onready var _turret: Node3D = get_parent().get_node("Hull/Turret")
+@onready var _barrel: Node3D = get_parent().get_node("Hull/Turret/Barrel")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
 @onready var _ammo: Node = get_parent().get_node("AmmoComponent")
 @onready var _mod: Node = get_parent().get_node("ModificationController")

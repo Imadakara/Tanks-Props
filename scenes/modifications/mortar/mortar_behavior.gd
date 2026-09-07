@@ -43,6 +43,9 @@ var _reticle_ring: MeshInstance3D = null
 var _tank: CharacterBody3D
 var _turret: Node3D
 var _barrel: Node3D
+## Потолок возвышения дула, поднятый на время прицеливания мортиры (см. _begin_aiming).
+const _MORTAR_MAX_PITCH_DEG := 85.0
+var _saved_barrel_max_pitch_deg: float = 0.0
 var _camera_rig: Node3D
 var _mortar_camera: Camera3D
 var _state_machine: Node
@@ -54,10 +57,10 @@ var _weapon: Node
 
 func setup(tank: Node) -> void:
 	_tank = tank as CharacterBody3D
-	_turret = tank.get_node("Turret")
-	_barrel = tank.get_node("Turret/Barrel")
+	_turret = tank.get_node("Hull/Turret")
+	_barrel = tank.get_node("Hull/Turret/Barrel")
 	_camera_rig = tank.get_node("CameraRig")
-	_mortar_camera = tank.get_node("Turret/MortarCamera")
+	_mortar_camera = tank.get_node("Hull/Turret/MortarCamera")
 	_state_machine = tank.get_node("TankStateMachine")
 	_ammo = tank.get_node("AmmoComponent")
 	_weapon = tank.get_node("WeaponController")
@@ -140,6 +143,14 @@ func _begin_aiming() -> void:
 	_aim_yaw = _tank.rotation.y + _turret.rotation.y  # стартуем с текущего мирового угла башни
 	_turret.is_player_controlled = false
 	_barrel.is_player_controlled = false
+	# Обычный предел возвышения дула (barrel_controller.max_pitch_deg, +20°) стоит под настильную
+	# стрельбу и под кадр камеры от 3-го лица. Навесная дуга мортиры уходит намного круче
+	# (_solve_high_pitch даёт вплоть до 85°), и с обычным пределом ствол визуально врал бы: дуло
+	# упёрто в 20°, а снаряд уходит по крутой дуге. На время прицеливания поднимаем предел, на
+	# выходе возвращаем. Сам выстрел от предела не зависит вообще — он идёт через
+	# WeaponController.fire_special() по посчитанному направлению, а не по basis ствола.
+	_saved_barrel_max_pitch_deg = _barrel.max_pitch_deg
+	_barrel.max_pitch_deg = _MORTAR_MAX_PITCH_DEG
 	_camera_rig.is_active = false
 	_mortar_camera.current = true
 	_ensure_reticle_ring()
@@ -152,6 +163,7 @@ func _end_aiming() -> void:
 	_aiming = false
 	_turret.is_player_controlled = true
 	_barrel.is_player_controlled = true
+	_barrel.max_pitch_deg = _saved_barrel_max_pitch_deg
 	_mortar_camera.current = false
 	if _reticle_ring != null:
 		_reticle_ring.visible = false

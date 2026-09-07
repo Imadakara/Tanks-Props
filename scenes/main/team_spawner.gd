@@ -318,7 +318,7 @@ func _apply_tank_config(tank: Node, config: Dictionary) -> void:
 		movement.move_speed = float(config["move_speed"])
 	if config.has("acceleration"):
 		movement.acceleration = float(config["acceleration"])
-	var turret: Node = tank.get_node("Turret")
+	var turret: Node = tank.get_node("Hull/Turret")
 	if config.has("turret_turn_speed"):
 		turret.turn_speed = float(config["turret_turn_speed"])
 	var weapon: Node = tank.get_node("WeaponController")

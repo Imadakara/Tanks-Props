@@ -75,43 +75,43 @@ current = true
 [node name="TankMovement" type="Node" parent="." unique_id=144656680]
 script = ExtResource("2_ejt3n")
 
-[node name="Turret" type="Node3D" parent="." unique_id=821121836]
+[node name="Turret" type="Node3D" parent="Hull" unique_id=821121836]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("3_bfi3s")
 
-[node name="TurretMesh" type="MeshInstance3D" parent="Turret" unique_id=907928381]
+[node name="TurretMesh" type="MeshInstance3D" parent="Hull/Turret" unique_id=907928381]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.14, 0)
 mesh = SubResource("BoxMesh_mu8yi")
 
-[node name="TurretSkirt" type="MeshInstance3D" parent="Turret" unique_id=907928385]
+[node name="TurretSkirt" type="MeshInstance3D" parent="Hull/Turret" unique_id=907928385]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.02, 0)
 mesh = SubResource("CylinderMesh_skirt")
 
-[node name="TurretMantlet" type="MeshInstance3D" parent="Turret" unique_id=907928382]
+[node name="TurretMantlet" type="MeshInstance3D" parent="Hull/Turret" unique_id=907928382]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.42)
 mesh = SubResource("BoxMesh_mantlet")
 
-[node name="TurretBustle" type="MeshInstance3D" parent="Turret" unique_id=907928383]
+[node name="TurretBustle" type="MeshInstance3D" parent="Hull/Turret" unique_id=907928383]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0.44)
 mesh = SubResource("BoxMesh_bustle")
 
-[node name="TurretCupola" type="MeshInstance3D" parent="Turret" unique_id=907928384]
+[node name="TurretCupola" type="MeshInstance3D" parent="Hull/Turret" unique_id=907928384]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.15, 0.31, 0.12)
 mesh = SubResource("CylinderMesh_cupola")
 
-[node name="MortarCamera" type="Camera3D" parent="Turret" unique_id=555111222]
+[node name="MortarCamera" type="Camera3D" parent="Hull/Turret" unique_id=555111222]
 transform = Transform3D(1, 0, 0, 0, 0.76604444, 0.6427876, 0, -0.6427876, 0.76604444, 0, 8, 10)
 current = false
 
-[node name="Barrel" type="Node3D" parent="Turret" unique_id=643352722]
+[node name="Barrel" type="Node3D" parent="Hull/Turret" unique_id=643352722]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.2)
 script = ExtResource("5_oswvf")
 
-[node name="BarrelMesh" type="MeshInstance3D" parent="Turret/Barrel" unique_id=1343414565]
+[node name="BarrelMesh" type="MeshInstance3D" parent="Hull/Turret/Barrel" unique_id=1343414565]
 transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, -0.45)
 mesh = SubResource("CylinderMesh_v2yb2")
 
-[node name="BarrelMuzzleBrake" type="MeshInstance3D" parent="Turret/Barrel" unique_id=1343414566]
+[node name="BarrelMuzzleBrake" type="MeshInstance3D" parent="Hull/Turret/Barrel" unique_id=1343414566]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.84)
 mesh = SubResource("BoxMesh_brake")
 

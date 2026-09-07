@@ -14,7 +14,19 @@ extends SpringArm3D
 @export var is_active: bool = true
 @export var mouse_sensitivity: float = 0.005
 @export var pitch_min_deg: float = -60.0
-@export var pitch_max_deg: float = 35.0  # с запасом выше диапазона дула (+30°) — иначе барабан физически не достигнет верхнего предела
+@export var pitch_max_deg: float = 25.0  # с запасом выше предела возвышения дула (+20°, barrel_controller.gd) — иначе дуло физически не достаёт до верхней границы
+
+## ПОДЪЁМ КАМЕРЫ НА ЗАДРАННОМ ПРИЦЕЛЕ. Пивот стоит на корне танка и поворачивается по питчу целиком,
+## поэтому камера, висящая на конце штанги, при взгляде ВВЕРХ уезжает вниз-назад (Basis(X,θ) уводит
+## точку (0,0,L) в y = −L·sinθ) — и собственный корпус закрывает весь верх кадра, ровно там, куда
+## целишься. Лечится не «отодвинуть камеру», а связкой двух величин с текущим питчем: пивот
+## поднимается, штанга укорачивается. На верхней границе прицела камера выходит чуть выше макушки
+## башни и близко к ней; при взгляде вперёд/вниз всё возвращается к обычному виду от третьего лица.
+## Интерполяция по smoothstep, а не линейная — иначе подъём чувствуется рывком в начале хода мыши.
+@export var pivot_height: float = 2.0  # высота пивота над танком при взгляде вперёд
+@export var pivot_height_top: float = 3.0  # ...и на верхней границе питча
+@export var spring_length_base: float = 6.0  # длина штанги при взгляде вперёд
+@export var spring_length_top: float = 3.2  # ...и на верхней границе питча
 @export var reverse_camera_follow: bool = false  # GTA-style доворот камеры на заднем ходу — мешает прицеливанию, выключено
 @export var reverse_follow_speed: float = 2.0  # рад/сек — скорость довода, если reverse_camera_follow=true
 
@@ -81,3 +93,14 @@ func _physics_process(delta: float) -> void:
 		_world_yaw = lerp_angle(_world_yaw, behind_yaw, reverse_follow_speed * delta)
 	rotation.y = wrapf(_world_yaw - _body.rotation.y, -PI, PI)
 	rotation.x = _pitch
+	_apply_pitch_framing()
+
+## Доля хода прицела вверх: 0 — смотрим вперёд или вниз, 1 — упёрлись в верхнюю границу.
+## Отрицательный питч (взгляд вниз) камеру не трогает: там корпус обзор и не закрывает.
+func _apply_pitch_framing() -> void:
+	var top: float = deg_to_rad(pitch_max_deg)
+	if top <= 0.0:
+		return
+	var t: float = smoothstep(0.0, 1.0, clampf(_pitch / top, 0.0, 1.0))
+	position.y = lerpf(pivot_height, pivot_height_top, t)
+	spring_length = lerpf(spring_length_base, spring_length_top, t)

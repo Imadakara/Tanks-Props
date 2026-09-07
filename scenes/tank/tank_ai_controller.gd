@@ -892,8 +892,8 @@ const _DIFFICULTY_PRESETS := {
 
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
-@onready var _turret: Node3D = get_parent().get_node("Turret")
-@onready var _barrel: Node3D = get_parent().get_node("Turret/Barrel")
+@onready var _turret: Node3D = get_parent().get_node("Hull/Turret")
+@onready var _barrel: Node3D = get_parent().get_node("Hull/Turret/Barrel")
 @onready var _weapon: Node = get_parent().get_node("WeaponController")
 @onready var _disguise: Node = get_parent().get_node("DisguiseController")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
@@ -3171,7 +3171,10 @@ func _process_mortar_attack(delta: float) -> void:
 	# Мортира одноразовая и дорогая — требуем ТУГОЙ сходимости прицела (жёстче обычного выстрела),
 	# чтобы навесной снаряд гарантированно накрыл цель.
 	var yaw_ok: bool = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI))) <= 1.5
-	var pitch_ok: bool = rad_to_deg(absf(pitch - _barrel.rotation.x)) <= 1.0
+	# Сравниваем с МИРОВЫМ углом дула, а не с `rotation.x`: дуло крепится к башне, а башня кренится
+	# вместе с корпусом (см. barrel_controller.gd) — на склоне локальный угол заведомо не равен
+	# заказанному мировому, и такая проверка не сошлась бы никогда.
+	var pitch_ok: bool = rad_to_deg(absf(pitch - _barrel.world_pitch())) <= 1.0
 	if yaw_ok and pitch_ok:
 		_mortar_prep_timer -= delta
 		if _mortar_prep_timer <= 0.0:
@@ -3708,7 +3711,7 @@ func _reroll_miss_offset() -> void:
 ## (используя 1/cos²θ = 1+t²): `(g*x²/2v²)*t² - x*t + (y + g*x²/2v²) = 0`. Два корня — настильная
 ## (низкая) и навесная (высокая) дуги; берём НИЗКУЮ (t_low = меньший корень) — обычная танковая
 ## пушка, не миномёт; на игровых дистанциях (fire_range 9-21м, launch_speed ботов ~30) угол
-## получается единицы градусов, комфортно внутри диапазона дула бота (-15°..+30°, см.
+## получается единицы градусов, комфортно внутри диапазона дула бота (-15°..+20°, см.
 ## barrel_controller.gd).
 ## Дискриминант < 0 — цель физически недостижима на данной скорости снаряда (не должно случаться
 ## при dist<=fire_range с текущим балансом, но на случай будущей рассинхронизации баланса — берём
@@ -3721,14 +3724,17 @@ func _compute_ballistic_pitch(dist_xz: float, height_diff: float) -> float:
 	var a: float = (g * dist_xz * dist_xz) / (2.0 * v * v)
 	var c: float = height_diff + a
 	var discriminant: float = dist_xz * dist_xz - 4.0 * a * c
+	# Пределы берём МИРОВЫЕ (world_pitch_limits): дуло висит на башне, башня кренится вместе с
+	# корпусом, поэтому окно достижимых углов относительно горизонта уезжает вместе с уклоном.
+	var limits: Vector2 = _barrel.world_pitch_limits()
 	var pitch: float
 	if discriminant < 0.0:
-		pitch = deg_to_rad(_barrel.max_pitch_deg)
+		pitch = limits.y
 	else:
 		var sqrt_d: float = sqrt(discriminant)
 		var t_low: float = (dist_xz - sqrt_d) / (2.0 * a)
 		pitch = atan(t_low)
-	return clamp(pitch, deg_to_rad(_barrel.min_pitch_deg), deg_to_rad(_barrel.max_pitch_deg))
+	return clampf(pitch, limits.x, limits.y)
 
 ## Порог скорости цели, ниже которого считаем её "неподвижной" (см. `target_is_moving` в
 ## _aim_and_fire()) — не 0.0 буквально, чтобы дрожь скорости от физики/акселерации (TankMovement
@@ -3774,11 +3780,14 @@ func _aim_and_fire(target: Node3D) -> void:
 	# `pitch` тут уже посчитан от aim_point/dist_xz, а aim_point УЖЕ включает упреждение (lead_pos
 	# выше), если оно активно — баллистика уже сама решила правильный угол под БУДУЩУЮ, упреждённую
 	# точку.
-	_barrel.target_pitch = clamp(pitch, deg_to_rad(_barrel.min_pitch_deg), deg_to_rad(_barrel.max_pitch_deg))
+	# Зажимаем МИРОВЫМ диапазоном дула: башня кренится вместе с корпусом, поэтому на уклоне окно
+	# достижимых углов уезжает вместе с ним (см. barrel_controller.world_pitch_limits()).
+	var pitch_limits: Vector2 = _barrel.world_pitch_limits()
+	_barrel.target_pitch = clampf(pitch, pitch_limits.x, pitch_limits.y)
 
 	var dist: float = _body.global_position.distance_to(target.global_position)
 	var aim_diff_deg: float = rad_to_deg(absf(wrapf(_turret.target_yaw - _turret.rotation.y, -PI, PI)))
-	var pitch_diff_deg: float = rad_to_deg(absf(_barrel.target_pitch - _barrel.rotation.x))
+	var pitch_diff_deg: float = rad_to_deg(absf(_barrel.target_pitch - _barrel.world_pitch()))
 	var aim_tolerance: float = precise_fire_aim_tolerance_deg if planned_hit else fire_aim_tolerance_deg
 	var pitch_tolerance: float = precise_fire_pitch_tolerance_deg if planned_hit else fire_pitch_tolerance_deg
 	if dist <= fire_range and aim_diff_deg <= aim_tolerance and pitch_diff_deg <= pitch_tolerance:

@@ -54,7 +54,7 @@ func _ready() -> void:
 		_on_ammo_changed(_ammo.current_ammo, _ammo.max_ammo)
 		_update_state_label()
 		_respawn = tank.get_node_or_null("RespawnController")
-		_barrel = tank.get_node("Turret/Barrel")
+		_barrel = tank.get_node("Hull/Turret/Barrel")
 		_camera = tank.get_node("CameraRig/Camera3D")
 		_mod = tank.get_node_or_null("ModificationController")
 		if _mod != null:

@@ -311,7 +311,7 @@ func _spawn_dummy_tank() -> void:
 	_dummy = TankScene.instantiate()
 	_dummy.name = "DummyTank"
 	_dummy.get_node("CameraRig").is_active = false
-	for path in ["TankMovement", "Turret", "Turret/Barrel", "WeaponController", "DisguiseController"]:
+	for path in ["TankMovement", "Hull/Turret", "Hull/Turret/Barrel", "WeaponController", "DisguiseController"]:
 		_dummy.get_node(path).is_player_controlled = false
 	_dummy.team = 1
 	# Ставим его серединой КОСОГОРА, а не на ровное место: там корпус кренится вбок, и со стороны

@@ -84,7 +84,6 @@ var _saved_overrides: Dictionary = {}
 ## а не один меш: перечислять узлы поимённо больше нечего, а спрятать надо всю ходовую разом,
 ## иначе из-под коробки маскировки торчали бы крутящиеся гусеницы.
 @onready var _hull: Node3D = get_parent().get_node("Hull")
-@onready var _turret: Node3D = get_parent().get_node("Turret")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 
@@ -235,7 +234,6 @@ func _show_disguise() -> void:
 			mesh.material_override = _ghost_mat()
 	else:
 		_hull.visible = false
-		_turret.visible = false
 
 func _hide_disguise() -> void:
 	if _prop_mesh != null:
@@ -243,21 +241,13 @@ func _hide_disguise() -> void:
 	if _obstacle_shape != null:
 		_obstacle_shape.disabled = true
 	_hull.visible = true
-	_turret.visible = true
 	for mesh in _saved_overrides:
 		if is_instance_valid(mesh):
 			mesh.material_override = _saved_overrides[mesh]
 	_saved_overrides.clear()
 
-## Всё, что рентгенится у локального игрока: визуал корпуса (его отдаёт сам hull_rig.gd — состав
-## поддерева знает только он) плюс поддерево башни со стволом и навесной модификацией.
+## Всё, что рентгенится у локального игрока, отдаёт сам hull_rig.gd: состав поддерева знает
+## только он (броня и ходовая строятся кодом), а башня со стволом и навесной модификацией — тоже
+## его потомки, с тех пор как погон кренится вместе с корпусом.
 func _ghost_targets() -> Array:
-	var targets: Array = _hull.visual_meshes()
-	_collect_visuals(_turret, targets)
-	return targets
-
-func _collect_visuals(node: Node, out: Array) -> void:
-	for child in node.get_children():
-		if child is GeometryInstance3D:
-			out.append(child)
-		_collect_visuals(child, out)
+	return _hull.visual_meshes()

@@ -21,8 +21,25 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 @export var is_player_controlled: bool = true
 @export var target_yaw: float = 0.0
 
-@onready var _camera_rig: Node3D = get_parent().get_node_or_null("CameraRig")
-@onready var _state_machine: Node = get_parent().get_node_or_null("TankStateMachine")
+## Башня — ребёнок ПИВОТА КОРПУСА (`Hull`, см. hull_rig.gd), а не корня танка: погон физически
+## стоит на корпусе и наклоняется вместе с ним, а этот узел вращает башню ровно по ОДНОЙ оси —
+## своей локальной Y, то есть по нормали наклонённой палубы. Поэтому соседей (CameraRig,
+## TankStateMachine) ищем не у прямого родителя, а у КОРНЯ танка. Тот же скрипт стоит и на
+## `TurretPivot` стационарной турели (`scenes/turret/Turret.tscn`), где корень — StaticBody3D и
+## ни камеры, ни стейт-машины нет вовсе: поиск обязан возвращать null, а не падать.
+@onready var _camera_rig: Node3D = _find_on_body("CameraRig")
+@onready var _state_machine: Node = _find_on_body("TankStateMachine")
+
+## Ближайший предок-физтело (CharacterBody3D танка или StaticBody3D турели) — на нём и висят
+## компоненты. Поиск вверх, а не по фиксированному пути: глубина вложенности башни у танка и у
+## турели разная.
+func _find_on_body(node_name: String) -> Node:
+	var ancestor: Node = get_parent()
+	while ancestor != null:
+		if ancestor is CollisionObject3D:
+			return ancestor.get_node_or_null(node_name)
+		ancestor = ancestor.get_parent()
+	return null
 
 func _physics_process(delta: float) -> void:
 	if is_player_controlled and _camera_rig != null:

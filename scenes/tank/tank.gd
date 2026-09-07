@@ -5,9 +5,9 @@ extends CharacterBody3D
 ## - «Подкраска танка цветом команды» (apply_team_visuals()): меши корпуса/башни/ствола красятся
 ##   в GameConfig.team_attack_color / team_defense_color по tank.team. Вызывается team_spawner.gd
 ##   сразу после присвоения team и respawn_controller.gd на возврате в игру. Обход — рекурсивный
-##   по поддеревьям `Hull` и `Turret`, а не по списку путей: броня корпуса и ходовая строятся
-##   КОДОМ в hull_rig.gd, фиксированного списка узлов там нет. Ходовая (гусеницы/катки) из
-##   покраски исключена по префиксу имени, см. _DARK_PART_PREFIXES.
+##   по поддереву `Hull` (башня со стволом теперь тоже его потомки), а не по списку путей: броня
+##   корпуса и ходовая строятся КОДОМ в hull_rig.gd, фиксированного списка узлов там нет. Ходовая
+##   (гусеницы/катки) из покраски исключена по префиксу имени, см. _DARK_PART_PREFIXES.
 ## - Индикация HP — Label3D над танком, ТОЛЬКО в debug-режиме (MatchState.debug_enabled). Раньше
 ##   при нефинальном попадании корпус+башня перекрашивались в красный — заменено на цифры HP,
 ##   чтобы не конфликтовать с цветом команды.
@@ -53,10 +53,11 @@ func apply_team_visuals() -> void:
 	if _team_material == null:
 		_team_material = StandardMaterial3D.new()
 	_team_material.albedo_color = GameConfig.team_defense_color if team == Team.DEFENSE else GameConfig.team_attack_color
-	for root_name in ["Hull", "Turret"]:
-		var root: Node = get_node_or_null(root_name)
-		if root != null:
-			_tint_subtree(root)
+	# Одного обхода `Hull` хватает на весь танк: башня со стволом — тоже его потомки
+	# (`Hull/Turret`, она кренится вместе с корпусом, см. hull_rig.gd).
+	var hull: Node = get_node_or_null("Hull")
+	if hull != null:
+		_tint_subtree(hull)
 
 ## GeometryInstance3D, а не MeshInstance3D: гусеница — MultiMeshInstance3D (она в исключениях, но
 ## проверка типа должна её видеть, иначе фильтр по имени просто не сработает).

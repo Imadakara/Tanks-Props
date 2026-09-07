@@ -122,12 +122,32 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   hull corners give the support plane's pitch/roll plus the sag of a box collider resting on a
   slope edge, on top of which come accel dive/squat and outward roll in a turn, exponentially
   damped and clamped to `max_tilt_deg`. The tank **root never tilts** — forward/right, aim, turret
-  yaw and the whole bot brain read the root's basis. `Turret` therefore stays a direct child of
-  the root and keeps its horizon (gyro-stabilized look): tilting it would push every shot off the
-  crosshair by the roll angle. Only its *position* is carried along the tilted deck
-  (`carry_turret`), and the seam is hidden by `TurretRing` (on the pivot) + `TurretSkirt` (on the
-  turret). Track/wheel speeds are per side (`v = v_forward ± ω·gauge`), so a neutral turn spins
-  the two tracks in opposite directions. Full detail: `Tank_Prop_Hunt_Tank_Chassis.md`.
+  yaw and the whole bot brain read the root's basis. `Turret` **is a child of this pivot**
+  (`Hull/Turret`), so the ring tilts with the deck and the turret keeps exactly one degree of
+  freedom, rotation about the tilted deck normal — the real thing. Track/wheel speeds are per side
+  (`v = v_forward ± ω·gauge`), so a neutral turn spins the two tracks in opposite directions.
+  Full detail: `Tank_Prop_Hunt_Tank_Chassis.md`.
+- Because the turret tilts, **local gun angles are no longer world angles**, and that split is
+  load-bearing. `BarrelController.target_pitch` keeps its old meaning — the *ordered* elevation in
+  **world** terms (that is what the player's camera pitch, the bot's ballistic solution and the
+  mortar solution all produce); `barrel_controller.gd` converts it to a local angle by subtracting
+  `mount_pitch()` (the ring's own tilt along the turret's facing) and clamps *that* to
+  `min_pitch_deg`/`max_pitch_deg`, because a real gun's elevation limits are set by the trunnions
+  in the turret, not by the horizon. On flat ground `mount_pitch()` is 0 and behaviour is
+  identical to before. Anything checking "is the gun on target" must read `world_pitch()`, never
+  `rotation.x` — on a slope those differ and a comparison against the local angle would never
+  converge, i.e. bots would stop firing (three call sites in `tank_ai_controller.gd` use it, plus
+  `world_pitch_limits()` to clamp the ballistic solution). Consequence by design: on a climb the
+  gun cannot depress to the horizon — measured on a 24° ramp, the reachable world window is
+  `[+7°, +42°]`, and the crosshair shows it honestly since it is built from the barrel's live
+  basis. Normal-shell elevation is capped at **20°** (the mortar raises the cap to 85° while
+  aiming and restores it). Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §4.
+- `CameraRig` stays on the **root** (the camera must not rock with the hull), but it now lifts as
+  the aim rises: pitching the rig up swings the camera down and back (`y = −L·sin θ`), so the tank
+  itself used to block the top of the frame — exactly where you are aiming. `pivot_height`
+  2.0 → 3.0 and `spring_length` 6.0 → 3.2 interpolate by `smoothstep` over the up-pitch range, so
+  at the top of the aim the camera clears the turret roof (0.87) at 1.65 and sits close behind.
+  Looking down is untouched. Camera `pitch_max_deg` 25° keeps a margin over the gun's 20°.
 - The tank's **collider** (`CollisionShape3D` on the root) is a `ConvexPolygonShape3D`, not a box:
   same `1.2 × 0.6 × 1.8` bounding size at `+0.3` y, but the bottom **nose and tail edges are
   chamfered** (0.24 × 0.28, ≈40°; the sides stay square — that's where the tracks are). A square
