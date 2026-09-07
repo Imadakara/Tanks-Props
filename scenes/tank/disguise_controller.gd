@@ -54,8 +54,11 @@ signal disguise_ended()
 
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
-## Полугабариты коллайдера корпуса — из Tank.tscn (BoxShape3D корпуса Vector3(1.2, 0.6, 1.8)).
-## Центр коллайдера смещён на +0.3 по Y относительно начала танка (см. Tank.tscn/CollisionShape3D).
+## Полугабариты коллайдера корпуса — из Tank.tscn. Сам коллайдер там ConvexPolygonShape3D (коробка
+## 1.2 × 0.6 × 1.8 со срезанными фаской нижними рёбрами носа и кормы, см. Tank_Prop_Hunt_Tank_Chassis.md
+## §4.1); здесь нужны именно ГАБАРИТНЫЕ полуразмеры, а фаска на них не влияет — правила сброса
+## маскировки считаются по AABB, а не по точной форме. Центр коллайдера смещён на +0.3 по Y
+## относительно начала танка (см. Tank.tscn/CollisionShape3D).
 const HULL_HALF_EXTENTS := Vector3(0.6, 0.3, 0.9)
 const HULL_CENTER_OFFSET := Vector3(0.0, 0.3, 0.0)
 

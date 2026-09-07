@@ -128,6 +128,16 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   (`carry_turret`), and the seam is hidden by `TurretRing` (on the pivot) + `TurretSkirt` (on the
   turret). Track/wheel speeds are per side (`v = v_forward ± ω·gauge`), so a neutral turn spins
   the two tracks in opposite directions. Full detail: `Tank_Prop_Hunt_Tank_Chassis.md`.
+- The tank's **collider** (`CollisionShape3D` on the root) is a `ConvexPolygonShape3D`, not a box:
+  same `1.2 × 0.6 × 1.8` bounding size at `+0.3` y, but the bottom **nose and tail edges are
+  chamfered** (0.24 × 0.28, ≈40°; the sides stay square — that's where the tracks are). A square
+  box jams its front-bottom edge into any vertical face and stops dead: before the chamfer the
+  tank could not mount even a **0.04** lip (7% of hull height) and stalled on a 36° ramp — which
+  is what the "practical slope limit ~24-25°" folklore actually was. With it, lips up to **0.20**
+  and ramps up to **44°** are climbed, so the ceiling is now `floor_max_angle` (45°) exactly as
+  the engine promises. Bounding half-extents are unchanged, so
+  `disguise_controller.HULL_HALF_EXTENTS` and every AABB rule built on it still hold. Detail:
+  `Tank_Prop_Hunt_Tank_Chassis.md` §3.1.
 - `TankMovement` — tracks, reads `Input` or `ai_move_input`/`ai_turn_input`. Only forward/back +
   hull rotation are ever commanded (no strafe axis exists), but `move_and_slide()` on its own will
   still glide the body sideways along a collision tangent when it contacts geometry at an angle —
@@ -820,14 +830,13 @@ its own. Launch any of them directly via `run_project`'s `scene:` param (or repo
 
 - `scenes/maps/TestGroundMap.tscn` — **not a map and not a mode**: the chassis proving ground
   (`test_ground.gd`). No `map_scene.gd`, no `MatchManager`/roster/HUD/navmesh — just the player
-  tank, a dummy tank and a code-built course (ramps 6°…36°, washboard, smooth waves, a side slope
-  to cross, a jump) plus a readout of hull pitch/roll, sag and the slope-speed multiplier.
-  Keys: `R` reset, `T` terrain tilt on/off, `Y` running-gear animation on/off, `F` readout.
-  Measured here: the tank climbs 30° (from a standing start at the foot as well as with a run-up,
-  short ramp and long alike) but stalls dead against 36° — well above the "~24-25° practical
-  limit" the kitchen produced with the same tank and the same `ToyRamp` prefab, so that figure is
-  a property of *that* junction's geometry, not of the angle. When a box tank refuses a ramp, look
-  at the ramp↔ground junction first. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §9.
+  tank, a dummy tank and a code-built course (ramps 6°…48°, a row of 0.04…0.40 lips, washboard,
+  smooth waves, a side slope to cross, a jump) plus a readout of hull pitch/roll, sag and the
+  slope-speed multiplier. Keys: `R` reset, `T` terrain tilt on/off, `Y` running-gear animation
+  on/off, `F` readout. This is where the collider chamfer was measured (see the collider bullet
+  above): ramps pass up to 44°, lips up to 0.20. Re-measure here after any change to the collider
+  or to `move_speed`/`acceleration` rather than trusting a number from another map. Detail:
+  `Tank_Prop_Hunt_Tank_Chassis.md` §9.
 
 An earlier, separate "production" map (`Main.tscn`/`Map.tscn`, a 5×5 proof-of-concept predating
 stable bot behavior) was retired once these two became the real game-mode templates — recoverable
