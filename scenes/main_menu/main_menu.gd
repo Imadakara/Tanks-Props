@@ -7,10 +7,15 @@ extends Control
 const _TARGET_OBJECTIVE_SCENE := "res://scenes/maps/TargetObjectiveMap.tscn"
 const _TEAM_ARENA_SCENE := "res://scenes/maps/TeamArenaMap.tscn"
 const _CONTAINER_EXTRACTION_SCENE := "res://scenes/maps/KitchenMap.tscn"
+## Полигон испытаний ходовой (scenes/maps/test_ground.gd) — не игровой режим и не карта: без
+## матча, ростера и HUD. В меню он стоит рядом с картами просто как самый быстрый способ туда
+## попасть; никакой режим MatchState для него не выставляется, читать его там нечему.
+const _TEST_GROUND_SCENE := "res://scenes/maps/TestGroundMap.tscn"
 
 @onready var _target_objective_button: Button = $VBoxContainer/AchieverButton
 @onready var _team_arena_button: Button = $VBoxContainer/KillerButton
 @onready var _extraction_button: Button = $VBoxContainer/ExtractionButton
+@onready var _test_ground_button: Button = $VBoxContainer/TestGroundButton
 @onready var _debug_mode_check: CheckBox = $VBoxContainer/DebugModeCheck
 ## [ДОБАВЛЕНО, по прямому запросу — "галочка напротив кнопки запуска карты, если стоит галочка
 ## дебаг-режима — спавнить сразу ботов или только по команде"] Смысл имеет только вместе с
@@ -26,6 +31,7 @@ func _ready() -> void:
 	_target_objective_button.pressed.connect(_go.bind(_TARGET_OBJECTIVE_SCENE))
 	_team_arena_button.pressed.connect(_go.bind(_TEAM_ARENA_SCENE))
 	_extraction_button.pressed.connect(_go.bind(_CONTAINER_EXTRACTION_SCENE))
+	_test_ground_button.pressed.connect(_go.bind(_TEST_GROUND_SCENE))
 	_debug_mode_check.toggled.connect(_on_debug_toggled)
 	_on_debug_toggled(_debug_mode_check.button_pressed)
 

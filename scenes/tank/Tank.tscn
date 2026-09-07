@@ -14,20 +14,39 @@
 [ext_resource type="Script" path="res://scenes/tank/tank_ai_controller.gd" id="10_i6w10"]
 [ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_n5ru5"]
 [ext_resource type="Script" path="res://scenes/tank/modification_controller.gd" id="13_modc"]
+[ext_resource type="Script" path="res://scenes/tank/hull_rig.gd" id="14_hull"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_bfi3s"]
 size = Vector3(1.2, 0.6, 1.8)
 
-[sub_resource type="BoxMesh" id="BoxMesh_ysdyk"]
-size = Vector3(1.2, 0.6, 1.8)
-
 [sub_resource type="BoxMesh" id="BoxMesh_mu8yi"]
-size = Vector3(0.5, 0.3, 0.8)
+size = Vector3(0.62, 0.26, 0.8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_mantlet"]
+size = Vector3(0.3, 0.24, 0.18)
+
+[sub_resource type="BoxMesh" id="BoxMesh_bustle"]
+size = Vector3(0.48, 0.2, 0.2)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_skirt"]
+top_radius = 0.285
+bottom_radius = 0.285
+height = 0.32
+radial_segments = 16
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_cupola"]
+top_radius = 0.1
+bottom_radius = 0.11
+height = 0.12
+radial_segments = 12
 
 [sub_resource type="CylinderMesh" id="CylinderMesh_v2yb2"]
-top_radius = 0.06
-bottom_radius = 0.08
-height = 0.8
+top_radius = 0.05
+bottom_radius = 0.065
+height = 0.9
+
+[sub_resource type="BoxMesh" id="BoxMesh_brake"]
+size = Vector3(0.11, 0.11, 0.13)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_srjgo"]
 size = Vector3(1.4, 0.7, 2)
@@ -41,9 +60,8 @@ script = ExtResource("1_3lrxo")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 shape = SubResource("BoxShape3D_bfi3s")
 
-[node name="HullMesh" type="MeshInstance3D" parent="." unique_id=219442370]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
-mesh = SubResource("BoxMesh_ysdyk")
+[node name="Hull" type="Node3D" parent="." unique_id=1451200001]
+script = ExtResource("14_hull")
 
 [node name="CameraRig" type="SpringArm3D" parent="." unique_id=243816718]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
@@ -62,8 +80,24 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("3_bfi3s")
 
 [node name="TurretMesh" type="MeshInstance3D" parent="Turret" unique_id=907928381]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.1)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.14, 0)
 mesh = SubResource("BoxMesh_mu8yi")
+
+[node name="TurretSkirt" type="MeshInstance3D" parent="Turret" unique_id=907928385]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.02, 0)
+mesh = SubResource("CylinderMesh_skirt")
+
+[node name="TurretMantlet" type="MeshInstance3D" parent="Turret" unique_id=907928382]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.42)
+mesh = SubResource("BoxMesh_mantlet")
+
+[node name="TurretBustle" type="MeshInstance3D" parent="Turret" unique_id=907928383]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0.44)
+mesh = SubResource("BoxMesh_bustle")
+
+[node name="TurretCupola" type="MeshInstance3D" parent="Turret" unique_id=907928384]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.15, 0.31, 0.12)
+mesh = SubResource("CylinderMesh_cupola")
 
 [node name="MortarCamera" type="Camera3D" parent="Turret" unique_id=555111222]
 transform = Transform3D(1, 0, 0, 0, 0.76604444, 0.6427876, 0, -0.6427876, 0.76604444, 0, 8, 10)
@@ -74,8 +108,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.2)
 script = ExtResource("5_oswvf")
 
 [node name="BarrelMesh" type="MeshInstance3D" parent="Turret/Barrel" unique_id=1343414565]
-transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, -0.4)
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, -0.45)
 mesh = SubResource("CylinderMesh_v2yb2")
+
+[node name="BarrelMuzzleBrake" type="MeshInstance3D" parent="Turret/Barrel" unique_id=1343414566]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.84)
+mesh = SubResource("BoxMesh_brake")
 
 [node name="TankStateMachine" type="Node" parent="." unique_id=1996132899]
 script = ExtResource("6_v2yb2")
@@ -88,6 +126,7 @@ script = ExtResource("6_v2yb2")
 
 [node name="WeaponController" type="Node" parent="." unique_id=355321899]
 script = ExtResource("5_4jgmv")
+muzzle_forward_offset = 1.0
 
 [node name="AmmoComponent" type="Node" parent="." unique_id=697966439]
 script = ExtResource("8_rxl27")

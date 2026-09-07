@@ -54,6 +54,11 @@ custom_minimum_size = Vector2(380, 56)
 layout_mode = 2
 text = "Захват контейнеров — кухня (CONTAINER_EXTRACTION)"
 
+[node name="TestGroundButton" type="Button" parent="VBoxContainer" unique_id=1190121096]
+custom_minimum_size = Vector2(380, 56)
+layout_mode = 2
+text = "Полигон ходовой (испытания корпуса и гусениц)"
+
 [node name="DebugModeCheck" type="CheckBox" parent="VBoxContainer" unique_id=1190121094]
 custom_minimum_size = Vector2(380, 40)
 layout_mode = 2

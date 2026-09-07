@@ -1,0 +1,25 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scenes/maps/test_ground.gd" id="1_tg"]
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="2_tank"]
+[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="3_zone"]
+[ext_resource type="Environment" path="res://scenes/maps/sky_environment.tres" id="4_env"]
+
+[node name="TestGroundMap" type="Node3D"]
+script = ExtResource("1_tg")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = ExtResource("4_env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0.49999997, 0.70710677, -0.49999997, -0.49999997, 0.70710677, 0.49999997, 0, 0, 0)
+light_energy = 1.4
+shadow_enabled = true
+
+[node name="PlayerTank" parent="." instance=ExtResource("2_tank")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 24)
+
+[node name="AttackSpawnZone" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 24)
+script = ExtResource("3_zone")
+radius = 4.0

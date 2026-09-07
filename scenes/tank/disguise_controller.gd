@@ -77,10 +77,11 @@ var _proximity_mode: bool = false
 var _saved_overrides: Dictionary = {}
 
 @onready var _body: CharacterBody3D = get_parent()
-@onready var _hull_mesh: MeshInstance3D = get_parent().get_node("HullMesh")
+## Корпус — весь пивот `Hull` целиком (броня + гусеницы + катки, всё строится кодом в hull_rig.gd),
+## а не один меш: перечислять узлы поимённо больше нечего, а спрятать надо всю ходовую разом,
+## иначе из-под коробки маскировки торчали бы крутящиеся гусеницы.
+@onready var _hull: Node3D = get_parent().get_node("Hull")
 @onready var _turret: Node3D = get_parent().get_node("Turret")
-@onready var _turret_mesh: MeshInstance3D = get_parent().get_node("Turret/TurretMesh")
-@onready var _barrel_mesh: MeshInstance3D = get_parent().get_node("Turret/Barrel/BarrelMesh")
 @onready var _state_machine: Node = get_parent().get_node("TankStateMachine")
 @onready var _health: Node = get_parent().get_node("HealthComponent")
 
@@ -226,11 +227,11 @@ func _show_disguise() -> void:
 	_obstacle_shape.disabled = false
 	if is_player_controlled:
 		# Рентген-силуэт: меши остаются видимыми, но с полупрозрачным материалом поверх коробки.
-		for mesh in [_hull_mesh, _turret_mesh, _barrel_mesh]:
+		for mesh in _ghost_targets():
 			_saved_overrides[mesh] = mesh.material_override
 			mesh.material_override = _ghost_mat()
 	else:
-		_hull_mesh.visible = false
+		_hull.visible = false
 		_turret.visible = false
 
 func _hide_disguise() -> void:
@@ -238,9 +239,22 @@ func _hide_disguise() -> void:
 		_prop_mesh.visible = false
 	if _obstacle_shape != null:
 		_obstacle_shape.disabled = true
-	_hull_mesh.visible = true
+	_hull.visible = true
 	_turret.visible = true
-	for mesh in [_hull_mesh, _turret_mesh, _barrel_mesh]:
-		if _saved_overrides.has(mesh):
+	for mesh in _saved_overrides:
+		if is_instance_valid(mesh):
 			mesh.material_override = _saved_overrides[mesh]
 	_saved_overrides.clear()
+
+## Всё, что рентгенится у локального игрока: визуал корпуса (его отдаёт сам hull_rig.gd — состав
+## поддерева знает только он) плюс поддерево башни со стволом и навесной модификацией.
+func _ghost_targets() -> Array:
+	var targets: Array = _hull.visual_meshes()
+	_collect_visuals(_turret, targets)
+	return targets
+
+func _collect_visuals(node: Node, out: Array) -> void:
+	for child in node.get_children():
+		if child is GeometryInstance3D:
+			out.append(child)
+		_collect_visuals(child, out)

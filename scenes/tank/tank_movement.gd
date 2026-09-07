@@ -9,6 +9,20 @@ extends Node
 @export var turn_speed: float = 2.0  # рад/сек
 @export var is_player_controlled: bool = true
 
+## Зависимость скорости от уклона: в горку медленнее, под горку быстрее (см.
+## _slope_speed_multiplier). Работает и у игрока, и у ботов — это общий путь движения. На плоских
+## картах спит целиком (нормаль пола вертикальна → множитель ровно 1.0), смысл имеет только там,
+## где есть пандусы/рельеф: кухня и полигон испытаний.
+@export var slope_speed_enabled: bool = true
+## Насколько сильно уклон влияет: множитель = 1 − sin(уклон) * это. При 1.1 подъём в 24° стоит
+## примерно 45% скорости.
+@export var slope_speed_penalty: float = 1.1
+## Границы множителя. Нижняя — чтобы танк на предельном для коробчатого CharacterBody3D уклоне
+## (~24-25°, см. базу знаний §54) всё же заезжал, а не вставал; верхняя — чтобы спуск не
+## превращался в неуправляемый разгон.
+@export var slope_speed_min_mult: float = 0.5
+@export var slope_speed_max_mult: float = 1.15
+
 ## Программный ввод для ботов — TankAIController пишет сюда каждый кадр перед тем,
 ## как эта нода их считает. Не используется, если is_player_controlled=true.
 var ai_move_input: float = 0.0
@@ -87,7 +101,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		_body.velocity.y -= _gravity * delta
 
-	var target_horizontal: Vector3 = forward * move_input * move_speed
+	var target_horizontal: Vector3 = forward * move_input * move_speed * _slope_speed_multiplier(forward * signf(move_input))
 	var current_horizontal := Vector3(_body.velocity.x, 0.0, _body.velocity.z)
 	var new_horizontal: Vector3 = current_horizontal.move_toward(target_horizontal, acceleration * delta)
 	_body.velocity.x = new_horizontal.x
@@ -109,6 +123,21 @@ func _physics_process(delta: float) -> void:
 	_body.velocity -= right * right.dot(_body.velocity)
 
 	_track_fall_damage()
+
+## Множитель скорости от уклона под гусеницами. Нормаль пола берётся у самого CharacterBody3D
+## (get_floor_normal() — результат ПРОШЛОГО move_and_slide(), что для плавно меняющегося рельефа
+## достаточно), а не своим лучом: незачем плодить второй источник правды о поверхности.
+## `grade` = синус угла между направлением движения и опорной плоскостью: > 0 в горку, < 0 под
+## горку, 0 на ровном. `travel_dir` — горизонтальный единичный вектор фактического хода (forward,
+## развёрнутый на задний ход), поэтому задним ходом в горку танк тормозится ровно так же.
+func _slope_speed_multiplier(travel_dir: Vector3) -> float:
+	if not slope_speed_enabled or not _body.is_on_floor():
+		return 1.0
+	var normal: Vector3 = _body.get_floor_normal()
+	if normal.is_zero_approx():
+		return 1.0
+	var grade: float = -travel_dir.dot(normal)
+	return clampf(1.0 - grade * slope_speed_penalty, slope_speed_min_mult, slope_speed_max_mult)
 
 ## Урон от падения: пока танк в воздухе — копим МАКСИМАЛЬНУЮ достигнутую высоту, на приземлении
 ## считаем перепад от неё до точки касания. Именно перепад, а не вертикальная скорость: скорость

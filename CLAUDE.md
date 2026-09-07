@@ -41,6 +41,13 @@ the retired `Tank_Prop_Hunt_MVP_Dev_Plan.md` / `Tank_Prop_Hunt_TZ_MVP_Godot.md` 
   disguise inert here, balance unplayed).
 - `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — the single, universal bot AI (`TankAIController`), used on
   every map: states/driving stack/params.
+- `Tank_Prop_Hunt_Tank_Chassis.md` — **current-state reference for how the tank looks and reacts
+  to terrain**: the `Hull` visual pivot (`hull_rig.gd`) that carries the code-built armour boxes,
+  running gear and the terrain tilt / suspension dynamics; why the turret deliberately stays level
+  (aim would drift by the roll angle otherwise) and why `VehicleBody3D` was not used; tracks/road
+  wheels with per-side speeds; the slope→speed multiplier in `tank_movement.gd`; and the
+  `TestGroundMap.tscn` proving ground with its measured ramp-climb limit. Read it before touching
+  the tank's visuals or anything that reads the hull's orientation.
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
   prefab (circle + high dummy) placed in every map's empty corners, its drop/pickup/anti-overlap
   rules, per-map placement, `GameConfig` defaults.
@@ -99,13 +106,28 @@ inventory" further down and point `run/main_scene` at a specific map (or pass `s
 `scenes/tank/Tank.tscn` is the single reusable scene for both the player's tank and every bot
 (`scenes/main/team_spawner.gd` instances it N times). All behavior lives in sibling components
 under the root (`tank.gd`, which holds `team`/`is_attacker()`, the **team-colour mesh tint**
-via `apply_team_visuals()` — `GameConfig.team_attack_color`/`team_defense_color` on
-`HullMesh`/turret/barrel, called by `team_spawner.gd` after `team` is assigned and by
+via `apply_team_visuals()` — `GameConfig.team_attack_color`/`team_defense_color` applied by a
+recursive walk of the `Hull` and `Turret` subtrees (the armour is code-built, there is no fixed
+node list) minus the running gear and the mortar attachment (`_DARK_PART_PREFIXES`), called by
+`team_spawner.gd` after `team` is assigned and by
 `RespawnController` via `on_respawned()` — and, **debug-mode only**, a billboard `Label3D` "HP
 N/M" above the tank updated on `damaged`/`destroyed`/respawn; this replaced the old red
 "подранок" material swap so it doesn't fight the team tint), each independently
 toggled between player and AI control via its own `is_player_controlled: bool`:
 
+- `Hull` (`hull_rig.gd`) — the **visual** hull pivot: everything you see of the chassis (armour
+  boxes, glacis, sponsons, turret ring, road wheels, drive sprocket/idler, the `MultiMesh` track
+  cleats) is built **in code** as its children (`@tool`, children get no `owner`, so a GUI save of
+  `Tank.tscn` can't serialize them). It also owns the **terrain tilt**: four downward rays at the
+  hull corners give the support plane's pitch/roll plus the sag of a box collider resting on a
+  slope edge, on top of which come accel dive/squat and outward roll in a turn, exponentially
+  damped and clamped to `max_tilt_deg`. The tank **root never tilts** — forward/right, aim, turret
+  yaw and the whole bot brain read the root's basis. `Turret` therefore stays a direct child of
+  the root and keeps its horizon (gyro-stabilized look): tilting it would push every shot off the
+  crosshair by the roll angle. Only its *position* is carried along the tilted deck
+  (`carry_turret`), and the seam is hidden by `TurretRing` (on the pivot) + `TurretSkirt` (on the
+  turret). Track/wheel speeds are per side (`v = v_forward ± ω·gauge`), so a neutral turn spins
+  the two tracks in opposite directions. Full detail: `Tank_Prop_Hunt_Tank_Chassis.md`.
 - `TankMovement` — tracks, reads `Input` or `ai_move_input`/`ai_turn_input`. Only forward/back +
   hull rotation are ever commanded (no strafe axis exists), but `move_and_slide()` on its own will
   still glide the body sideways along a collision tangent when it contacts geometry at an angle —
@@ -122,6 +144,10 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   normal `take_hit(killer = null)` so debug invincibility still applies and `ScoreManager` credits
   nobody. Reset on `RespawnController.respawned`. Only matters on multi-level maps; flat maps never
   reach the 8-unit floor threshold.
+  It also scales the target speed by the **slope** under the tracks (`_slope_speed_multiplier()`,
+  `slope_speed_*` exports): uphill slower, downhill slightly faster, from `get_floor_normal()` —
+  no second ray of its own. Same path for player and bots. Flat maps are unaffected (vertical
+  normal ⇒ multiplier exactly 1.0); it only bites on the kitchen and the proving ground.
 - `CameraRig` (`SpringArm3D`) — player only; free-look orbit independent of hull rotation. Its
   `rotation.y` is recomputed every physics frame as `world_yaw − body.rotation.y`, so turning the
   hull never drags the camera with it.
@@ -764,10 +790,10 @@ placement constraints for the dynamic pass.
 
 ### Map inventory
 
-`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, three buttons, each
-just calls `get_tree().change_scene_to_file()` at one of the maps below; carries no game logic of
-its own. Launch either map directly via `run_project`'s `scene:` param (or repoint `run/main_scene`)
-to skip the menu:
+`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, four buttons, each
+just calls `get_tree().change_scene_to_file()` at one of the scenes below; carries no game logic of
+its own. Launch any of them directly via `run_project`'s `scene:` param (or repoint
+`run/main_scene`) to skip the menu:
 
 - `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
   centre `(0,1,0)` (no central wall), the `Waypoint1..4` defender diamond around it, one defense
@@ -791,6 +817,17 @@ to skip the menu:
   stalls dead at ~28° despite `floor_max_angle` 45°), must end exactly on a platform edge, must not
   lie flat across a platform, and a diagonal ramp needs a flat coplanar landing or the navmesh
   silently splits into islands.
+
+- `scenes/maps/TestGroundMap.tscn` — **not a map and not a mode**: the chassis proving ground
+  (`test_ground.gd`). No `map_scene.gd`, no `MatchManager`/roster/HUD/navmesh — just the player
+  tank, a dummy tank and a code-built course (ramps 6°…36°, washboard, smooth waves, a side slope
+  to cross, a jump) plus a readout of hull pitch/roll, sag and the slope-speed multiplier.
+  Keys: `R` reset, `T` terrain tilt on/off, `Y` running-gear animation on/off, `F` readout.
+  Measured here: the tank climbs 30° (from a standing start at the foot as well as with a run-up,
+  short ramp and long alike) but stalls dead against 36° — well above the "~24-25° practical
+  limit" the kitchen produced with the same tank and the same `ToyRamp` prefab, so that figure is
+  a property of *that* junction's geometry, not of the angle. When a box tank refuses a ramp, look
+  at the ramp↔ground junction first. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §9.
 
 An earlier, separate "production" map (`Main.tscn`/`Map.tscn`, a 5×5 proof-of-concept predating
 stable bot behavior) was retired once these two became the real game-mode templates — recoverable

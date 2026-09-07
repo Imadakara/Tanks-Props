@@ -4,7 +4,10 @@ extends CharacterBody3D
 ##
 ## - «Подкраска танка цветом команды» (apply_team_visuals()): меши корпуса/башни/ствола красятся
 ##   в GameConfig.team_attack_color / team_defense_color по tank.team. Вызывается team_spawner.gd
-##   сразу после присвоения team и respawn_controller.gd на возврате в игру.
+##   сразу после присвоения team и respawn_controller.gd на возврате в игру. Обход — рекурсивный
+##   по поддеревьям `Hull` и `Turret`, а не по списку путей: броня корпуса и ходовая строятся
+##   КОДОМ в hull_rig.gd, фиксированного списка узлов там нет. Ходовая (гусеницы/катки) из
+##   покраски исключена по префиксу имени, см. _DARK_PART_PREFIXES.
 ## - Индикация HP — Label3D над танком, ТОЛЬКО в debug-режиме (MatchState.debug_enabled). Раньше
 ##   при нефинальном попадании корпус+башня перекрашивались в красный — заменено на цифры HP,
 ##   чтобы не конфликтовать с цветом команды.
@@ -35,18 +38,39 @@ func _ready() -> void:
 func is_attacker() -> bool:
 	return team == Team.ATTACK
 
-## Единственная точка «подкраски танка цветом команды». Ставит material_override на меши
-## корпуса/башни/ствола. Идемпотентна — переиспользует один StandardMaterial3D, только меняет
-## albedo. team_spawner.gd зовёт её после team = ... (и для игрока, и для ботов), respawn —
-## на возврате в игру (на случай, если что-то оставило свой override за прошлую жизнь).
+## Что НЕ красится в цвет команды, а остаётся своим «железным» цветом из hull_rig.gd: ходовая
+## (гусеницы `Track*`, катки `Wheel*`) — она должна читаться как механика на танке любой команды.
+## `Mortar*` — навесная модификация на стволе (mortar_behavior.gd), её красный цвет несёт смысл
+## «в слоте мортира»; без исключения респавн/перекраска затирали бы его цветом команды.
+const _DARK_PART_PREFIXES := ["Track", "Wheel", "Mortar"]
+
+## Единственная точка «подкраски танка цветом команды». Ставит material_override на все визуальные
+## узлы поддеревьев `Hull` и `Turret`, кроме ходовой (см. _DARK_PART_PREFIXES). Идемпотентна —
+## переиспользует один StandardMaterial3D, только меняет albedo. team_spawner.gd зовёт её после
+## team = ... (и для игрока, и для ботов), respawn — на возврате в игру (на случай, если что-то
+## оставило свой override за прошлую жизнь).
 func apply_team_visuals() -> void:
 	if _team_material == null:
 		_team_material = StandardMaterial3D.new()
 	_team_material.albedo_color = GameConfig.team_defense_color if team == Team.DEFENSE else GameConfig.team_attack_color
-	for path in ["HullMesh", "Turret/TurretMesh", "Turret/Barrel/BarrelMesh"]:
-		var mesh: MeshInstance3D = get_node_or_null(path)
-		if mesh != null:
-			mesh.material_override = _team_material
+	for root_name in ["Hull", "Turret"]:
+		var root: Node = get_node_or_null(root_name)
+		if root != null:
+			_tint_subtree(root)
+
+## GeometryInstance3D, а не MeshInstance3D: гусеница — MultiMeshInstance3D (она в исключениях, но
+## проверка типа должна её видеть, иначе фильтр по имени просто не сработает).
+func _tint_subtree(node: Node) -> void:
+	for child in node.get_children():
+		if child is GeometryInstance3D and not _is_dark_part(child.name):
+			(child as GeometryInstance3D).material_override = _team_material
+		_tint_subtree(child)
+
+func _is_dark_part(node_name: String) -> bool:
+	for prefix in _DARK_PART_PREFIXES:
+		if node_name.begins_with(prefix):
+			return true
+	return false
 
 ## Вызывается RespawnController при возврате танка в игру — сбрасывает индикатор HP на полный и
 ## заново применяет цвет команды.
