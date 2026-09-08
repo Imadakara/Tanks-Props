@@ -14,13 +14,13 @@ extends Node
 ## картах спит целиком (нормаль пола вертикальна → множитель ровно 1.0), смысл имеет только там,
 ## где есть пандусы/рельеф: кухня и полигон испытаний.
 @export var slope_speed_enabled: bool = true
-## Насколько сильно уклон влияет: множитель = 1 − sin(уклон) * это. При 1.1 подъём в 24° стоит
-## примерно 45% скорости.
-@export var slope_speed_penalty: float = 1.1
-## Границы множителя. Нижняя — чтобы танк на предельном для коробчатого CharacterBody3D уклоне
-## (~24-25°, см. базу знаний §54) всё же заезжал, а не вставал; верхняя — чтобы спуск не
-## превращался в неуправляемый разгон.
-@export var slope_speed_min_mult: float = 0.5
+## Насколько сильно уклон влияет: множитель = 1 − sin(уклон) * это. При 0.9 подъём в 24° стоит
+## примерно 63% скорости (было 1.1 → ~45%: на крейсерском газу бот полз по межъярусным рампам
+## кухни так медленно, что это читалось как «подвисание на кромке»).
+@export var slope_speed_penalty: float = 0.9
+## Границы множителя. Нижняя — чтобы танк на подъёме не полз (было 0.5 — заметный краул на газу
+## бота); верхняя — чтобы спуск не превращался в неуправляемый разгон.
+@export var slope_speed_min_mult: float = 0.65
 @export var slope_speed_max_mult: float = 1.15
 
 ## Свес над обрывом. CharacterBody3D.is_on_floor() — бинарный «есть контакт»: пока ХОТЬ ОДНО ребро
@@ -54,6 +54,23 @@ extends Node
 ## Доля полуразмеров коллайдера, на которой стоят лучи (1.0 — ровно углы). < 1 — танк начинает
 ## валиться чуть РАНЬШЕ геометрической середины свеса, что ощущается честнее.
 @export var ledge_probe_inset: float = 0.82
+## Разрыв уже этого (м) — это СТЫК (между элементами мебели, рампа лежит на кромке столешницы), а
+## не обрыв: щуп края переступает через него и марш продолжается. Иначе стык читался бы как кромка,
+## танк на кадр уходил в стадию TEETER и получал рывок вперёд + клевок.
+@export var ledge_gap_tolerance: float = 0.5
+
+## АССИСТ «перевалить порожек» — толерантность ходовой к резким перепадам высоты. Коробчатый танк
+## (даже с фаской нижних рёбер) носом упирается в вертикальную грань: подошва рампы чуть выше
+## подъездной поверхности, стык плит гарнитура, край столешницы под рампой. Если прямо по курсу
+## низкая грань, а над ней проходимая поверхность в пределах step_up_max — приподнимаем корпус на
+## неё. Особенно важно для ботов, ползущих на крейсерском газу.
+@export var step_up_enabled: bool = true
+## Максимальная высота порожка, который ассист переваливает (м). Держать МЕНЬШЕ высоты, на которую
+## танк не должен «запрыгивать» сам (ящики Obstacle и т.п. заведомо выше).
+@export var step_up_max: float = 0.35
+## Высота лобового щупа грани (м, «щиколотка» коллайдера) и его вынос вперёд за нос.
+@export var step_up_probe_y: float = 0.16
+@export var step_up_probe_dist: float = 0.75
 ## ПЛАВНЫЙ ЗАВАЛ ЧЕРЕЗ КРОМКУ и ТОЧКА НЕВОЗВРАТА — три стадии, без резких переключений.
 ##
 ## 1. BRINK (подход к краю). Пока вертикаль ЦМ подходит к границе опоры (в пределах
@@ -295,8 +312,44 @@ func _physics_process(delta: float) -> void:
 		var lateral_delta: float = actual_delta.dot(right)
 		_body.global_position -= right * lateral_delta
 		_body.velocity -= right * right.dot(_body.velocity)
+		# Ассист «перевалить порожек»: коробчатый танк упёрся носом в низкую грань (подошва рампы,
+		# стык плит гарнитура, край столешницы под рампой) — если продвинулся заметно меньше
+		# заказанного, а над гранью есть проходимая поверхность, приподнимаем корпус на неё.
+		var wanted: float = absf(move_input) * move_speed * delta
+		var got: float = absf(actual_delta.dot(forward))
+		if step_up_enabled and move_input != 0.0 and wanted > 0.02 and got < wanted * 0.5:
+			_try_step_up(forward * signf(move_input))
 
 	_track_fall_damage()
+
+## Приподнять корпус на низкий порожек прямо по курсу (толерантность ходовой к перепадам высоты).
+## `tdir` — горизонтальное единичное направление движения (world).
+func _try_step_up(tdir: Vector3) -> void:
+	var space: PhysicsDirectSpaceState3D = _body.get_world_3d().direct_space_state
+	var base_y: float = _body.global_position.y
+	# Лобовой щуп на «щиколотке»: есть ли прямо по курсу вертикальная грань?
+	var lo_from: Vector3 = _body.global_position + Vector3(0.0, step_up_probe_y, 0.0)
+	var lo := PhysicsRayQueryParameters3D.create(lo_from, lo_from + tdir * step_up_probe_dist, 1)
+	lo.exclude = [_body.get_rid()]
+	var lohit: Dictionary = space.intersect_ray(lo)
+	if lohit.is_empty():
+		return
+	var face_n: Vector3 = lohit.get("normal", Vector3.UP)
+	if absf(face_n.y) > 0.6:  # не грань, а пологая поверхность — обычный склон, не трогаем
+		return
+	# Верх этого порожка — луч вниз чуть за гранью.
+	var probe: Vector3 = (lohit["position"] as Vector3) + tdir * 0.08
+	var top := PhysicsRayQueryParameters3D.create(
+		probe + Vector3(0.0, step_up_max + 0.1, 0.0), probe + Vector3(0.0, -0.1, 0.0), 1)
+	top.exclude = [_body.get_rid()]
+	var thit: Dictionary = space.intersect_ray(top)
+	if thit.is_empty():
+		return
+	if (thit.get("normal", Vector3.UP) as Vector3).y < 0.6:  # верх непроходимый
+		return
+	var step_h: float = (thit["position"] as Vector3).y - base_y
+	if step_h > 0.03 and step_h <= step_up_max:
+		_body.global_position.y = base_y + step_h + 0.02
 
 ## Крен корпуса через кромку.
 ## BRINK (`_com_margin` < 0, ЦМ ещё на опоре): крен = пол `_edge_approach·teeter_prelean_deg` —
@@ -401,7 +454,27 @@ func _update_support(delta: float) -> void:
 				q.exclude = [_body.get_rid()]
 				var h: Dictionary = space.intersect_ray(q)
 				if h.is_empty():
-					# Первый же шаг без пола → край у самого центра (или позади): 0, не полшага.
+					# Пропал пол — но это может быть СТЫК (мебель / рампа на кромке), не обрыв.
+					# Пробуем дальше: если в пределах ledge_gap_tolerance пол снова есть — идём дальше.
+					var resumed: bool = false
+					var gd: float = dist + _EDGE_MARCH_STEP
+					while gd <= dist + ledge_gap_tolerance + 0.001 and gd <= _EDGE_MARCH_MAX + 0.001:
+						var gb: Vector3 = dir * gd
+						var gq := PhysicsRayQueryParameters3D.create(
+							xf * (gb + Vector3(0.0, _SUPPORT_PROBE_UP + _EDGE_CLIMB_TAN * gd, 0.0)),
+							xf * (gb + Vector3(0.0, -(maxf(slope_tan * gd, 0.6) + ledge_slack), 0.0)), 1)
+						gq.exclude = [_body.get_rid()]
+						var gh: Dictionary = space.intersect_ray(gq)
+						if not gh.is_empty():
+							normal_sum += gh.get("normal", Vector3.UP)
+							normal_hits += 1
+							resumed = true
+							break
+						gd += _EDGE_MARCH_STEP
+					if resumed:
+						dist = gd + _EDGE_MARCH_STEP
+						continue
+					# Настоящий обрыв. Первый шаг без пола → край у центра (или позади).
 					edge_dist = 0.0 if dist <= _EDGE_MARCH_STEP + 0.001 else dist - _EDGE_MARCH_STEP * 0.5
 					break
 				normal_sum += h.get("normal", Vector3.UP)

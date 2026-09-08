@@ -4264,10 +4264,21 @@ const _LAYER_DISGUISE_OBSTACLE := 8
 ## бот доезжает до его корпуса, ловит контакт и маскировка спадает (см. disguise_controller.gd /
 ## collision_detector.gd). Габарит коробки участвует только в _scan_gap() ниже — при выборе стороны
 ## объезда, не при экстренной остановке.
+## Нормаль поверхности «положе» этого (n.y выше) — проезжий склон (пандус), а не стена: горизонт.
+## луч-тормоз в неё упирается за ~0.9 м до подошвы рампы, и бот вставал у въезда. cos(45°)=0.707 —
+## floor_max_angle танка; берём с запасом, чтобы любой заезжаемый пандус не считался препятствием.
+const _BRAKE_WALKABLE_NORMAL_Y := 0.72
+
 func _check_emergency_brake() -> bool:
 	for offset_deg in [0.0, -emergency_brake_spread_deg, emergency_brake_spread_deg]:
-		if _cast_ray(offset_deg, emergency_brake_range, _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES):
-			return true
+		var hit: Dictionary = _cast_ray_hit(offset_deg, emergency_brake_range, \
+			_LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES)
+		if hit.is_empty():
+			continue
+		# Пандус, на который танк спокойно заезжает, — не препятствие.
+		if (hit.get("normal", Vector3.UP) as Vector3).y > _BRAKE_WALKABLE_NORMAL_Y:
+			continue
+		return true
 	# Обрыв по курсу тормозит ровно так же, как стена, и дальше отрабатывает уже существующая
 	# машинерия: нет прогресса → детектор застревания → реверс + объезд по _scan_gap() (который
 	# края тоже учитывает, см. ниже). Отдельного «стейта у обрыва» не заводим.
@@ -4324,6 +4335,18 @@ func _cast_ray_dist(offset_deg: float, range: float, mask: int = _LAYER_ENVIRONM
 	if result.is_empty():
 		return range
 	return origin.distance_to(result["position"])
+
+## То же, что _cast_ray_dist(), но возвращает весь хит-словарь (нужна `normal` — отличить пандус от
+## стены в _check_emergency_brake()). Пустой словарь — ничего ближе range нет.
+func _cast_ray_hit(offset_deg: float, range: float, mask: int = _LAYER_ENVIRONMENT | _LAYER_TANKS | _LAYER_PROJECTILES | _LAYER_DISGUISE_OBSTACLE) -> Dictionary:
+	var origin: Vector3 = _body.global_position + Vector3.UP * 0.4
+	var ray_yaw: float = _body.rotation.y + deg_to_rad(offset_deg)
+	var dir := Vector3(-sin(ray_yaw), 0.0, -cos(ray_yaw))
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * range)
+	query.exclude = [_body]
+	query.collision_mask = mask
+	query.collide_with_areas = true
+	return _body.get_world_3d().direct_space_state.intersect_ray(query)
 
 ## bool-обёртка над _cast_ray_dist() — true, если что-то есть БЛИЖЕ range (используется тормозом,
 ## где нужен только да/нет, не расстояние).

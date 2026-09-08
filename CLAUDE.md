@@ -178,9 +178,15 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   nobody. Reset on `RespawnController.respawned`. Only matters on multi-level maps; flat maps never
   reach the 8-unit floor threshold.
   It also scales the target speed by the **slope** under the tracks (`_slope_speed_multiplier()`,
-  `slope_speed_*` exports): uphill slower, downhill slightly faster, from `get_floor_normal()` —
-  no second ray of its own. Same path for player and bots. Flat maps are unaffected (vertical
-  normal ⇒ multiplier exactly 1.0); it only bites on the kitchen and the proving ground.
+  `slope_speed_*` exports; softened to `penalty 0.9` / `min_mult 0.65` — 1.1/0.5 crawled bots up
+  kitchen ramps): uphill slower, downhill slightly faster, from `get_floor_normal()` — no second
+  ray of its own. Same path for player and bots. Flat maps are unaffected (vertical normal ⇒
+  multiplier exactly 1.0); it only bites on the kitchen and the proving ground.
+  It also has a **step-up assist** (`step_up_*` exports): after `move_and_slide()`, if the tank
+  advanced far less than commanded and a low near-vertical face is dead ahead with walkable ground
+  ≤ `step_up_max` (0.35) on top, lift the body onto it — the box collider's chamfer only clears
+  0.20 lips, and ramp feet / furniture-plate joints / a table edge under a ramp exceed that.
+  No-ops on flat ground and on smooth ramps (it checks for a wall-like face, not a slope).
   It also owns the **ledge / brink / tumble system** (`_update_support()` + `_integrate_teeter()`,
   `ledge_*` / `teeter_*` exports), same reason again — this node holds gravity + `is_on_floor()`.
   `CharacterBody3D.is_on_floor()` is a binary "any contact", so one edge on a platform lip kept the
@@ -188,9 +194,12 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   **Support model**: four **directional edge-marches** (F/B/L/R, step outward, find where ground
   ends — a drop steeper than `ledge_max_slope_deg` at that reach is a cliff, shallower is a slope;
   same "by steepness not height" idea as the bot `ledge_check`) + a centre-ground probe + a
-  horizontal wall pre-check per direction (a wall ahead ≠ a cliff). `_com_margin` (signed: <0 CoM
-  on support with that much room, >0 past the edge) varies **continuously** as the tank creeps
-  toward a lip. CoM is a real offset (`center_of_mass`, low + slightly rear); on a slope the margin
+  horizontal wall pre-check per direction (a wall ahead ≠ a cliff) + a **gap tolerance**
+  (`ledge_gap_tolerance` 0.5 m — a joint between furniture / a ramp lying on a table edge is a
+  *seam*, not a cliff: the march steps over it). Without it every seam briefly registered as an
+  edge → the tank entered TEETER crossing it → a forward surge + nose-dip on every joint.
+  `_com_margin` (signed: <0 CoM on support with that much room, >0 past the edge) varies
+  **continuously** as the tank creeps toward a lip. CoM is a real offset (`center_of_mass`, low + slightly rear); on a slope the margin
   is shifted **downhill** by `center_of_mass.y·tan(slope)` (`com_slope_shift_enabled`) — a taller
   CoM / a downhill edge tips sooner. **Three stages, no abrupt switch** (this replaced an instant
   flip-to-tumble + camera yank): **BRINK** — CoM within `teeter_brink_margin` of the edge but still
@@ -715,7 +724,10 @@ the player's, see "Tank as a composed entity" above) and lazily self-inits on fi
 AMMO_WAIT/MOD_SEEK/MOD_RETRIEVE/MORTAR_ATTACK/DISGUISE_APPROACH/DISGUISE_PREP/DISGUISE/
 OBJECTIVE_CHECK/CONTAINER_SEEK/CONTAINER_DELIVER`) with a
 NavMesh-based driving stack (pure
-pursuit + emergency brake + stuck detector + gap-scan detour), two roles (`ACHIEVER`/`KILLER` —
+pursuit + emergency brake + stuck detector + gap-scan detour; the emergency brake's forward ray
+sits at y+0.4 and used to hit a rising ramp surface ~0.9 m before the foot and freeze the bot
+there — it now ignores hits whose normal is walkable-slope-ish, `normal.y > 0.72`), two roles
+(`ACHIEVER`/`KILLER` —
 `ACHIEVER` self-degrades to `KILLER` behavior at init if the map has no objective), three difficulty
 tiers, and integrations with the shared
 `RespawnController`/`HealthComponent`/`AmmoComponent`/`ModificationController` (death state,
