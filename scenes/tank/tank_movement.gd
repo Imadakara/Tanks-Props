@@ -278,7 +278,7 @@ func _physics_process(delta: float) -> void:
 			if toward_void > 0.0:
 				# Тормоз ограничен снизу — упорный игрок всё же переедет край (и уйдёт в кувырок).
 				eff_move *= maxf(1.0 - _edge_approach * teeter_brake, 0.4)
-		var target_horizontal: Vector3 = forward * eff_move * move_speed \
+		var target_horizontal: Vector3 = forward * eff_move * _effective_move_speed() \
 			* _slope_speed_multiplier(forward * signf(eff_move))
 		var current_horizontal := Vector3(_body.velocity.x, 0.0, _body.velocity.z)
 		var new_horizontal: Vector3 = current_horizontal.move_toward(target_horizontal, acceleration * delta)
@@ -291,7 +291,7 @@ func _physics_process(delta: float) -> void:
 		drift.y = 0.0
 		drift = drift.normalized()
 		var t_frac: float = clampf(_tip_angle / deg_to_rad(teeter_ponr_deg), 0.0, 1.0)
-		var thr: Vector3 = forward * move_input * move_speed
+		var thr: Vector3 = forward * move_input * _effective_move_speed()
 		var target_h: Vector3 = thr + drift * (t_frac * teeter_forward_drift)
 		var cur_h := Vector3(_body.velocity.x, 0.0, _body.velocity.z)
 		var new_h: Vector3 = cur_h.move_toward(target_h, acceleration * delta)
@@ -315,7 +315,7 @@ func _physics_process(delta: float) -> void:
 		# Ассист «перевалить порожек»: коробчатый танк упёрся носом в низкую грань (подошва рампы,
 		# стык плит гарнитура, край столешницы под рампой) — если продвинулся заметно меньше
 		# заказанного, а над гранью есть проходимая поверхность, приподнимаем корпус на неё.
-		var wanted: float = absf(move_input) * move_speed * delta
+		var wanted: float = absf(move_input) * _effective_move_speed() * delta
 		var got: float = absf(actual_delta.dot(forward))
 		if step_up_enabled and move_input != 0.0 and wanted > 0.02 and got < wanted * 0.5:
 			_try_step_up(forward * signf(move_input))
@@ -581,6 +581,20 @@ func edge_approach() -> float:
 ## `grade` = синус угла между направлением движения и опорной плоскостью: > 0 в горку, < 0 под
 ## горку, 0 на ровном. `travel_dir` — горизонтальный единичный вектор фактического хода (forward,
 ## развёрнутый на задний ход), поэтому задним ходом в горку танк тормозится ровно так же.
+## Предел линейной скорости с учётом ГРУЗА в слоте модификации (см.
+## Modification.carry_speed_multiplier). Пустой слот — ровно move_speed, поведение не меняется.
+## Гружёный — медленнее: тяжёлый груз (контейнер режима экстракшена) заставляет носителя держаться
+## своей команды и активнее пользоваться маскировкой, а не бежать в одиночку.
+##
+## Именно ПРЕДЕЛ, а не мгновенная скорость: разгон/торможение по-прежнему идут через acceleration,
+## так что подбор груза на ходу не даёт рывка — танк плавно сбрасывает до нового предела.
+## Складывается с уклоном (_slope_speed_multiplier) мультипликативно: гружёный в гору медленнее
+## обоих эффектов по отдельности — это осознанно, подъём с грузом и должен быть тяжёлым.
+func _effective_move_speed() -> float:
+	if _mod == null:
+		return move_speed
+	return move_speed * _mod.carry_speed_multiplier()
+
 func _slope_speed_multiplier(travel_dir: Vector3) -> float:
 	if not slope_speed_enabled or not _body.is_on_floor():
 		return 1.0

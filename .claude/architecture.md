@@ -85,6 +85,15 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   kitchen ramps): uphill slower, downhill slightly faster, from `get_floor_normal()` — no second
   ray of its own. Same path for player and bots. Flat maps are unaffected (vertical normal ⇒
   multiplier exactly 1.0); it only bites on the kitchen and the proving ground.
+  It also scales the same target speed by the **load in the modification slot**
+  (`_effective_move_speed()` → `ModificationController.carry_speed_multiplier()` →
+  `Modification.carry_speed_multiplier`, default 1.0 ⇒ no effect). Applied at all three places a
+  speed is ordered (normal drive, the TEETER phase, and the "distance commanded" the step-up assist
+  compares against), so a loaded tank never trips the assist by falling short of a figure it was
+  never ordered to make. It is a **limit**, not an instantaneous speed — `acceleration` still ramps
+  to it, so picking up or handing over a load mid-drive produces no jerk. Stacks multiplicatively
+  with the slope multiplier. Only carrier today: the CONTAINER_EXTRACTION container (0.7 ⇒ 30%
+  slower), which is what forces a carrier to want an escort and to use disguise.
   It also has a **step-up assist** (`step_up_*` exports): after `move_and_slide()`, if the tank
   advanced far less than commanded and a low near-vertical face is dead ahead with walkable ground
   ≤ `step_up_max` (0.35) on top, lift the body onto it — the box collider's chamfer only clears
@@ -210,6 +219,12 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   used: `scenes/modifications/container.tres` is exactly that — the CONTAINER_EXTRACTION container
   occupies the slot and does nothing else, which is what gives "no other mod while carrying" for
   free and keeps `ai_usable()` false so a carrier isn't mistaken for a mortar carrier.
+  One contract entry deliberately reads the **`Modification` resource**, not the behavior node:
+  `carry_speed_multiplier()` (the mod's weight). It has to work for passive mods, which have no
+  behavior node to ask — hence the number lives on the `.tres`, the one documented exception to
+  "numeric balance lives in `GameConfig`" (same precedent as `ObjectiveAlertZone.radius` in a map's
+  `.tscn`). Generic by construction: any future heavy modification just sets the field, no
+  per-`id` check anywhere.
   The only behavior so far is the **mortar**
   (`scenes/modifications/mortar/{mortar_behavior.gd,Mortar.tscn}`): a two-press lobbed special shot
   (aim mode → ground ring reticle → `WeaponController.fire_special(dir, speed, damage)`), the one

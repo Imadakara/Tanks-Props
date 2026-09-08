@@ -201,6 +201,32 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 		_expect("bake_navmesh_on_start == true", bool(cs.bake_navmesh_on_start), "kitchen should bake its navmesh at load")
 	if "dynamic_obstacles_supported" in cs:
 		_expect("dynamic_obstacles_supported == false", not bool(cs.dynamic_obstacles_supported), "kitchen must opt out of dynamic obstacles")
+	# Carry weight: the container is deliberately heavy (30% slower) — that slowdown is what makes
+	# a carrier want an escort and cover. Checked end-to-end (resource value -> controller forward
+	# -> TankMovement limit) because it crosses three files and has no visible failure mode: a
+	# broken forward just silently restores full speed.
+	var mod_res: Resource = load("res://scenes/modifications/container.tres")
+	_expect("container.tres carry_speed_multiplier == 0.7",
+		is_equal_approx(float(mod_res.carry_speed_multiplier), 0.7),
+		"got %.3f" % float(mod_res.carry_speed_multiplier))
+	var player := cs.get_node_or_null("PlayerTank")
+	if player != null:
+		var slot := player.get_node_or_null("ModificationController")
+		var mv := player.get_node_or_null("TankMovement")
+		if slot != null and mv != null and slot.can_pick_up():
+			var base: float = mv.move_speed
+			_expect("empty slot -> full move speed",
+				is_equal_approx(mv._effective_move_speed(), base),
+				"got %.2f of %.2f" % [mv._effective_move_speed(), base])
+			slot.install(mod_res)
+			var loaded: float = mv._effective_move_speed()
+			slot.clear_slot()
+			_expect("carrying container -> 70%% of move speed",
+				is_equal_approx(loaded, base * 0.7),
+				"got %.2f, expected %.2f" % [loaded, base * 0.7])
+			_expect("speed limit restored after handover",
+				is_equal_approx(mv._effective_move_speed(), base),
+				"got %.2f" % mv._effective_move_speed())
 
 
 func _check_test_ground(st: SceneTree, cs: Node) -> void:

@@ -73,6 +73,14 @@ func on_fire_pressed() -> void:
 	if _behavior != null:
 		_behavior.on_fire_pressed()
 
+## Множитель линейной скорости от гружёного слота (см. Modification.carry_speed_multiplier).
+## Пустой слот / модификация без веса — 1.0. Читается с РЕСУРСА, а не с узла поведения: пассивные
+## модификации (контейнер режима экстракшена) поведения не имеют вовсе.
+func carry_speed_multiplier() -> float:
+	if current_mod == null:
+		return 1.0
+	return float(current_mod.carry_speed_multiplier)
+
 func blocks_hull_movement() -> bool:
 	return _behavior != null and _behavior.blocks_hull_movement()
 

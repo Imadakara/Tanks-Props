@@ -7,3 +7,4 @@ script = ExtResource("1_container")
 id = &"container"
 display_name = "Контейнер"
 hud_short = "КОНТЕЙНЕР"
+carry_speed_multiplier = 0.7

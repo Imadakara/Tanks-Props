@@ -186,8 +186,9 @@ root, each independently toggled player/AI by its own `is_player_controlled: boo
   chamfered ⇒ climbs lips ≤ 0.20 and ramps ≤ 44°. Bounding half-extents unchanged, so
   `HULL_HALF_EXTENTS` and every AABB rule still hold.
 - `TankMovement` — tracks; strips the sideways `move_and_slide()` drift each frame; also owns
-  **fall damage**, the **slope-speed multiplier**, the **step-up assist**, and the
-  **ledge / brink / teeter** support model (directional edge-marches + CoM margin, three
+  **fall damage**, the **slope-speed multiplier**, the **carry-weight multiplier** (a loaded
+  modification slot slows the tank — the extraction container is 0.7), the **step-up assist**, and
+  the **ledge / brink / teeter** support model (directional edge-marches + CoM margin, three
   recoverable stages then a point of no return).
 - `TumbleController` — on a cliff commit an invisible `RigidBody3D` proxy (real low CoM, decides
   tracks-vs-roof by physics) takes over, its transform copied onto the root each frame; turtle
@@ -205,8 +206,9 @@ root, each independently toggled player/AI by its own `is_player_controlled: boo
 - `CollisionDetector` — Area3D; a *moving* tank of any team touching a `DISGUISED` tank breaks it.
 - `ModificationController` — one generic pickup slot; a `Modification` `Resource` +
   optional `behavior_scene` (null = passive, e.g. `container.tres`); fixed null-safe contract,
-  no `id == &"mortar"` checks. Only behavior so far: the mortar. Detail:
-  `Tank_Prop_Hunt_Modifications.md`.
+  no `id == &"mortar"` checks. `carry_speed_multiplier()` is the one contract entry read off the
+  **resource** rather than a behavior node, so passive mods can have weight. Only behavior so far:
+  the mortar. Detail: `Tank_Prop_Hunt_Modifications.md`.
 - `HealthComponent` — `take_hit(killer, damage := 1)`; tanks `max_hits` 3; the objective reuses
   it as a 100-HP pool; `attackers_only` / `free_on_destroy` / `invincible` / `force_destroy()`.
 - `RespawnController` — disables the tank in place on death, respawns after
