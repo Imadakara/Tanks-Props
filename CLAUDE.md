@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Editing this file (or `.claude/architecture.md`) invalidates the session prompt cache** —
+> the next turn re-bills the whole instruction prefix at full price. Batch doc/CLAUDE.md edits
+> to the **end** of a session; don't drip-edit them mid-task.
+
 ## Project
 
 Tank Prop Hunt — a team tactical shooter with prop-hunt elements (disguise mechanic), Godot 4.7
@@ -100,6 +104,9 @@ gotchas of that MCP server; don't rediscover them by trial and error.
 `res://scenes/tank/tank_ai_controller.gd` has no counterpart in a formal test suite either — its
 correctness is established the same way (live `run_script` assertions on state, not manual play).
 
+Deep architecture detail lives in `.claude/architecture.md` — **`Grep` a single `### section`
+out of it, never `Read` it whole** (see "Architecture map" below for why).
+
 **Batch calibration** — `tools/calibration/calibrate.gd` runs a whole map's scene-bring-up
 invariants in **one** `run_script` (autoloads, `match_mode` / `total_rounds`, `MatchManager` /
 `RoundTimer` / `ScoreManager`, borders, the tank component set, bot-AI enabled, root-upright,
@@ -168,9 +175,13 @@ a style preference.
 ## Architecture map
 
 Full mechanism for every entry below is in **`.claude/architecture.md`** under the same
-section name. Read that file before non-trivial work on any of these systems; the summary
-here is only enough to know which section to open. Vault docs stay the source of truth for
-anything a section marks "full detail: `Tank_Prop_Hunt_*.md`".
+section name. The summary here is only enough to know which section to open. Vault docs stay
+the source of truth for anything a section marks "full detail: `Tank_Prop_Hunt_*.md`".
+
+**How to consult `.claude/architecture.md`: `Grep` the one `### <section>` you need
+(`Grep -n -A 80 "### Spawn system" .claude/architecture.md`), never `Read` the whole file.**
+It is ~70 KB / ~17 K tokens; a section is 1–2 K. It is deliberately *not* auto-loaded — pulling
+the whole thing in on every task is exactly the cost the split was made to avoid.
 
 ### Tank as a composed entity
 
@@ -178,51 +189,25 @@ anything a section marks "full detail: `Tank_Prop_Hunt_*.md`".
 (`team_spawner.gd` instances it N times). All behavior is in sibling components under the
 root, each independently toggled player/AI by its own `is_player_controlled: bool`:
 
-- `tank.gd` — `team` / `is_attacker()`; the always-on team-colour tint (`apply_team_visuals()`,
-  recursive `Hull`+`Turret` walk minus running gear + mortar); debug-only billboard HP `Label3D`.
-- `Hull` (`hull_rig.gd`) — the **visual** hull pivot; every chassis mesh is built in code as its
-  children. Owns the terrain tilt (4 corner rays + accel dive/squat + turn roll). `Turret` is a
-  child of this pivot, so the ring tilts with the deck (one degree of freedom).
-- `BarrelController` — pitch; converts the world `target_pitch` to a local angle via
-  `mount_pitch()` and clamps *that* to the trunnion limits. See Invariant 2.
-- root **collider** — `ConvexPolygonShape3D`, `1.2×0.6×1.8` at y+0.3, bottom nose/tail edges
-  chamfered ⇒ climbs lips ≤ 0.20 and ramps ≤ 44°. Bounding half-extents unchanged, so
-  `HULL_HALF_EXTENTS` and every AABB rule still hold.
-- `TankMovement` — tracks; strips the sideways `move_and_slide()` drift each frame; also owns
-  **fall damage**, the **slope-speed multiplier**, the **carry-weight multiplier** (a loaded
-  modification slot slows the tank — the extraction container is 0.7), the **step-up assist**, and
-  the **ledge / brink / teeter** support model (directional edge-marches + CoM margin, three
-  recoverable stages then a point of no return).
-- `TumbleController` — on a cliff commit an invisible `RigidBody3D` proxy (real low CoM, decides
-  tracks-vs-roof by physics) takes over, its transform copied onto the root each frame; turtle
-  self-rights after a cooldown. The **only** time the root is not upright.
-- `CameraRig` (`SpringArm3D`) — player only; free-look orbit, `rotation.y = world_yaw −
-  body.rotation.y`; lifts as the aim rises; GTA-style level-follow during a tumble.
-- `TurretController` — yaw, `rotate_toward` at constant angular velocity (not `lerp_angle`).
-- `WeaponController` — fires along the barrel's actual basis; gated by
-  `TankStateMachine.request_fire()`.
-- `TankStateMachine` — `NORMAL / DISGUISED / DISGUISE_COOLDOWN / RELOAD`; the single authority
-  (`can_fire()` / `can_enter_disguise()` / `break_disguise(reason)`).
-- `DisguiseController` — key **M** → tank looks like the `GameConfig` prop; full break-trigger
-  list; bots disguise only via roster-gated ambush scenarios; `_can_see()` blindness gate +
-  `ignore_disguise` for a bot already fighting the target. Detail: `Tank_Prop_Hunt_Disguise.md`.
-- `CollisionDetector` — Area3D; a *moving* tank of any team touching a `DISGUISED` tank breaks it.
-- `ModificationController` — one generic pickup slot; a `Modification` `Resource` +
-  optional `behavior_scene` (null = passive, e.g. `container.tres`); fixed null-safe contract,
-  no `id == &"mortar"` checks. `carry_speed_multiplier()` is the one contract entry read off the
-  **resource** rather than a behavior node, so passive mods can have weight. Only behavior so far:
-  the mortar. Detail: `Tank_Prop_Hunt_Modifications.md`.
-- `HealthComponent` — `take_hit(killer, damage := 1)`; tanks `max_hits` 3; the objective reuses
-  it as a 100-HP pool; `attackers_only` / `free_on_destroy` / `invincible` / `force_destroy()`.
-- `RespawnController` — disables the tank in place on death, respawns after
-  `respawn_cooldown_sec`; force-kills any tank below y = -3; `halt()` on round end stops it for
-  the scene load.
-- `CargoHold` — the EXTRACTION cargo bay: holds value *as data* (no nodes) and imposes the two
-  costs that make carrying a real decision — **disguise forbidden** (`blocks_disguise()`, read by
-  `DisguiseController`, the HUD and the bot alike) and a per-crate speed penalty
-  (`speed_multiplier()`). Also owns the "one crate per warehouse trip" lock in `try_take()`, so no
-  pickup site has to know that rule.
-- `TankAIController` — the one bot brain, a dormant sibling on every instance (see its own entry).
+One line each — `Grep` architecture.md § "Tank as a composed entity" for the mechanism:
+
+- `tank.gd` — `team` / `is_attacker()`; always-on team-colour tint (`apply_team_visuals()`); debug HP `Label3D`.
+- `Hull` (`hull_rig.gd`) — **visual** hull pivot, all chassis meshes code-built as children; owns terrain tilt. `Turret` is its child ⇒ ring tilts with the deck.
+- `BarrelController` — pitch; world `target_pitch` → local via `mount_pitch()`, clamps local to trunnion limits (Invariant 2).
+- root **collider** — `ConvexPolygonShape3D` `1.2×0.6×1.8` @ y+0.3, chamfered nose/tail ⇒ lips ≤ 0.20, ramps ≤ 44°; bounding half-extents unchanged.
+- `TankMovement` — tracks; strips sideways `move_and_slide()` drift; owns fall damage, slope-speed mult, carry-weight mult, step-up assist, ledge/brink/teeter support model.
+- `TumbleController` — cliff-commit → invisible `RigidBody3D` proxy decides tracks-vs-roof by physics, transform copied onto root; turtle self-right after cooldown. Only time the root isn't upright.
+- `CameraRig` (`SpringArm3D`) — player only; free-look orbit, lifts with aim, GTA-style level-follow during tumble.
+- `TurretController` — yaw, `rotate_toward` constant angular velocity.
+- `WeaponController` — fires along the barrel basis; gated by `TankStateMachine.request_fire()`.
+- `TankStateMachine` — `NORMAL / DISGUISED / DISGUISE_COOLDOWN / RELOAD`; single authority (`can_fire()` / `can_enter_disguise()` / `break_disguise()`).
+- `DisguiseController` — key **M** → `GameConfig` prop; break-trigger list; bots only via roster ambush scenarios; `_can_see()` gate + `ignore_disguise`. Detail: `Tank_Prop_Hunt_Disguise.md`.
+- `CollisionDetector` — Area3D; a *moving* tank touching a `DISGUISED` tank breaks it.
+- `ModificationController` — one generic pickup slot; `Modification` `Resource` + optional `behavior_scene` (null = passive); null-safe contract, no `id` checks; `carry_speed_multiplier()` read off the resource. Detail: `Tank_Prop_Hunt_Modifications.md`.
+- `HealthComponent` — `take_hit(killer, damage := 1)`; tanks `max_hits` 3; objective = 100-HP pool; `attackers_only` / `free_on_destroy` / `invincible` / `force_destroy()`.
+- `RespawnController` — disables tank in place on death, respawns after `respawn_cooldown_sec`; force-kills any tank below y = -3; `halt()` on round end.
+- `CargoHold` — EXTRACTION cargo bay: value *as data*; imposes **disguise forbidden** (`blocks_disguise()`) + per-crate speed penalty; owns the "one crate per warehouse trip" lock.
+- `TankAIController` — the one bot brain, dormant sibling on every instance (own entry below).
 
 ### Scene bring-up ordering
 
