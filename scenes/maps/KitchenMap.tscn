@@ -44,7 +44,7 @@ light_energy = 1.4
 shadow_enabled = true
 
 [node name="PlayerTank" parent="." unique_id=541561453 instance=ExtResource("1_tank")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -32.49581, 19, 26)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -32.49581, 18.270462, 26)
 
 [node name="TeamSpawner" type="Node" parent="." unique_id=966206762]
 script = ExtResource("8_spawner")
@@ -133,8 +133,8 @@ size = Vector3(45.7, 2, 12)
 color = Color(0.72, 0.55, 0.35, 1)
 
 [node name="StoolBox" parent="NavigationRegion3D" unique_id=937412469 instance=ExtResource("10_struct")]
-transform = Transform3D(-0.27447006, 0, 0.96159565, 0, 1, 0, -0.96159565, 0, -0.27447006, 10.422443, 5.556165, -4.621922)
-size = Vector3(14, 11, 16)
+transform = Transform3D(-0.27447006, 0, 0.96159565, 0, 1, 0, -0.96159565, 0, -0.27447006, 10.422443, 5.556165, -4.229374)
+size = Vector3(15, 11, 16)
 color = Color(0.65, 0.45, 0.25, 1)
 
 [node name="TableTop" parent="NavigationRegion3D" unique_id=1289368530 instance=ExtResource("10_struct")]
@@ -178,17 +178,17 @@ size = Vector3(14, 14, 2)
 color = Color(0.62, 0.42, 0.24, 1)
 
 [node name="ChairBSeat" parent="NavigationRegion3D" unique_id=1428836052 instance=ExtResource("10_struct")]
-transform = Transform3D(-0.8660254, 0, -0.49999988, 0, 1, 0, 0.49999988, 0, -0.8660254, -43.75, 9.6, 5.9820514)
+transform = Transform3D(-0.20282409, 0, -0.9792152, 0, 1, 0, 0.9792152, 0, -0.20282409, -36.656044, 9.6, 6.3834295)
 size = Vector3(14, 2.4, 14)
 color = Color(0.62, 0.42, 0.24, 1)
 
 [node name="ChairBPost" parent="NavigationRegion3D" unique_id=1875714689 instance=ExtResource("10_struct")]
-transform = Transform3D(-0.8660254, 0, -0.49999988, 0, 1, 0, 0.49999988, 0, -0.8660254, -43.75, 4.8, 5.9820514)
+transform = Transform3D(-0.20282409, 0, -0.9792152, 0, 1, 0, 0.9792152, 0, -0.20282409, -36.656044, 4.8, 6.3834295)
 size = Vector3(5, 9.6, 5)
 color = Color(0.5, 0.33, 0.18, 1)
 
 [node name="ChairBBack" parent="NavigationRegion3D" unique_id=1148327301 instance=ExtResource("10_struct")]
-transform = Transform3D(-0.8660254, 0, -0.49999988, 0, 1, 0, 0.49999988, 0, -0.8660254, -46.75, 17.8, 0.78589845)
+transform = Transform3D(-0.20282409, 0, -0.9792152, 0, 1, 0, 0.9792152, 0, -0.20282409, -42.531334, 17.8, 5.166485)
 size = Vector3(14, 14, 2)
 color = Color(0.62, 0.42, 0.24, 1)
 
@@ -198,7 +198,7 @@ size = Vector3(6, 8, 2)
 color = Color(0.85, 0.35, 0.2, 1)
 
 [node name="TrashCan" parent="NavigationRegion3D" unique_id=1248358407 instance=ExtResource("10_struct")]
-transform = Transform3D(0.95937943, 0, 0.28211892, 0, 1, 0, -0.28211892, 0, 0.95937943, 35.95237, 5.039254, -5.5659285)
+transform = Transform3D(0.95937943, 0, 0.28211892, 0, 1, 0, -0.28211892, 0, 0.95937943, 45.627823, 5.039254, -11.903191)
 size = Vector3(8, 10, 8)
 color = Color(0.55, 0.6, 0.65, 1)
 
@@ -257,37 +257,41 @@ transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 38.3
 run = 26.0
 
 [node name="RampFloorToStool" parent="NavigationRegion3D" unique_id=1171678706 instance=ExtResource("11_ramp")]
-transform = Transform3D(0.9593794, 0, 0.28211907, 0, 1, 0, -0.28211907, 0, 0.9593794, 44.444473, -0.7720356, 23.153854)
+transform = Transform3D(0.26668787, -0.0073202844, -0.9637552, 0.0020647186, 0.9999733, -0.0070240395, 0.9637809, -0.000116656476, 0.26669583, -23.199432, -0.11049044, 1.5635986)
 run = 26.0
+rise = 11.0
 
 [node name="RampChairAToTable" parent="NavigationRegion3D" unique_id=783865737 instance=ExtResource("11_ramp")]
 transform = Transform3D(8.742278e-08, 0, 1, 0, 1, 0, -1, 0, 8.742278e-08, -1.4558258, 10.79128, 34.318146)
 run = 16.0
 rise = 7.2
 
-[node name="RampFloorToChairB" parent="NavigationRegion3D" unique_id=548785922 instance=ExtResource("11_ramp")]
-transform = Transform3D(-0.49999997, 0, 0.8660254, 0, 1, 0, -0.8660254, 0, -0.49999997, -15.299913, 0, -10.749999)
-run = 26.0
-
 [node name="RampTrack" parent="NavigationRegion3D" unique_id=408843390 instance=ExtResource("11_ramp")]
-transform = Transform3D(1, 0, 0, 0, 1.002, 0, 0, 0, 1, -49.407303, 18.055866, 28.101076)
+transform = Transform3D(1, 0, 0, 0, 1.0019939, -0.0034906515, 0, 0.0034976327, 0.9999939, -49.407, 17.97, 28.101)
 run = 51.0
 rise = 25.0
 thickness = 1.2
 color = Color(0.95, 0.45, 0.1, 1)
 
-[node name="RampBridge1" parent="NavigationRegion3D" unique_id=204095641 instance=ExtResource("11_ramp")]
-transform = Transform3D(-0.2588191, 0, 0.9659258, 0, 1.002, 0, -0.9659258, 0, -0.2588191, 31.707745, 10.024082, -5.937932)
-run = 13.0
-rise = 1.0
+[node name="RampBridge4" parent="NavigationRegion3D" unique_id=847055567 instance=ExtResource("11_ramp")]
+transform = Transform3D(0.9999706, 0, -0.007666044, 0, 1.002, 0, 0.007666044, 0, 0.9999706, 7.2060003, 10.81, 26.525553)
+run = 23.0
+rise = 0.25
 width = 5.0
 thickness = 1.2
 color = Color(0.95, 0.45, 0.1, 1)
 
 [node name="RampBridge2" parent="NavigationRegion3D" unique_id=1620588948 instance=ExtResource("11_ramp")]
-transform = Transform3D(0.99999994, 0, 0, 0, 1.002, 0, 0, 0, 0.99999994, 4.062151, 11.065851, -7.796735)
+transform = Transform3D(0.99999994, 0, 0, 0, 1.002, 0, 0, 0, 0.99999994, 12.585989, 11.065851, -7.796735)
 run = 15.0
 rise = 7.1
+width = 5.0
+thickness = 1.2
+color = Color(0.95, 0.45, 0.1, 1)
+
+[node name="RampBridge5" parent="NavigationRegion3D" unique_id=1509275391 instance=ExtResource("11_ramp")]
+transform = Transform3D(0.99999845, 0, -0.0017440822, 0, 1.0020002, 0, 0.0017440822, 0, 0.99999845, -31.456858, 10.709921, 1.215745)
+rise = 7.5
 width = 5.0
 thickness = 1.2
 color = Color(0.95, 0.45, 0.1, 1)
@@ -311,7 +315,7 @@ color = Color(0.75, 0.75, 0.8, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -13, 0.625, 35)
 
 [node name="Obstacle2" parent="NavigationRegion3D" unique_id=997397739 instance=ExtResource("9_obst")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -51.18793, 0.625, -11.8232975)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -51.18793, 0.625, -9.127012)
 
 [node name="Obstacle3" parent="NavigationRegion3D" unique_id=1096492812 instance=ExtResource("9_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32.686943, 0.625, -23.607513)
@@ -331,6 +335,51 @@ transform = Transform3D(0.9680719, 0, 0.25067267, 0, 1, 0, -0.25067267, 0, 0.968
 [node name="Obstacle8" parent="NavigationRegion3D" unique_id=1739817437 instance=ExtResource("9_obst")]
 transform = Transform3D(0.9998166, 0, 0.019154362, 0, 1, 0, -0.019154362, 0, 0.9998166, 7.7641764, 11.551763, -9.39167)
 
+[node name="Obstacle9" parent="NavigationRegion3D" unique_id=1831263145 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -38, 0.625, -8)
+
+[node name="Obstacle10" parent="NavigationRegion3D" unique_id=603110756 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19.769556, 0.625, 13.945914)
+
+[node name="Obstacle11" parent="NavigationRegion3D" unique_id=1467421247 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.625, -15.741003)
+
+[node name="Obstacle12" parent="NavigationRegion3D" unique_id=686286462 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.625, 8)
+
+[node name="Obstacle13" parent="NavigationRegion3D" unique_id=843079140 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20.343952, 0.625, -6)
+
+[node name="Obstacle14" parent="NavigationRegion3D" unique_id=2124494295 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0.625, 10)
+
+[node name="Obstacle15" parent="NavigationRegion3D" unique_id=2049537967 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 44, 0.625, 0.88337755)
+
+[node name="Obstacle16" parent="NavigationRegion3D" unique_id=654214235 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0.625, 22)
+
+[node name="Obstacle17" parent="NavigationRegion3D" unique_id=497611821 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0.625, 30)
+
+[node name="Obstacle18" parent="NavigationRegion3D" unique_id=175885684 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.625, 22)
+
+[node name="Obstacle19" parent="NavigationRegion3D" unique_id=1436204254 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26, 0.625, 24)
+
+[node name="Obstacle20" parent="NavigationRegion3D" unique_id=252757258 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37.25757, 0.625, 20)
+
+[node name="Obstacle21" parent="NavigationRegion3D" unique_id=1317699117 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -34, 0.625, -20)
+
+[node name="Obstacle22" parent="NavigationRegion3D" unique_id=1843911929 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.625, -22)
+
+[node name="Obstacle23" parent="NavigationRegion3D" unique_id=933975722 instance=ExtResource("9_obst")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51.91677, 0.625, -21.298872)
+
 [node name="AttackSpawnZone" type="Node3D" parent="." unique_id=1168132884]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -31.205853, 18, 23.716263)
 script = ExtResource("6_zone")
@@ -349,32 +398,32 @@ radius = 6.0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 45.93966, 0, 33.959373)
 radius = 8.0
 
-[node name="ContainerSpawn1" type="Node3D" parent="." unique_id=1359197095]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -43.598324, 10.708701, 6.0975676)
+[node name="ExtractionPoint1" type="Node3D" parent="." unique_id=1359197095]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -35.988617, 10.708701, 6.0975676)
 script = ExtResource("6_zone")
-radius = 3.0
-zone_role = "ContainerSpawn"
+radius = 5.0
+zone_role = "ExtractionPoint"
 
-[node name="ContainerSpawn2" type="Node3D" parent="." unique_id=878755368]
+[node name="ExtractionPoint2" type="Node3D" parent="." unique_id=878755368]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.018424988, 18.191196, -38.200874)
 script = ExtResource("6_zone")
-radius = 3.0
-zone_role = "ContainerSpawn"
+radius = 5.0
+zone_role = "ExtractionPoint"
 
-[node name="ContainerSpawn3" type="Node3D" parent="." unique_id=482775448]
+[node name="ExtractionPoint3" type="Node3D" parent="." unique_id=482775448]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.795578, 0.01, -37.752865)
 script = ExtResource("6_zone")
-radius = 3.0
-zone_role = "ContainerSpawn"
+radius = 5.0
+zone_role = "ExtractionPoint"
 
-[node name="ContainerSpawn4" type="Node3D" parent="." unique_id=1022903996]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -49.059856, 0.089818, -18.6909)
+[node name="ExtractionPoint4" type="Node3D" parent="." unique_id=1022903996]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46.686718, 0.089818, -17.026693)
 script = ExtResource("6_zone")
-radius = 3.0
-zone_role = "ContainerSpawn"
+radius = 5.0
+zone_role = "ExtractionPoint"
 
-[node name="ContainerSpawn5" type="Node3D" parent="." unique_id=2093859539]
+[node name="ExtractionPoint5" type="Node3D" parent="." unique_id=2093859539]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.031954, 0.01, 34.269463)
 script = ExtResource("6_zone")
-radius = 3.0
-zone_role = "ContainerSpawn"
+radius = 5.0
+zone_role = "ExtractionPoint"

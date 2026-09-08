@@ -239,7 +239,7 @@ extends Node
 ## нужна ТОЛЬКО когда придерживали руль ради точности прицела (см. git log), а руль
 ## здесь ничем не придерживается вообще — корпус и башня наводятся независимо, ровно как у
 ## `ATTACK_OBJECTIVE`.
-enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE, OBJECTIVE_CHECK, CONTAINER_SEEK, CONTAINER_DELIVER }
+enum State { IDLE, PATROL, ATTACK, HUNT, PURSUE, SEARCH, ATTACK_OBJECTIVE, ALERT, DEAD, AMMO_SEEK, AMMO_RETRIEVE, AMMO_WAIT, MOD_SEEK, MOD_RETRIEVE, MORTAR_ATTACK, DISGUISE_APPROACH, DISGUISE_PREP, DISGUISE, OBJECTIVE_CHECK, LOOT_SEEK, LOOT_DELIVER, EXTRACT_RUN, FARM_NODE }
 enum Difficulty { EASY, MEDIUM, HARD }
 enum Role { KILLER, ACHIEVER }
 
@@ -250,9 +250,6 @@ const _WANDER_ARRIVE_TOLERANCE_DEG := 3.0  # когда считать, что "
 const _PROJECTILE_GRAVITY := 9.8
 ## Для чтения состояния маскировки чужого танка в _can_see() (см. _enemy_is_disguised()).
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
-## Тот же ресурс, что кладёт в слот `container_pickup.gd` — сравнение по идентичности ресурса, не по
-## строке `id`: отличает носителя контейнера от носителя мортиры без разбора текстовых имён.
-const ContainerMod := preload("res://scenes/modifications/container.tres")
 
 ## [ДОБАВЛЕНО, по прямому запросу — "два набора ботов, тестовый и продакшен, это путаница, боты
 ## должны быть одной универсальной системой, деплоящейся на любую карту"] Раньше этот компонент
@@ -1072,13 +1069,17 @@ var _ammo_wait_timer: float = 0.0
 var _mod_target_crate: Node = null
 var _mod_zone: Node = null
 
-## --- Режим CONTAINER_EXTRACTION (State.CONTAINER_SEEK/CONTAINER_DELIVER) ---------------------
-## Конкретный контейнер, за которым едем. Выбирается `_pick_container_target()` с координацией
+## --- Режим EXTRACTION (State.LOOT_SEEK/LOOT_DELIVER) ---------------------
+## Конкретный контейнер, за которым едем. Выбирается `_pick_loot_target()` с координацией
 ## между ботами одной команды (двое не едут за одним и тем же), пере-выбирается, если наш исчез.
-var _container_target: Node = null
+var _loot_target: Node = null
 ## Круг спавна СВОЕЙ команды — он же точка сдачи контейнера (саму доставку засчитывает
-## container_manager.gd по факту въезда в радиус). Резолвится один раз в _initialize().
+## extraction_manager.gd по факту въезда в радиус). Резолвится один раз в _initialize().
 var _own_base_zone: Node3D = null
+## Трюм танка (cargo_hold.gd). Резолвится в _initialize() рядом с остальными компонентами.
+var _cargo: Node = null
+## Куб, который бот сейчас расстреливает ради добычи (State.FARM_NODE).
+var _farm_target: Node3D = null
 var _mortar_target_node: Node = null
 var _mortar_prep_timer: float = 0.0
 
@@ -1291,6 +1292,7 @@ func _initialize() -> void:
 		role = Role.KILLER
 	_find_alert_zone()
 	_find_own_base_zone()
+	_cargo = _body.get_node_or_null("CargoHold")
 	# Ammo-стейты (AMMO_SEEK/RETRIEVE/WAIT, см. их doc-comment у enum State) — зоны сброса те же,
 	# что уже использует ammo_drop_zone.gd (группа "ammo_drop_zones"), кэшируем один раз: карта без
 	# зон сброса не должна давать боту вечно спотыкаться об этот механизм (см. проверку в
@@ -1869,34 +1871,69 @@ func _physics_process(delta: float) -> void:
 				_drive_to_point(delta, _mod_target_crate.global_position, waypoint_reach_dist)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
-		State.CONTAINER_SEEK:
-			# Едем к конкретному контейнеру; подбор ФИЗИЧЕСКИЙ (Container.body_entered → install), как у
-			# MOD_RETRIEVE с красным ящиком — отдельного «взять» тут нет. Слот занялся → решение примет
-			# _think() следующим тиком (уведёт в CONTAINER_DELIVER). Контейнер исчез (успел подобрать
-			# кто-то другой) — пробуем следующий, и только если свободных не осталось, возвращаемся
-			# к обычным делам.
-			if not _mod.can_pick_up():
+		State.LOOT_SEEK:
+			# Едем к конкретному ящику; подбор ФИЗИЧЕСКИЙ (LootCrate.body_entered -> CargoHold.try_take),
+			# отдельного «взять» тут нет. Трюм наполнился — решение примет _think() следующим тиком.
+			# Ящик исчез (успел подобрать кто-то другой) — пробуем следующий, и только если свободных
+			# не осталось, возвращаемся к обычным делам.
+			if _cargo == null or _cargo.is_full():
 				state = State.IDLE
 				_clear_stale_nav_target_flags()
-			elif not is_instance_valid(_container_target):
-				if not _pick_container_target():
+			elif not is_instance_valid(_loot_target) or _loot_taken_by_other_bot(_loot_target):
+				# Цель исчезла ЛИБО её перехватил более близкий союзник — берём следующую.
+				if not _pick_loot_target():
 					state = State.IDLE
 					_clear_stale_nav_target_flags()
 			else:
-				_drive_to_point(delta, _container_target.global_position, waypoint_reach_dist)
+				_drive_to_point(delta, _loot_target.global_position, waypoint_reach_dist)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
-		State.CONTAINER_DELIVER:
-			# Везём контейнер на свою базу. Сама сдача — не наше дело: ContainerManager видит танк с
-			# контейнером в радиусе его зоны спавна и чистит слот. Слот опустел (сдали ЛИБО потеряли) —
-			# обратно к обычным делам.
-			if _mod.can_pick_up() or not is_instance_valid(_own_base_zone):
+		State.LOOT_DELIVER:
+			# Везём добытое на свой склад. Сама выгрузка — не наше дело: ExtractionManager видит
+			# гружёный танк в круге его базы и превращает трюм в припаркованные ящики. Трюм опустел
+			# (выгрузили ЛИБО потеряли) — обратно к обычным делам.
+			if _cargo == null or not _cargo.is_loaded() or not is_instance_valid(_own_base_zone):
 				state = State.IDLE
 				_clear_stale_nav_target_flags()
 			else:
 				_drive_to_point(delta, _own_base_zone.global_position, waypoint_reach_dist)
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.EXTRACT_RUN:
+			# Рейс на вывоз. Порожний едет на свой склад (там подберёт ровно один ящик — правило в
+			# cargo_hold.gd), гружёный — на объявленную точку выхода. Цель пересчитывается каждый
+			# кадр ровно потому, что она МЕНЯЕТСЯ в середине рейса, в момент подбора.
+			var dest: Node3D = _extraction_run_destination()
+			if dest == null:
+				state = State.IDLE  # окно закрылось / точки нет — рейс отменяется
+				_clear_stale_nav_target_flags()
+			else:
+				_drive_to_point(delta, dest.global_position, waypoint_reach_dist)
+			_wander(delta, true)
+			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
+		State.FARM_NODE:
+			# Добыча: подъехать к кубу на дальность огня и расстрелять его. Что внутри — неизвестно
+			# (концепт §6), поэтому никакой проверки «а есть ли там лут» здесь нет и быть не должно.
+			# Куб исчез (развалился — наш выстрел или чужой) — выбираем следующий.
+			if _cargo != null and _cargo.is_full():
+				state = State.IDLE
+				_clear_stale_nav_target_flags()
+			elif not is_instance_valid(_farm_target):
+				var next_node: Node3D = _nearest_farm_node()
+				if next_node == null:
+					state = State.IDLE
+					_clear_stale_nav_target_flags()
+				else:
+					_enter_farm_node(next_node)
+			else:
+				if _body.global_position.distance_to(_farm_target.global_position) > fire_range * attack_reach_frac_min:
+					_drive_to_point(delta, _farm_target.global_position, waypoint_reach_dist)
+				else:
+					_movement.ai_move_input = 0.0
+					_movement.ai_turn_input = 0.0
+				# Наводка/выстрел — тем же общим кодом, что и по танку: он корректно работает по
+				# статичной цели (куб не CharacterBody3D, упреждение не применяется).
+				_aim_and_fire(_farm_target)
 		State.MORTAR_ATTACK:
 			_process_mortar_attack(delta)
 		State.DISGUISE_APPROACH:
@@ -2079,15 +2116,36 @@ func _think() -> void:
 				_enter_attack(seen_prep)
 		return
 
-	# [РЕЖИМ CONTAINER_EXTRACTION] Несём контейнер — единственная задача довезти его до своей базы:
-	# в бой не ввязываемся (тот же принцип, что у атакующего с мортирой), но отстреливаемся снапфайром
-	# по замеченному врагу. Проверка ВЫШЕ гейта «нет боезапаса» ниже: доставка ценнее пополнения,
-	# ехать на базу надо и безоружным.
-	if _is_extraction_mode() and _carrying_container():
-		if state != State.CONTAINER_DELIVER:
-			_enter_container_deliver()
-		_snap_fire_target = _scan_for_target() if enemy_reaction_enabled else null
-		return
+	# [РЕЖИМ EXTRACTION] Экономический цикл важнее обычного боя и проверяется ВЫШЕ гейта «нет
+	# боезапаса»: везти ценность надо и безоружным, а бросать рейс ради патронов — значит потерять
+	# груз. В бой гружёный не ввязывается, только отстреливается снапфайром (концепт §5: гружёный —
+	# это медленная заметная мишень, его дело прорваться или бросить груз).
+	if _is_extraction_mode():
+		var mgr: Node = _extraction_manager()
+		# Реагируем на ОБЪЯВЛЕНИЕ точки, а не на открытие окна: точка объявляется заранее ровно затем,
+		# чтобы успеть выдвинуться (концепт §8). Ждать открытия — значит гарантированно не успеть:
+		# рейс «склад -> выход» на этой карте занимает больше половины окна. Банкует всё равно только
+		# ОТКРЫТОЕ окно — проверка на стороне ExtractionManager, здесь только маршрут.
+		var window_open: bool = mgr != null and mgr.window_state != mgr.WindowState.CLOSED \
+			and mgr.active_point != null
+		if _carrying_loot():
+			# Окно открыто — везём на выход (ценность фиксируется навсегда); иначе на свой склад,
+			# где она начнёт дозревать.
+			var want: int = State.EXTRACT_RUN if window_open else State.LOOT_DELIVER
+			if state != want:
+				if window_open:
+					_enter_extract_run()
+				else:
+					_enter_loot_deliver()
+			_snap_fire_target = _scan_for_target() if enemy_reaction_enabled else null
+			return
+		if window_open and _own_warehouse_has_loot():
+			# Порожний в открытое окно — на свой склад за ящиком. Взять можно ровно один и только в
+			# пустой трюм: правило в cargo_hold.gd, здесь только маршрут.
+			if state != State.EXTRACT_RUN:
+				_enter_extract_run()
+			_snap_fire_target = _scan_for_target() if enemy_reaction_enabled else null
+			return
 
 	# [ИСПРАВЛЕНО, живьём] Пустой боезапас — драться нечем, ПОЛНОСТЬЮ пропускаем сканирование/
 	# ATTACK, пока не подберём патроны. Не только в момент, когда патроны кончились (см.
@@ -2127,7 +2185,7 @@ func _think() -> void:
 	if _try_enter_priority_mortar_attack():
 		return
 
-	# [РЕЖИМ CONTAINER_EXTRACTION] Вражеский носитель контейнера — приоритетная цель, выше любых
+	# [РЕЖИМ EXTRACTION] Вражеский носитель контейнера — приоритетная цель, выше любых
 	# мирных поручений ниже (тот же приоритет, что мортирщик в TARGET_OBJECTIVE). Работает для ОБЕИХ
 	# сторон: ролей «атака/оборона» в этом режиме нет, обе команды и добывают, и мешают.
 	if _is_extraction_mode() and _try_enter_priority_carrier_attack():
@@ -2163,7 +2221,7 @@ func _think() -> void:
 	# (не проходят через _ensure_home_state(), см. её exception-guard) — ранний return их не портит.
 	if state == State.SEARCH or state == State.AMMO_SEEK or state == State.AMMO_RETRIEVE \
 			or state == State.AMMO_WAIT or state == State.MOD_SEEK or state == State.MOD_RETRIEVE \
-			or state == State.CONTAINER_SEEK:
+			or state == State.LOOT_SEEK or state == State.FARM_NODE:
 		_snap_fire_target = _scan_for_target()
 		return
 	_snap_fire_target = null
@@ -2647,7 +2705,8 @@ func _ensure_home_state() -> void:
 			or state == State.MOD_SEEK or state == State.MOD_RETRIEVE or state == State.MORTAR_ATTACK \
 			or state == State.DISGUISE or state == State.DISGUISE_PREP or state == State.DISGUISE_APPROACH \
 			or state == State.OBJECTIVE_CHECK \
-			or state == State.CONTAINER_SEEK or state == State.CONTAINER_DELIVER:
+			or state == State.LOOT_SEEK or state == State.LOOT_DELIVER \
+			or state == State.EXTRACT_RUN or state == State.FARM_NODE:
 		return
 	var desired: State
 	# Вынесены сюда (были объявлены прямо перед проверкой ALERT) — GDScript не разрешает `var`
@@ -2684,11 +2743,18 @@ func _ensure_home_state() -> void:
 		desired = State.AMMO_RETRIEVE  # конкретный ящик под рукой — не гонять в случайную зону вслепую
 	elif not _ammo_zones.is_empty() and _ammo.current_ammo == 1:
 		desired = State.AMMO_SEEK
-	# [РЕЖИМ CONTAINER_EXTRACTION] Слот свободен и на карте есть неразобранный контейнер — едем за
+	# [РЕЖИМ EXTRACTION] Слот свободен и на карте есть неразобранный контейнер — едем за
 	# ним. НИЖЕ ammo-веток: безоружный добытчик бесполезен, сначала патроны. Ветки objective/ALERT
 	# ниже в этом режиме и так спят (карта без Objective, _alert_zone == null).
-	elif _is_extraction_mode() and _mod.can_pick_up() and _nearest_free_container() != null:
-		desired = State.CONTAINER_SEEK
+	# [РЕЖИМ EXTRACTION] Порожний: сперва подобрать то, что уже лежит (чужая работа даром), и лишь
+	# потом фармить самому. НИЖЕ ammo-веток: безоружный добытчик бесполезен, сначала патроны.
+	elif _is_extraction_mode() and _cargo != null and not _cargo.is_full() and _nearest_free_loot() != null:
+		desired = State.LOOT_SEEK
+	# Ничего не лежит — добываем сами: расстреливаем ближайший куб. Что в нём, бот не знает (узел
+	# неотличим от укрытия, концепт §6) — это ставка, и она тратит боезапас.
+	elif _is_extraction_mode() and _cargo != null and not _cargo.is_full() \
+			and _ammo.current_ammo > ammo_pickup_scan_threshold and _nearest_farm_node() != null:
+		desired = State.FARM_NODE
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
 	# окружности, а если objective не получает урон 10 сек с момента последнего выстрела"] Ранняя
 	# версия (гео-проверка "враг физически в круге") оказалась СЛИШКОМ строгой КАК ЕДИНСТВЕННОЕ
@@ -2796,7 +2862,8 @@ func _ensure_home_state() -> void:
 		var entering_ammo_retrieve_direct: bool = desired == State.AMMO_RETRIEVE and ammo_crate_nearby != null
 		var entering_mod_seek: bool = desired == State.MOD_SEEK
 		var entering_mod_retrieve: bool = desired == State.MOD_RETRIEVE
-		var entering_container_seek: bool = desired == State.CONTAINER_SEEK
+		var entering_loot_seek: bool = desired == State.LOOT_SEEK
+		var entering_farm: bool = desired == State.FARM_NODE
 		state = desired
 		# _look_yaw/_wander_holding намеренно НЕ сбрасываются — блуждание продолжается с
 		# текущего угла на любом переходе.
@@ -2832,43 +2899,55 @@ func _ensure_home_state() -> void:
 			_mod_target_crate = _visible_mod_crate()
 			if _mod_target_crate != null and _nav_agent.is_inside_tree():
 				_nav_agent.target_position = _mod_target_crate.global_position
-		if entering_container_seek:
-			_pick_container_target()
+		if entering_loot_seek:
+			_pick_loot_target()
+		if entering_farm:
+			var farm_node: Node3D = _nearest_farm_node()
+			if farm_node != null:
+				_enter_farm_node(farm_node)
 
-## --- Режим CONTAINER_EXTRACTION: помощники (State.CONTAINER_SEEK/CONTAINER_DELIVER) ------------
-## Экстракшен-цикл бота целиком: пусто в слоте и есть свободный контейнер → CONTAINER_SEEK (едем к
-## конкретному контейнеру, подбор физический); контейнер в слоте → CONTAINER_DELIVER (везём в круг
-## своей базы, сдачу засчитывает container_manager.gd); вражеский носитель в поле зрения →
-## приоритетная атака. Ролей ACHIEVER/KILLER этот цикл не различает: в режиме нет сторон
-## «атака/оборона», обе команды делают одно и то же.
+## --- Режим EXTRACTION: помощники (LOOT_SEEK / LOOT_DELIVER / EXTRACT_RUN / FARM_NODE) ----------
+## Экономический цикл бота целиком, без отдельной роли: ролей «атака/оборона» в режиме нет, обе
+## команды делают одно и то же (концепт §9 — стратегия эмерджентна, из суммы личных решений).
+##   FARM_NODE    — расстрелять куб-укрытие: ставка «там ресурс / пусто / враг» (концепт §6);
+##   LOOT_SEEK    — ехать к лежащему ящику (в т.ч. к чужому складу — это и есть рейд);
+##   LOOT_DELIVER — везти добытое на свой склад, где оно начнёт дозревать;
+##   EXTRACT_RUN  — окно открыто: взять со склада и довезти до объявленной точки выхода.
+## Груз запрещает маскировку и боту тоже (cargo_hold.gd) — они под той же связкой, что и игрок.
 
-## Карта играет режим экстракшена. Читаем MatchState (его проставляет корневой _ready() карты, тот
-## идёт ДО ленивой _initialize() бота), а не «есть ли контейнеры на карте»: контейнеры кончаются по
-## ходу раунда, режим — свойство карты.
 func _is_extraction_mode() -> bool:
-	return MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION
+	return MatchState.match_mode == MatchState.Mode.EXTRACTION
 
-## В слоте лежит контейнер (а не мортира и не пусто). Сравнение по идентичности ресурса — см.
-## ContainerMod в шапке файла.
-func _carrying_container() -> bool:
-	return _mod.current_mod == ContainerMod
+## Трюм гружён. Единственный признак «везу ценность» — ни слот модификации, ни отдельные флаги.
+func _carrying_loot() -> bool:
+	return _cargo != null and _cargo.is_loaded()
 
-## Круг спавна своей команды = точка сдачи. Тот же рекурсивный поиск по имени, что у
-## respawn_controller.gd._pick_spawn_zone() — единственная существующая в проекте конвенция «зона
-## своей команды», заводить под доставку второй механизм незачем.
+## Круг спавна своей команды = свой СКЛАД (и точка выгрузки, и место, откуда берут на вывоз). Тот
+## же рекурсивный поиск по имени, что у respawn_controller.gd._pick_spawn_zone().
 func _find_own_base_zone() -> void:
 	var zone_name: String = "AttackSpawnZone" if _body.is_attacker() else "DefenseSpawnZone"
 	_own_base_zone = get_tree().current_scene.find_child(zone_name, true, false) as Node3D
 
-## Ближайший СВОБОДНЫЙ контейнер: лежит на карте и не выбран целью другим живым ботом своей команды.
-## Дистанция ПО ПРЯМОЙ, не длина пути по навмешу: путь пришлось бы строить для каждого контейнера
-## каждый think-тик, а ошибка выбора здесь дёшева — доехав, бот просто возьмёт следующий.
-func _nearest_free_container() -> Node:
+func _extraction_manager() -> Node:
+	return get_tree().get_first_node_in_group("extraction_manager")
+
+## Ближайший ящик, за которым имеет смысл ехать. Свободные (`owner_team < 0`) — всегда; лежащие на
+## ЧУЖОМ складе — только если бот их реально ВИДИТ: рейд обязан быть решением по добытой разведкой
+## информации, а не всеведением (концепт §7). Свой склад сюда не попадает — оттуда берут только в
+## окно эвакуации, отдельной веткой.
+## Дистанция по прямой, не длина пути: путь пришлось бы строить для каждого ящика каждый тик, а
+## ошибка выбора дёшева — доехав, бот возьмёт следующий.
+func _nearest_free_loot() -> Node:
 	var best: Node = null
 	var best_dist: float = INF
-	for c in get_tree().get_nodes_in_group("containers"):
-		if not is_instance_valid(c) or _container_taken_by_other_bot(c):
+	for c in get_tree().get_nodes_in_group("loot_crates"):
+		if not is_instance_valid(c) or _loot_taken_by_other_bot(c):
 			continue
+		var owner: int = int(c.owner_team)
+		if owner == int(_body.team):
+			continue  # свой склад — не «добыча», его разбирают только на вывоз
+		if owner >= 0 and not _point_in_view(c.global_position):
+			continue  # чужой склад — только то, что видно своими глазами
 		var d: float = _body.global_position.distance_to(c.global_position)
 		if d < best_dist:
 			best_dist = d
@@ -2876,47 +2955,52 @@ func _nearest_free_container() -> Node:
 	return best
 
 ## Тот же приём координации, что _zone_taken_by_other_bot() для мортирных зон: живой бот СВОЕЙ
-## команды, уже едущий за этим контейнером, «занимает» его — иначе оба уезжают за одним и тем же, а
-## остальные контейнеры стоят нетронутыми. Игрок в координации не участвует (у него нет
-## AI-состояния) — та же осознанная фикция «свои в курсе», что и у мортиры.
-func _container_taken_by_other_bot(c: Node) -> bool:
+## команды, уже едущий за этим ящиком, «занимает» его — иначе оба уезжают за одним и тем же, а
+## остальные лежат нетронутыми. Игрок в координации не участвует (у него нет AI-состояния) — та же
+## осознанная фикция «свои в курсе», что и у мортиры.
+func _loot_taken_by_other_bot(c: Node) -> bool:
+	var my_dist: float = _body.global_position.distance_to(c.global_position)
 	for other in get_tree().get_nodes_in_group("tanks"):
 		if other == _body or not is_instance_valid(other) or other.team != _body.team:
 			continue
 		var brain: Node = other.get_node_or_null("TankAIController")
 		if brain == null or not brain.enabled:
 			continue
-		if brain.state == State.CONTAINER_SEEK and brain._container_target == c:
+		if brain.state != State.LOOT_SEEK or brain._loot_target != c:
+			continue
+		# Заявка достаётся БЛИЖАЙШЕМУ, а не тому, кто успел первым: иначе оба бота едут за одним
+		# ящиком через всю карту, и остальные лежат нетронутыми. Ничья по instance_id — чтобы
+		# решение было устойчивым и оба не перевыбирали цель одновременно (иначе трэшинг).
+		var his_dist: float = other.global_position.distance_to(c.global_position)
+		if his_dist < my_dist or (is_equal_approx(his_dist, my_dist) and other.get_instance_id() < _body.get_instance_id()):
 			return true
 	return false
 
-## Выбрать цель и навести на неё nav-агента. false — свободных контейнеров не осталось (вызывающий
-## возвращает бота к обычным делам).
-func _pick_container_target() -> bool:
-	_container_target = _nearest_free_container()
-	if _container_target == null:
+func _pick_loot_target() -> bool:
+	_loot_target = _nearest_free_loot()
+	if _loot_target == null:
 		return false
 	if _nav_agent.is_inside_tree():
-		_nav_agent.target_position = _container_target.global_position
+		_nav_agent.target_position = _loot_target.global_position
 	return true
 
-## Вражеский танк с контейнером в слоте. Сбить носителя дешевле, чем искать контейнеры по карте:
-## контейнер выпадет на месте гибели (container_manager.gd) — фактически это перехват уже
-## проделанной противником работы.
-func _scan_for_container_carrier() -> Node:
+## Вражеский танк с грузом. Сбить носителя дешевле, чем искать добычу по карте: трюм рассыплется на
+## месте гибели (концепт §10) — это перехват уже проделанной противником работы, и ровно он даёт
+## отстающей команде роль хищника.
+func _scan_for_loot_carrier() -> Node:
 	for other in get_tree().get_nodes_in_group("tanks"):
 		if other == _body or not is_instance_valid(other) or other.team == _body.team:
 			continue
 		if not _can_see(other):
 			continue
-		var enemy_mod: Node = other.get_node_or_null("ModificationController")
-		if enemy_mod != null and enemy_mod.current_mod == ContainerMod:
+		var hold: Node = other.get_node_or_null("CargoHold")
+		if hold != null and hold.is_loaded():
 			return other
 	return null
 
 ## true — приоритетная цель найдена и вход в бой произошёл; вызывающий обязан немедленно вернуться.
 func _try_enter_priority_carrier_attack() -> bool:
-	var carrier: Node = _scan_for_container_carrier()
+	var carrier: Node = _scan_for_loot_carrier()
 	if carrier == null:
 		return false
 	# Пишем ДО входа в бой — та же причина, что в _try_enter_priority_mortar_attack(): обычный блок
@@ -2928,17 +3012,67 @@ func _try_enter_priority_carrier_attack() -> bool:
 		_enter_attack(carrier)
 	return true
 
-## Переход в доставку. Сбрасываем все три driving-флага — по той же причине, что и любой другой
-## переход домашнего состояния (см. комментарий в _ensure_home_state()): иначе nav-цель осталась бы
-## от прерванного PATROL/HUNT и бот крутился бы на месте.
-func _enter_container_deliver() -> void:
-	state = State.CONTAINER_DELIVER
-	_container_target = null
+## Переходы. Все сбрасывают три driving-флага по той же причине, что и любой другой переход
+## домашнего состояния (см. комментарий в _ensure_home_state()): иначе nav-цель осталась бы от
+## прерванного PATROL/HUNT и бот крутился бы на месте.
+func _clear_drive_flags() -> void:
 	_has_waypoint_target = false
 	_has_hunt_target = false
 	_has_alert_target = false
+
+func _enter_loot_deliver() -> void:
+	state = State.LOOT_DELIVER
+	_loot_target = null
+	_clear_drive_flags()
 	if is_instance_valid(_own_base_zone) and _nav_agent.is_inside_tree():
 		_nav_agent.target_position = _own_base_zone.global_position
+
+## Рейс на вывоз. Гружёный едет на точку выхода; порожний — сперва на свой склад за ящиком (взять
+## можно ровно один и только в пустой трюм — правило живёт в cargo_hold.gd).
+func _enter_extract_run() -> void:
+	state = State.EXTRACT_RUN
+	_loot_target = null
+	_clear_drive_flags()
+	var dest: Node3D = _extraction_run_destination()
+	if dest != null and _nav_agent.is_inside_tree():
+		_nav_agent.target_position = dest.global_position
+
+func _extraction_run_destination() -> Node3D:
+	var mgr: Node = _extraction_manager()
+	if mgr == null:
+		return null
+	if _carrying_loot():
+		return mgr.active_point as Node3D
+	return _own_base_zone
+
+## Есть ли на своём складе что вывозить — иначе рейс бессмысленен.
+func _own_warehouse_has_loot() -> bool:
+	for c in get_tree().get_nodes_in_group("loot_crates"):
+		if is_instance_valid(c) and int(c.owner_team) == int(_body.team):
+			return true
+	return false
+
+## Куб, по которому имеет смысл выстрелить. Бот НЕ знает, где лут (в этом весь смысл — узел
+## неотличим от укрытия, концепт §6): он просто выбирает ближайший неразрушенный куб в пределах
+## дальности огня. Промахи и пустые кубы — честная цена ставки, и она тратит боезапас.
+func _nearest_farm_node() -> Node3D:
+	var best: Node3D = null
+	var best_dist: float = INF
+	for o in get_tree().get_nodes_in_group("obstacles"):
+		if not is_instance_valid(o) or not (o is Node3D):
+			continue
+		var d: float = _body.global_position.distance_to((o as Node3D).global_position)
+		if d < best_dist and d <= fire_range:
+			best_dist = d
+			best = o as Node3D
+	return best
+
+func _enter_farm_node(node: Node3D) -> void:
+	state = State.FARM_NODE
+	_farm_target = node
+	_clear_drive_flags()
+	if _nav_agent.is_inside_tree():
+		_nav_agent.target_position = node.global_position
 
 ## --- Модификации: помощники (см. заголовок файла, State.MOD_*/MORTAR_ATTACK) --------------------
 
@@ -3267,8 +3401,8 @@ func _on_respawned() -> void:
 	_mod_target_crate = null
 	_mod_zone = null
 	# Заявка на контейнер снимается вместе со старой жизнью — иначе другой бот команды продолжал бы
-	# считать этот контейнер занятым (см. _container_taken_by_other_bot).
-	_container_target = null
+	# считать этот контейнер занятым (см. _loot_taken_by_other_bot).
+	_loot_target = null
 	_mortar_target_node = null
 	_mortar_prep_timer = 0.0
 	_current_hide_zone = null  # новая жизнь без старой заявки на hide-зону (координация ботов)
@@ -3334,7 +3468,7 @@ func _on_target_lost(force_pursue: bool = false) -> void:
 func _is_resumable_task_state(s: int) -> bool:
 	return s == State.MOD_SEEK or s == State.MOD_RETRIEVE \
 			or s == State.AMMO_SEEK or s == State.AMMO_RETRIEVE or s == State.AMMO_WAIT \
-			or s == State.CONTAINER_SEEK
+			or s == State.LOOT_SEEK or s == State.FARM_NODE
 
 ## [ДОБАВЛЕНО, по прямому запросу — "бот поехал за мортирой, наткнулся на противника в зоне
 ## сброса, убил его, но мортиру так и не взял — ушёл патрулировать вместо этого"] Попытка вернуться
@@ -3375,13 +3509,13 @@ func _try_resume_pre_combat_state() -> bool:
 				state = State.AMMO_RETRIEVE
 				_nav_agent.target_position = _ammo_target_crate.global_position
 				return true
-		State.CONTAINER_SEEK:
+		State.LOOT_SEEK:
 			# Контейнер могли подобрать, пока шёл бой — тогда поручение неактуально, падаем в обычную
 			# _ensure_home_state() (та при необходимости выберет новый).
-			if _mod.can_pick_up() and is_instance_valid(_container_target) \
-					and not _container_taken_by_other_bot(_container_target):
-				state = State.CONTAINER_SEEK
-				_nav_agent.target_position = _container_target.global_position
+			if _mod.can_pick_up() and is_instance_valid(_loot_target) \
+					and not _loot_taken_by_other_bot(_loot_target):
+				state = State.LOOT_SEEK
+				_nav_agent.target_position = _loot_target.global_position
 				return true
 		State.AMMO_WAIT:
 			if is_instance_valid(_ammo_zone):
@@ -4092,7 +4226,7 @@ func _drive_to_point(delta: float, target_pos: Vector3, reach_dist: float) -> bo
 	# [ИСПРАВЛЕНО] Одной XZ-дистанции мало на многоуровневой карте: бот, стоящий ЭТАЖОМ НИЖЕ ровно
 	# под целью (под столом-базой кухни проходит открытый пол), давал to_target.length() ≈ 0 и
 	# «приезжал», ни разу к ней не поднявшись. Дальше движение останавливалось, а стейт вроде
-	# CONTAINER_DELIVER самоуправляем и сам себя не пересчитывает — носитель контейнера мог встать
+	# LOOT_DELIVER самоуправляем и сам себя не пересчитывает — носитель контейнера мог встать
 	# под собственной базой навсегда. На плоских картах разница высот ~0, поведение не меняется.
 	var height_diff: float = absf(to_target.y)
 	to_target.y = 0.0
@@ -5097,13 +5231,23 @@ func _update_brain_debug_label() -> void:
 			var _dt: Node = _state_machine.get_node_or_null("DisguiseTimer")
 			var _scenario_tag: String = " [S3 ambush]" if _is_s3_ambush else ""
 			lines.append("HIDDEN%s — %.1fs left" % [_scenario_tag, _dt.time_left if _dt != null else 0.0])
-		State.CONTAINER_SEEK:
-			if is_instance_valid(_container_target):
-				lines.append("container: %.1fm" % _body.global_position.distance_to(_container_target.global_position))
-			else:
-				lines.append("container: none free")
+		State.EXTRACT_RUN:
+			var dst: Node3D = _extraction_run_destination()
+			lines.append("extract run -> %s" % (String(dst.name) if dst != null else "нет точки"))
 			_append_nav_debug_lines(lines)
-		State.CONTAINER_DELIVER:
+		State.FARM_NODE:
+			if is_instance_valid(_farm_target):
+				lines.append("farming node: %.1fm" % _body.global_position.distance_to(_farm_target.global_position))
+			else:
+				lines.append("farming: нет цели")
+			_append_nav_debug_lines(lines)
+		State.LOOT_SEEK:
+			if is_instance_valid(_loot_target):
+				lines.append("loot: %.1fm" % _body.global_position.distance_to(_loot_target.global_position))
+			else:
+				lines.append("loot: none free")
+			_append_nav_debug_lines(lines)
+		State.LOOT_DELIVER:
 			if is_instance_valid(_own_base_zone):
 				lines.append("delivering → base (%.1fm)" % _body.global_position.distance_to(_own_base_zone.global_position))
 			_append_nav_debug_lines(lines)

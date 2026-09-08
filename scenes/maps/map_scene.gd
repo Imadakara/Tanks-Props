@@ -32,7 +32,7 @@ extends Node3D
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const MatchManagerScript := preload("res://scenes/main/match_manager.gd")
 const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_state.gd")
-const ContainerManagerScript := preload("res://scenes/main/container_manager.gd")
+const ExtractionManagerScript := preload("res://scenes/main/extraction_manager.gd")
 const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obstacle_placer.gd")
 
 ## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TargetObjectiveMap.tscn` = 0,
@@ -43,7 +43,7 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 ## каждый раз вырезал строку `match_mode = 0` из TargetObjectiveMap.tscn (равно дефолту → не
 ## пишется), а пропавший `match_mode` молча читается как TARGET_OBJECTIVE — на карте, которой
 ## нужен TEAM_ARENA, это тихая поломка. Проверка на -1 — в _setup_match_context().
-@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA", "CONTAINER_EXTRACTION") var match_mode: int = -1
+@export_enum("TARGET_OBJECTIVE", "TEAM_ARENA", "EXTRACTION") var match_mode: int = -1
 
 ## Опция карты: наступает ли финальная стадия (доп. время + продолжающийся сброс ящиков), когда
 ## основное время раунда вышло, а у всех живых танков кончился боезапас. Условие/логику см.
@@ -88,7 +88,7 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 @onready var _alert_zone: Node3D = find_child("ObjectiveAlertZone", true, false)
 
 var _objective_health: Node = null
-var _container_manager: Node = null  # только в режиме CONTAINER_EXTRACTION, иначе null
+var _extraction_manager: Node = null  # только в режиме EXTRACTION, иначе null
 var _objective_toggle_button: Button
 var _invincibility_toggle_button: Button
 var _ignore_player_toggle_button: Button
@@ -208,7 +208,7 @@ func _build_map_borders() -> void:
 ## 0/1/2 теперь НЕ-дефолтны, редактор их не режет; -1 здесь = реальная ошибка конфигурации карты.
 func _apply_match_mode_to_state() -> void:
 	if match_mode < 0:
-		push_error("map_scene: match_mode не задан на корне %s — выставь в .tscn (0=TARGET_OBJECTIVE, 1=TEAM_ARENA, 2=CONTAINER_EXTRACTION). Фолбэк на TARGET_OBJECTIVE." % scene_file_path)
+		push_error("map_scene: match_mode не задан на корне %s — выставь в .tscn (0=TARGET_OBJECTIVE, 1=TEAM_ARENA, 2=EXTRACTION). Фолбэк на TARGET_OBJECTIVE." % scene_file_path)
 		match_mode = MatchState.Mode.TARGET_OBJECTIVE
 	MatchState.match_mode = match_mode
 	# Формат матча — свойство режима, не общая константа (экстракшен — один раунд, остальные —
@@ -340,18 +340,19 @@ func _setup_match_context() -> void:
 	var round_sec: float = GameConfig.round_timer_sec
 	if match_mode == MatchState.Mode.TEAM_ARENA:
 		round_sec = GameConfig.team_arena_round_sec
-	elif match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
-		round_sec = GameConfig.container_round_sec
+	elif match_mode == MatchState.Mode.EXTRACTION:
+		round_sec = GameConfig.extraction_round_sec
 
-	# Правила экстракшена (раскладка контейнеров, доставка на базу, выброс при гибели носителя) —
-	# отдельный менеджер, заводится ДО MatchManager: тот подписывается на его all_delivered, чтобы
-	# закрыть раунд досрочно. Тот же паттерн «узел из кода в корне сцены», что у ScoreManager.
-	if match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
-		_container_manager = Node.new()
-		_container_manager.name = "ContainerManager"
-		_container_manager.set_script(ContainerManagerScript)
-		add_child(_container_manager)
-		_container_manager.setup()
+	# Правила режима EXTRACTION целиком (раздача добычи по кубам, склады, окна эвакуации, банк,
+	# россыпь трюма при гибели) — отдельный менеджер. Тот же паттерн «узел из кода в корне сцены»,
+	# что у ScoreManager, и тот же порядок: после спавна состава, до MatchManager, который читает у
+	# него счёт при подведении итога.
+	if match_mode == MatchState.Mode.EXTRACTION:
+		_extraction_manager = Node.new()
+		_extraction_manager.name = "ExtractionManager"
+		_extraction_manager.set_script(ExtractionManagerScript)
+		add_child(_extraction_manager)
+		_extraction_manager.setup()
 
 	# Полноценный постраундовый цикл (см. match_manager.gd): TARGET_OBJECTIVE — уничтожение цели →
 	# победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель по убийствам; плюс
@@ -361,7 +362,7 @@ func _setup_match_context() -> void:
 	match_manager.name = "MatchManager"
 	match_manager.set_script(MatchManagerScript)
 	add_child(match_manager)
-	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled, _container_manager)
+	match_manager.setup(match_mode, round_sec, score_manager, objective_health, final_stage_enabled, _extraction_manager)
 	match_manager.round_ended.connect(_on_round_ended_teardown)
 
 ## Конец раунда зафиксирован (чья-то победа) — в рамках MVP «замораживаем» поле: глушим спавнеры
@@ -372,10 +373,10 @@ func _setup_match_context() -> void:
 ## MatchManager._end_round). Порядок в цикле: halt() РАНЬШЕ force_destroy() того же танка, иначе
 ## RespawnController._on_destroyed успеет запустить таймер респавна.
 func _on_round_ended_teardown(_winner: String) -> void:
-	# ПЕРЕД force_destroy() ниже: иначе «заморозка поля» высыпала бы контейнеры из слотов всех
-	# погибших от неё носителей (см. container_manager.gd._on_tank_destroyed).
-	if _container_manager != null:
-		_container_manager.halt()
+	# ПЕРЕД force_destroy() ниже: иначе «заморозка поля» на экран результата рассыпала бы трюмы
+	# всех погибших от неё носителей (см. extraction_manager.gd._on_tank_destroyed).
+	if _extraction_manager != null:
+		_extraction_manager.halt()
 	$TeamSpawner.halt()
 	for button in _bot_spawn_buttons:
 		if is_instance_valid(button):

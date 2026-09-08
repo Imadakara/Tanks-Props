@@ -92,8 +92,9 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   compares against), so a loaded tank never trips the assist by falling short of a figure it was
   never ordered to make. It is a **limit**, not an instantaneous speed — `acceleration` still ramps
   to it, so picking up or handing over a load mid-drive produces no jerk. Stacks multiplicatively
-  with the slope multiplier. Only carrier today: the CONTAINER_EXTRACTION container (0.7 ⇒ 30%
-  slower), which is what forces a carrier to want an escort and to use disguise.
+  with the slope multiplier, and with `CargoHold.speed_multiplier()` — the EXTRACTION cargo bay is
+  the load that actually bites today (each crate multiplies by `cargo_speed_penalty_per_lot`).
+  No `Modification` sets a weight at present; that field stays as the generic hook.
   It also has a **step-up assist** (`step_up_*` exports): after `move_and_slide()`, if the tank
   advanced far less than commanded and a low near-vertical face is dead ahead with walkable ground
   ≤ `step_up_max` (0.35) on top, lift the body onto it — the box collider's chamfer only clears
@@ -216,9 +217,8 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   `scenes/modifications/modification_behavior.gd` (`extends Node3D`, no `class_name`, all methods
   no-op). `weapon_controller`/`tank_movement`/`hud`/`tank_ai_controller` all talk to this contract —
   no `id == &"mortar"` checks. A `Modification` with `behavior_scene = null` is legitimate and
-  used: `scenes/modifications/container.tres` is exactly that — the CONTAINER_EXTRACTION container
-  occupies the slot and does nothing else, which is what gives "no other mod while carrying" for
-  free and keeps `ai_usable()` false so a carrier isn't mistaken for a mortar carrier.
+  used, though nothing ships one right now: the EXTRACTION cargo moved out of the slot into its own
+  `CargoHold` component when the loop stopped being CTF.
   One contract entry deliberately reads the **`Modification` resource**, not the behavior node:
   `carry_speed_multiplier()` (the mod's weight). It has to work for passive mods, which have no
   behavior node to ask — hence the number lives on the `.tres`, the one documented exception to
@@ -318,7 +318,7 @@ only runs on the first `_physics_process()` tick, well after every sibling's `_r
 `get_tree().reload_current_scene()`, where ordinary `@export` fields on scene nodes don't).
 `MatchState` holds: `player_team: int` (the player's *side* this round, flipped by the HUD restart
 button — every map has a `TeamSpawner` node, see "Spawn system" below); `match_mode: Mode
-{TARGET_OBJECTIVE, TEAM_ARENA, CONTAINER_EXTRACTION}` — a **per-map setting**, not runtime detection: `map_scene.gd` has
+{TARGET_OBJECTIVE, TEAM_ARENA, EXTRACTION}` — a **per-map setting**, not runtime detection: `map_scene.gd` has
 `@export_enum var match_mode` set in each map's own scene file; the HUD reads it *lazily* since its
 own `_ready()` precedes the root's; and a round-series score (`series_wins_attack`/
 `series_wins_defense`, `total_rounds = 3`) tracked **by side, not by "the player's team"** —
@@ -472,20 +472,23 @@ circle sits on the ground), freed together with the objective and simply absent 
 (team 0) and **Синие** (team 1) — never "attack"/"defense"; the HUD `TeamLabel`, score line and
 result screen all say Красные/Синие in this mode (in TARGET_OBJECTIVE they say Атака/Оборона).
 
-**CONTAINER_EXTRACTION** (`KitchenMap.tscn`, mode 2) — full detail:
-`Tank_Prop_Hunt_Container_Extraction.md`. Five white `Container.tscn` pickups lie on the map; a
-container rides in the tank's **existing `ModificationController` slot** (a passive `Modification`
-with `behavior_scene = null`, so `can_pick_up()` alone enforces "no other mod while carrying" and
-`ai_usable()` stays false), is delivered by driving into your own team's `SpawnZone` circle, and
-drops at the death position when its carrier dies — capture-the-flag, not a respawning pickup.
-`ContainerManager` (node created by `map_scene.gd` like `ScoreManager`, **before** `MatchManager`,
-which subscribes to its `all_delivered`) owns layout / delivery polling / drop-on-death, and is
-`halt()`ed first in `_on_round_ended_teardown` so the result-screen freeze doesn't spill containers.
-Sides are fixed colour teams (Красные/Синие) as in TEAM_ARENA — `hud.gd._is_color_team_mode()`
-covers both. The match is a **single round** of `GameConfig.container_round_sec` (300 s):
-`MatchState.apply_mode_defaults(mode)` sets `total_rounds = 1` on every map load, so the existing
-`series_complete()` math ends the match after it; the round also ends early when all five are
-delivered. Winner = more deliveries, ties by `defense_wins_ties`.
+**EXTRACTION** (`KitchenMap.tscn`, mode 2) — design: `Tank_Prop_Hunt_Extraction_Loop_Concept.md`,
+spec: `Tank_Prop_Hunt_Extraction_Loop_TZ.md`, current state: `Tank_Prop_Hunt_Extraction_Mode.md`.
+Deliberately **not** CTF: reaching your base does not score. Value passes four states and only the
+last one counts — a loose `LootCrate` on the map ⇒ lots inside a `CargoHold` (no nodes) ⇒ a crate
+parked in your base circle, ripening toward `loot_ripe_multiplier` ⇒ **banked** by driving it into
+an open evacuation point. The round always runs its full `extraction_round_sec`; everything unbanked
+burns, so it never ends early. The load-bearing rule is `CargoHold.blocks_disguise()` — **cargo
+forbids disguise** (and slows you per crate) — which is what welds the economy to prop hunt;
+`DisguiseController`, the HUD and the bot all read that one predicate. `CargoHold.try_take()` also
+owns the "a warehouse crate goes only into an empty hold, and blocks top-up" lock, so no pickup site
+has to know it. Loot hides inside ordinary `Obstacle` cubes: every cube carries a `HealthComponent`
+and is destructible, only some hold loot, and the allocation is seeded (`MatchState.loot_seed`) — a
+loot cube is indistinguishable from an empty one and from a disguised tank, which is the whole
+point. Nodes never respawn: the map is meant to run out of cover. `ExtractionManager` (code-created
+node, like `ScoreManager`) owns allocation, deposits, ripening, window scheduling, the beacon and
+banking. A warehouse **is** the crates parked in the base circle, which is why raiding — and
+scouting a rich enemy base by eye — need no code of their own.
 
 `match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
 = 0, `TeamArenaMap` = 1, `KitchenMap` = 2). Its script default is **`-1`, a deliberate invalid sentinel**: both real
@@ -550,13 +553,13 @@ three stay per-zone, only the interval + round-end stop are centralized on the l
 via `TankAIController`'s `AMMO_SEEK`/`AMMO_RETRIEVE`/`AMMO_WAIT` states, see the Bot AI vault doc).
 Full detail: `Tank_Prop_Hunt_Ammo_Drops.md`.
 
-**Modification crates** (`TARGET_OBJECTIVE` and `CONTAINER_EXTRACTION` maps): the same drop-zone
+**Modification crates** (`TARGET_OBJECTIVE` and `EXTRACTION` maps): the same drop-zone
 leader also runs a `MortarDropTimer` that drops one **red `ModCrate`** in *every* zone
 simultaneously (not one at a random zone like ammo). A `ModCrate` fills the tank's
 `ModificationController` slot with the mortar mod when the slot is empty. Cadence is
 `GameConfig.mortar_drop_interval_sec` (30 s) in TARGET_OBJECTIVE and the rarer
-`mortar_drop_interval_container_sec` (75 s) in CONTAINER_EXTRACTION, where the slot is mainly
-wanted for the container. `TeamArenaMap.tscn` (`TEAM_ARENA`) starts no such timer. Full detail:
+`mortar_drop_interval_container_sec` (75 s) in EXTRACTION, where the mortar is meant to be an
+occasional complication rather than a staple. `TeamArenaMap.tscn` (`TEAM_ARENA`) starts no such timer. Full detail:
 `Tank_Prop_Hunt_Modifications.md`.
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`
@@ -659,20 +662,27 @@ name- or scene-structure-specific, so the same file works unmodified on any map.
 disguise only via scripted ambush scenarios (`disguise_s1/s2/s3`, roster-gated); `_can_see()` hides
 a `DISGUISED` enemy from *acquisition* but not from a bot already fighting it (`ignore_disguise`
 param — see `DisguiseController` above and `Tank_Prop_Hunt_Disguise.md` §5).
-In CONTAINER_EXTRACTION the same brain runs a container loop with no new role: carrying a container
-outranks even the out-of-ammo gate (deliver first, snap-fire only, never commit to a fight); an
-enemy *carrier* is a priority target for both sides (mirrors the mortar-carrier priority);
-`CONTAINER_SEEK` counts as a "peaceful errand" alongside `AMMO_*`/`MOD_*` (resumable after combat)
-and sits below the ammo branches in `_ensure_home_state()`. Two bots won't chase the same container
-(`_container_taken_by_other_bot`, same idiom as `_zone_taken_by_other_bot`).
-**Ledge check** (`ledge_check_enabled`, roster-gated, default off — it's a map property, and flat
-maps would just burn raycasts): the driving stack only ever probed *horizontally*, so it sees a wall
-but not the edge of a counter. A downward probe ahead now feeds both `_check_emergency_brake()` and
-`_scan_gap()`. Crucially a drop is **not** judged by height — descending a ramp is a drop too — but
-by steepness: the drop at each probe distance is compared against what a drivable slope would give
-(`dist * tan(ledge_max_slope_deg) + ledge_slack`), so ramps pass and cliffs don't. Its fan is
-deliberately narrower than the brake's, or a bot would stop mid-descent on seeing the void beside
-its own ramp. Detail: `Tank_Prop_Hunt_Container_Extraction.md` §7.1.
+In EXTRACTION the same brain runs the whole economic cycle with no new role (that mode has no sides
+— both teams do the same thing): `FARM_NODE` shoots a cover cube without knowing whether it holds
+anything, `LOOT_SEEK` drives to a crate, `LOOT_DELIVER` hauls it to the team warehouse, and
+`EXTRACT_RUN` performs the evacuation trip — empty to the warehouse for exactly one crate, then to
+the announced point. The cycle outranks even the out-of-ammo gate (value must be moved even
+unarmed), and a loaded bot never commits to a fight, only snap-fires. An enemy **carrier** is a
+priority target for both sides. Raiding needs no special code: `_nearest_free_loot()` takes loose
+crates always but enemy-warehouse crates only when the bot can actually **see** them, so a raid stays
+a decision made on scouted information. A crate claim goes to the *nearest* ally (ties by instance
+id, so two bots never re-pick in lockstep). Bots start a run on the **announcement**, not the
+opening — the lead time exists precisely so the trip can be completed. Detail:
+`Tank_Prop_Hunt_Extraction_Mode.md` §7.
+
+**Ledge check** (`ledge_check_enabled`, roster-gated, default off — it is a property of the *map*,
+and flat maps would only burn raycasts): the driving stack probes horizontally, so it sees a wall
+but not the edge of a counter. A downward probe ahead feeds both `_check_emergency_brake()` and
+`_scan_gap()`. A drop is judged by **steepness, not height** — descending a ramp is a drop too — by
+comparing the drop at each probe distance against what a drivable slope would give
+(`dist * tan(ledge_max_slope_deg) + ledge_slack`), so ramps pass and cliffs do not. Its fan is
+deliberately narrower than the brake's, or a bot would stop mid-descent on seeing the void beside its
+own ramp. Detail: `Tank_Prop_Hunt_Kitchen_Map.md`.
 
 **Full architecture reference — states, priority ladder, driving-stack internals, per-tier
 parameter tables, scene inventory — lives in the vault's Bot AI doc** (`Tank_Prop_Hunt_Bot_AI_Sandbox.md`),

@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scenes/obstacles/obstacle.gd" id="1_obst"]
+[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="2_obst_hp"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_obst"]
 resource_local_to_scene = true
@@ -24,3 +25,7 @@ shape = SubResource("BoxShape3D_obst")
 [node name="Mesh" type="MeshInstance3D" parent="."]
 material_override = SubResource("StandardMaterial3D_obst")
 mesh = SubResource("BoxMesh_obst")
+
+[node name="HealthComponent" type="Node" parent="."]
+script = ExtResource("2_obst_hp")
+max_hits = 2

@@ -1,0 +1,35 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/loot/loot_crate.gd" id="1_loot"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_loot"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_loot"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_loot"]
+resource_local_to_scene = true
+albedo_color = Color(0.45, 0.5, 0.42, 1)
+
+[node name="LootCrate" type="Area3D"]
+collision_layer = 128
+collision_mask = 2
+script = ExtResource("1_loot")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_loot")
+
+[node name="CrateMesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_loot")
+mesh = SubResource("BoxMesh_loot")
+
+[node name="ValueLabel" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+billboard = 1
+no_depth_test = true
+fixed_size = true
+pixel_size = 0.0035
+modulate = Color(1, 0.95, 0.7, 1)
+outline_size = 6
+text = "0"

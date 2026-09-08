@@ -35,12 +35,26 @@ extends StaticBody3D
 @onready var _shape: CollisionShape3D = $CollisionShape3D
 @onready var _mesh: MeshInstance3D = $Mesh
 
+## Сколько ценности выпадет при разрушении. 0 — куб пустой. НЕ `@export`: раздаётся при старте
+## матча детерминированно по зерну (`extraction_manager.gd`), а не проставляется в `.tscn` руками —
+## иначе раскладка добычи была бы одинаковой каждый матч и запоминалась игроками. Визуально лутовый
+## куб НИЧЕМ не отличается от пустого и от замаскированного танка: в этом весь смысл (концепт §6 —
+## выстрел по кубу это ставка с тремя исходами).
+var loot_value: int = 0
+
 func _ready() -> void:
 	_apply()
 	# Динамический пресет препятствий (см. map_scene.gd._apply_dynamic_obstacles /
 	# dynamic_obstacle_placer.gd) находит и убирает статические кубы карты по этой группе.
 	if not Engine.is_editor_hint():
 		add_to_group("obstacles")
+		# Куб разрушаем ВСЕГДА, независимо от режима и от наличия лута: иначе «пробный выстрел»
+		# по укрытию мгновенно выдавал бы, что это не ресурсный узел, и вся ставка обесценилась бы.
+		# Снаряд уже сам находит HealthComponent на любом теле (projectile.gd) — спец-кода не нужно.
+		var health: Node = get_node_or_null("HealthComponent")
+		if health != null:
+			health.max_hits = GameConfig.loot_node_hits
+			health.destroyed.connect(_on_destroyed)
 
 ## Sub-ресурсы в `Obstacle.tscn` помечены `resource_local_to_scene = true` — у каждого инстанса
 ## свои `BoxShape3D` / `BoxMesh` / `StandardMaterial3D`, правка `size`/`color` одного инстанса не
@@ -55,3 +69,20 @@ func _apply() -> void:
 			_mesh.mesh.size = size
 		if _mesh.material_override is StandardMaterial3D:
 			_mesh.material_override.albedo_color = color
+
+## Куб развалился. Есть лут — роняем ящик на опору ПОД кубом (на многоуровневой карте это может быть
+## столешница, а не пол, поэтому лучом вниз, а не по y=0). `free_on_destroy` у HealthComponent
+## оставлен включённым: узел исчезает сам сразу после этого сигнала, укрытий на карте становится
+## меньше — карта истощается за матч намеренно (концепт §12).
+##
+## Навмеш при этом НЕ перепекается: исчезнувший куб делает запечённую карту проходимости
+## КОНСЕРВАТИВНОЙ (боты обходят место, где уже ничего нет) — это безопасно и дёшево, в отличие от
+## перепечки на каждый разрушенный куб.
+func _on_destroyed(_killer: Node) -> void:
+	if loot_value <= 0:
+		return
+	var mgr: Node = get_tree().get_first_node_in_group("extraction_manager")
+	if mgr == null:
+		return
+	# Передаём СЕБЯ, чтобы поиск опоры не наткнулся на собственный ещё живой коллайдер.
+	mgr.spawn_loose_loot(global_position, loot_value, self)

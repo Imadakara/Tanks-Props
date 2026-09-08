@@ -29,16 +29,19 @@ the retired `Tank_Prop_Hunt_MVP_Dev_Plan.md` / `Tank_Prop_Hunt_TZ_MVP_Godot.md` 
 - `Tank_Prop_Hunt_Game_Modes.md` — **current-state reference for the game modes**
   (TARGET_OBJECTIVE / TEAM_ARENA): rules, round/series flow, HUD block, round-loop code, full map
   list. The "Game modes" section below is a summary; that doc is the detail.
-- `Tank_Prop_Hunt_Container_Extraction.md` — **current-state reference for the third mode**
-  (CONTAINER_EXTRACTION, `KitchenMap.tscn`): the 5 white containers and how they ride in the
-  modification slot, `ContainerManager` (layout / delivery / drop-on-death), the toy-scale kitchen
-  map with its six height tiers, the two new geometry prefabs (`Structure` / `ToyRamp`) and the
-  **hard-won ramp rules** (≤24° or a box tank stalls; how a ramp must meet a platform edge or the
-  navmesh silently disconnects), plus fall damage. Read it before touching that map's geometry.
-  Its §10 splits what is genuinely mode-specific (three files) from what rode on existing universal
-  systems — the reference for how cheap the *next* mode should be; §11 is the honest remaining-work
-  list for the prototype (composition is still 1×1, no carrier marker, no event feedback, bots'
-  disguise inert here, balance unplayed).
+- `Tank_Prop_Hunt_Extraction_Loop_Concept.md` — **the design doc for the current core loop**
+  (v0.3): the four states of value, why this is deliberately *not* CTF, and the single connection
+  the whole design rests on — **cargo forbids disguise**. Read it before touching anything in
+  EXTRACTION; it also states which playtest outcomes would prove the design works and which prove
+  nothing.
+- `Tank_Prop_Hunt_Extraction_Loop_TZ.md` — the implementation spec derived from that concept
+  (entities, ownership, where each rule lives, what was deleted).
+- `Tank_Prop_Hunt_Extraction_Mode.md` — **current-state reference for the EXTRACTION mode**
+  (`KitchenMap.tscn`): `LootCrate` as the single physical embodiment of value in every state,
+  `CargoHold` and the costs it imposes, destructible cover cubes with seeded hidden loot,
+  warehouses with per-crate ripening, evacuation windows, and the bot cycle. Supersedes the retired
+  `Tank_Prop_Hunt_Container_Extraction.md`, which described the deleted CTF version; that
+  document's hard-won map knowledge lives on in `Tank_Prop_Hunt_Kitchen_Map.md`.
 - `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — the single, universal bot AI (`TankAIController`), used on
   every map: states/driving stack/params.
 - `Tank_Prop_Hunt_Tank_Chassis.md` — **current-state reference for how the tank looks and reacts
@@ -214,6 +217,11 @@ root, each independently toggled player/AI by its own `is_player_controlled: boo
 - `RespawnController` — disables the tank in place on death, respawns after
   `respawn_cooldown_sec`; force-kills any tank below y = -3; `halt()` on round end stops it for
   the scene load.
+- `CargoHold` — the EXTRACTION cargo bay: holds value *as data* (no nodes) and imposes the two
+  costs that make carrying a real decision — **disguise forbidden** (`blocks_disguise()`, read by
+  `DisguiseController`, the HUD and the bot alike) and a per-crate speed penalty
+  (`speed_multiplier()`). Also owns the "one crate per warehouse trip" lock in `try_take()`, so no
+  pickup site has to know that rule.
 - `TankAIController` — the one bot brain, a dormant sibling on every instance (see its own entry).
 
 ### Scene bring-up ordering
@@ -254,13 +262,18 @@ Nearly everything is signal-driven (`state_changed`, `damaged` / `destroyed`, `a
 Three modes keyed off `MatchState.match_mode`, one map each. **TARGET_OBJECTIVE** — objective
 `HealthComponent` as an HP pool; destroyed ⇒ attack win, timer out ⇒ defense win; 180 s;
 buzzer-beater settle phase lets a lobbed mortar still count. **TEAM_ARENA** — deathmatch by
-kill count, fixed colour teams Красные/Синие, 180 s. **CONTAINER_EXTRACTION** — 5 containers
-ride the `ModificationController` slot as passive mods, CTF delivery to your own `SpawnZone`,
-single 300 s round. All three share the `map_scene.gd` round loop; match is best-of-3 by side;
+kill count, fixed colour teams Красные/Синие, 180 s. **EXTRACTION** — deliberately *not* CTF: value passes four
+states (loose ⇒ `CargoHold` ⇒ ripening in your base's warehouse ⇒ banked at a timed evacuation
+point) and only banked value scores, so the round always runs its full 300 s and the rest burns.
+The load-bearing rule is **cargo forbids disguise** and slows you (`CargoHold`) — that is what welds
+the economy to prop hunt. Loot hides in ordinary destructible `Obstacle` cubes, indistinguishable
+from empty ones and from a disguised tank. `ExtractionManager` owns loot allocation, warehouses,
+windows and banking; a warehouse is literally the crates parked in the base circle, which is why
+raiding needs no code of its own. All three share the `map_scene.gd` round loop; match is best-of-3 by side;
 side-swap **only** in TARGET_OBJECTIVE; the final stage is a per-map opt-in
 (`final_stage_enabled`, carried only by `TeamArenaMap`). Ammo + mod crates: the
 lowest-path drop-zone joins group `ammo_drop_zones` as leader and owns the timers. Full
-reference: `Tank_Prop_Hunt_Game_Modes.md` + `Tank_Prop_Hunt_Container_Extraction.md`.
+reference: `Tank_Prop_Hunt_Game_Modes.md` + `Tank_Prop_Hunt_Extraction_Mode.md`.
 
 ### Debug mode
 
@@ -274,7 +287,7 @@ also noted in `MatchState.debug_enabled`'s doc-comment and a `project` memory.
 ### `TankAIController` — the one universal bot brain
 
 `scenes/tank/tank_ai_controller.gd`, a dormant sibling on every `Tank.tscn` (player included),
-lazily self-inits on the first enabled `_physics_process()`. 21-state priority engine +
+lazily self-inits on the first enabled `_physics_process()`. 23-state priority engine +
 NavMesh driving stack (pure pursuit + emergency brake + stuck detector + gap-scan detour),
 roles `ACHIEVER` / `KILLER` (`ACHIEVER` self-degrades where there's no objective), 3 difficulty
 tiers. All lookups are group- / recursive-search based ⇒ one file, every map. Ledge check is
@@ -284,7 +297,8 @@ roster-gated (map property). Full state / priority / parameter tables:
 ### Obstacle prefab system — `scenes/obstacles/`
 
 Map geometry is prefab **instances**, nothing looked up by name. `Obstacle` (solid box, group
-`"obstacles"`, doubles as the disguise prop, **wiped by the dynamic pass**), `Structure`
+`"obstacles"`, doubles as the disguise prop **and**, in EXTRACTION, as the resource node — it carries
+a `HealthComponent`, so every cube is destructible and some hide loot; **wiped by the dynamic pass**), `Structure`
 (permanent geometry, group `"structures"`, **not** wiped — the split is load-bearing),
 `HazardZone` (impassable `Area3D`, layer 4), `ToyRamp` (the only incline primitive; place at
 the bottom and yaw). Manual NavMesh re-bake after any add / move / resize / delete.
@@ -325,14 +339,16 @@ its own. Launch any of them directly via `run_project`'s `scene:` param (or repo
   (`Tank_Prop_Hunt_Modifications.md` §8, `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.4).
 - `scenes/maps/TeamArenaMap.tscn` — TEAM_ARENA template: one `KILLER` bot roaming the whole map,
   described above.
-- `scenes/maps/KitchenMap.tscn` — CONTAINER_EXTRACTION template and the project's only
+- `scenes/maps/KitchenMap.tscn` — EXTRACTION template and the project's only
   **multi-level** map: a toy-scale kitchen (**24 units = 1 m**, tank ≈ 7.5 cm) on a 108×84 floor,
   six height tiers (floor 0 · chairs/stool 10.8 · sink 15.6 · table 18 · counter 21.6 ·
   shelf+cabinet 30 · shelf+fridge 43.2) joined only by `ToyRamp` inclines. Bases sit on surfaces
-  (attack on the table, defense on the counter); five `ContainerSpawn`-role markers, one per tier.
+  (attack on the table, defense on the counter) and double as **warehouses**; five
+  `ExtractionPoint`-role markers spread over the tiers are the evacuation-point candidates. Its ~20
+  `Obstacle` cubes are cover, disguise props **and** the resource nodes at once.
   It bakes its navmesh at load (`bake_navmesh_on_start`) instead of storing it, and opts out of
   dynamic obstacles (`dynamic_obstacles_supported = false`). **Before editing its geometry read
-  `Tank_Prop_Hunt_Container_Extraction.md` §2.3** — ramps must stay ≤24° (a box `CharacterBody3D`
+  `Tank_Prop_Hunt_Kitchen_Map.md`** — ramps must stay ≤24° (a box `CharacterBody3D`
   stalls dead at ~28° despite `floor_max_angle` 45°), must end exactly on a platform edge, must not
   lie flat across a platform, and a diagonal ramp needs a flat coplanar landing or the navmesh
   silently splits into islands.

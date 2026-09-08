@@ -125,6 +125,7 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 var _body: CharacterBody3D
 var _state_machine: Node
 var _mod: Node
+var _cargo: Node
 var _health: Node
 var _tumble: Node  # TumbleController — перехватывает управление на безвозвратном свесе
 
@@ -186,6 +187,7 @@ func _ready() -> void:
 	assert(_body != null, "TankMovement must be a direct child of a CharacterBody3D")
 	_state_machine = get_parent().get_node_or_null("TankStateMachine")
 	_mod = get_parent().get_node_or_null("ModificationController")
+	_cargo = get_parent().get_node_or_null("CargoHold")
 	_health = get_parent().get_node_or_null("HealthComponent")
 	_tumble = get_parent().get_node_or_null("TumbleController")
 	_default_snap = _body.floor_snap_length
@@ -581,7 +583,10 @@ func edge_approach() -> float:
 ## `grade` = синус угла между направлением движения и опорной плоскостью: > 0 в горку, < 0 под
 ## горку, 0 на ровном. `travel_dir` — горизонтальный единичный вектор фактического хода (forward,
 ## развёрнутый на задний ход), поэтому задним ходом в горку танк тормозится ровно так же.
-## Предел линейной скорости с учётом ГРУЗА в слоте модификации (см.
+## Предел линейной скорости с учётом ГРУЗА — и в слоте модификации, и в трюме (см.
+## CargoHold.speed_multiplier: каждый ящик добычи отдельно замедляет носителя). Источники груза
+## перемножаются, чтобы добавление нового не требовало трогать эту функцию. Исходно:
+## (см.
 ## Modification.carry_speed_multiplier). Пустой слот — ровно move_speed, поведение не меняется.
 ## Гружёный — медленнее: тяжёлый груз (контейнер режима экстракшена) заставляет носителя держаться
 ## своей команды и активнее пользоваться маскировкой, а не бежать в одиночку.
@@ -591,9 +596,12 @@ func edge_approach() -> float:
 ## Складывается с уклоном (_slope_speed_multiplier) мультипликативно: гружёный в гору медленнее
 ## обоих эффектов по отдельности — это осознанно, подъём с грузом и должен быть тяжёлым.
 func _effective_move_speed() -> float:
-	if _mod == null:
-		return move_speed
-	return move_speed * _mod.carry_speed_multiplier()
+	var mult: float = 1.0
+	if _mod != null:
+		mult *= _mod.carry_speed_multiplier()
+	if _cargo != null:
+		mult *= _cargo.speed_multiplier()
+	return move_speed * mult
 
 func _slope_speed_multiplier(travel_dir: Vector3) -> float:
 	if not slope_speed_enabled or not _body.is_on_floor():

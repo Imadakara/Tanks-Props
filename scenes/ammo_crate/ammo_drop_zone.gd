@@ -53,8 +53,8 @@ const _GROUP := "ammo_drop_zones"
 @export var max_pending_mortar_crates: int = 1
 
 const _PLACEMENT_ATTEMPTS: int = 20
-## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) | containers(128) — не ронять в
-## стену/дом/танк/чужой ящик (жёлтый, красный или белый контейнер режима CONTAINER_EXTRACTION).
+## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) | loot_crates(128) — не ронять в
+## стену/дом/танк/чужой ящик (патроны, мортира или ящик добычи режима EXTRACTION).
 ## Та же маска и приём (sphere query), что в match_manager._find_free_crate_position.
 const _PROBE_MASK: int = 227
 const _PROBE_RADIUS: float = 0.6
@@ -119,16 +119,16 @@ func _process(_delta: float) -> void:
 	_timer.timeout.connect(_on_drop_tick)
 	_timer.start()
 
-	# Красные ящики модификации — в TARGET_OBJECTIVE (ТЗ) и в CONTAINER_EXTRACTION, но в экстракшене
-	# РЕЖЕ (GameConfig.mortar_drop_interval_container_sec): слот там прежде всего под контейнер,
-	# мортира — эпизодическое усиление, а не постоянная опция. В TEAM_ARENA красных ящиков нет вовсе.
+	# Красные ящики модификации — в TARGET_OBJECTIVE (ТЗ) и в EXTRACTION, но в экстракшене
+	# РЕЖЕ (GameConfig.mortar_drop_interval_extraction_sec): там мортира — эпизодическое усиление,
+	# а не постоянная опция. В TEAM_ARENA красных ящиков нет вовсе.
 	# MatchState.match_mode уже проставлен корневым _ready() карты (тот идёт до этого ленивого init,
 	# как и MatchManager выше).
 	if MatchState.match_mode == MatchState.Mode.TARGET_OBJECTIVE \
-			or MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
+			or MatchState.match_mode == MatchState.Mode.EXTRACTION:
 		var interval: float = mortar_drop_interval_sec if mortar_drop_interval_sec > 0.0 else GameConfig.mortar_drop_interval_sec
-		if MatchState.match_mode == MatchState.Mode.CONTAINER_EXTRACTION:
-			interval = GameConfig.mortar_drop_interval_container_sec
+		if MatchState.match_mode == MatchState.Mode.EXTRACTION:
+			interval = GameConfig.mortar_drop_interval_extraction_sec
 		_mortar_timer = Timer.new()
 		_mortar_timer.name = "MortarDropTimer"
 		_mortar_timer.one_shot = false

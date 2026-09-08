@@ -85,6 +85,11 @@ func _on_respawn_timeout() -> void:
 	# Модификация теряется вместе с танком (сбросить/сохранить её нельзя, см.
 	# Tank_Prop_Hunt_Modifications.md) — слот освобождается на респавне.
 	_mod.clear_slot()
+	# Трюм тоже пуст: содержимое уже рассыпано на месте гибели (extraction_manager.gd слушает
+	# destroyed). Здесь — гарантия, что воскресший танк не увёз ценность «с того света».
+	var cargo: Node = get_parent().get_node_or_null("CargoHold")
+	if cargo != null:
+		cargo.clear()
 	_tank.on_respawned()
 	_set_frozen(false)
 	respawned.emit()

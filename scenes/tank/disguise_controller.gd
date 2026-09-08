@@ -115,6 +115,12 @@ func _prop_albedo() -> Color:
 ## Публичный вход. Игрок — из _unhandled_input; тест/будущий код — напрямую. Точки входа для ботов
 ## сознательно нет.
 func try_enter_disguise() -> bool:
+	# ЦЕНТРАЛЬНАЯ СВЯЗКА режима EXTRACTION (концепт §5): гружёный танк не может маскироваться вовсе.
+	# Проверка ПЕРЕД request_disguise(), иначе автомат состояний успел бы уйти в DISGUISED и
+	# отдать кулдаун за отказ. Гейт общий для игрока и ботов — оба идут через эту функцию. На
+	# картах без трюма (узла нет) условие спит.
+	if blocked_by_cargo():
+		return false
 	if not _state_machine.request_disguise():
 		return false
 	_build_prop_if_needed()
@@ -122,6 +128,13 @@ func try_enter_disguise() -> bool:
 	_show_disguise()
 	disguise_started.emit()
 	return true
+
+## Мешает ли маскировке груз в трюме. Отдельный публичный предикат, а не проверка внутри
+## try_enter_disguise(): HUD показывает игроку ПРИЧИНУ, почему клавиша не работает, а ИИ решает,
+## стоит ли вообще планировать засаду. Все трое обязаны читать одно и то же правило.
+func blocked_by_cargo() -> bool:
+	var cargo: Node = get_parent().get_node_or_null("CargoHold")
+	return cargo != null and cargo.blocks_disguise()
 
 ## Проверка правил сброса относительно противника — только пока маскировка активна. У ботов состояние
 ## DISGUISED не наступает вовсе (они не активируют маскировку), поэтому для них это ранний выход.

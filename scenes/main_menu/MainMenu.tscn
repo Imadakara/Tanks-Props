@@ -52,7 +52,7 @@ text = "Командный бой (TEAM_ARENA)"
 [node name="ExtractionButton" type="Button" parent="VBoxContainer" unique_id=1190121095]
 custom_minimum_size = Vector2(380, 56)
 layout_mode = 2
-text = "Захват контейнеров — кухня (CONTAINER_EXTRACTION)"
+text = "Экстракшен — кухня (EXTRACTION)"
 
 [node name="TestGroundButton" type="Button" parent="VBoxContainer" unique_id=1190121096]
 custom_minimum_size = Vector2(380, 56)

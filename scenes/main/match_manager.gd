@@ -34,7 +34,7 @@ var _mode: int = 0  # MatchState.Mode; всегда перезаписывает
 var _round_timer: Timer
 var _final_stage_timer: Timer
 var _score_manager: Node
-var _container_manager: Node  # только CONTAINER_EXTRACTION, иначе null (см. setup())
+var _extraction_manager: Node  # только EXTRACTION, иначе null (см. setup())
 
 ## «Баскетбольное» правило для TARGET_OBJECTIVE: основное время вышло, objective цел, но в
 ## воздухе ещё есть снаряды — ждём их приземления, и только потом засчитываем защите победу.
@@ -55,15 +55,13 @@ const _SETTLE_MAX_SEC := 10.0  # > Projectile.max_lifetime_sec (8.0), см. ко
 ## Вызывается из map_scene.gd._setup_match_context() сразу после add_child() — не _ready(): явным
 ## вызовом из оркестратора в корне сцены, тот же порядок, что и у ScoreManager.begin_match().
 ## objective_health = null для режима TEAM_ARENA (цели на карте нет).
-## container_manager — только для режима CONTAINER_EXTRACTION (иначе null): раунд там закрывается
-## либо досрочно (все контейнеры доставлены), либо по таймеру — победитель по числу доставок.
-func setup(mode: int, round_sec: float, score_manager: Node, objective_health: Node, final_stage_enabled: bool, container_manager: Node = null) -> void:
+## extraction_manager — только для режима EXTRACTION (иначе null): раунд там всегда идёт до конца
+## времени (всё невывезенное сгорает — концепт §1), победитель по ВЫВЕЗЕННОЙ ценности.
+func setup(mode: int, round_sec: float, score_manager: Node, objective_health: Node, final_stage_enabled: bool, extraction_manager: Node = null) -> void:
 	_mode = mode
 	_score_manager = score_manager
 	_final_stage_enabled = final_stage_enabled
-	_container_manager = container_manager
-	if _container_manager != null:
-		_container_manager.all_delivered.connect(_on_all_containers_delivered)
+	_extraction_manager = extraction_manager
 
 	_round_timer = Timer.new()
 	_round_timer.name = "RoundTimer"
@@ -91,8 +89,8 @@ func _on_round_timeout() -> void:
 	if _final_stage_enabled and _alive_tanks_all_out_of_ammo():
 		_start_final_stage()
 		return
-	if _mode == MatchState.Mode.CONTAINER_EXTRACTION:
-		_end_round(_winner_by_containers())
+	if _mode == MatchState.Mode.EXTRACTION:
+		_end_round(_winner_by_banked())
 		return
 	if _mode == MatchState.Mode.TEAM_ARENA:
 		_end_round(_winner_by_kills())
@@ -156,18 +154,14 @@ func _start_final_stage() -> void:
 func _on_final_stage_timeout() -> void:
 	_end_round(_winner_by_kills())
 
-## Все контейнеры доставлены — раунд решён ДОСРОЧНО, не дожидаясь таймера (см. container_manager.gd).
-func _on_all_containers_delivered() -> void:
-	_end_round(_winner_by_containers())
-
-## CONTAINER_EXTRACTION: победитель — сторона, доставившая больше контейнеров; ничья разрешается тем
-## же GameConfig.defense_wins_ties, что и в остальных режимах. Контейнеров нечётное число (5), так
-## что ничья возможна только если часть их так и осталась на карте к концу времени.
-func _winner_by_containers() -> String:
-	if _container_manager == null:
-		return _winner_by_kills()  # режим включён, но менеджера нет — не роняем раунд, решаем по убийствам
-	var atk: int = _container_manager.attack_delivered
-	var def: int = _container_manager.defense_delivered
+## EXTRACTION: побеждает сторона, ВЫВЕЗШАЯ больше ценности. Ни убийства, ни разрушенные кубы, ни
+## накопленное на складе очков не дают — они лишь средства (концепт §11). Всё невывезенное к
+## финальному свистку сгорает, поэтому досрочного конца у раунда нет: он всегда идёт до таймера.
+func _winner_by_banked() -> String:
+	if _extraction_manager == null:
+		return _winner_by_kills()  # режим включён, но менеджера нет — не роняем раунд
+	var atk: int = int(_extraction_manager.banked[0])
+	var def: int = int(_extraction_manager.banked[1])
 	if atk > def:
 		return "attack"
 	if def > atk:

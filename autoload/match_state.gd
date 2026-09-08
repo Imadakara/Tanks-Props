@@ -24,7 +24,7 @@ extends Node
 ##   решающий третий. 2:0 после второго — матч сразу окончен. Оба режима — через один
 ##   series_complete().
 
-enum Mode { TARGET_OBJECTIVE, TEAM_ARENA, CONTAINER_EXTRACTION }
+enum Mode { TARGET_OBJECTIVE, TEAM_ARENA, EXTRACTION }
 
 var player_team: int = 0  # 0 = сторона атаки в этом раунде, 1 = сторона обороны
 var match_mode: int = Mode.TARGET_OBJECTIVE
@@ -87,6 +87,13 @@ var dynamic_obstacles: bool = false
 ## хранится. Для будущего сетевого кода: хост шлёт это число, каждый пир строит идентичную карту.
 var dynamic_obstacles_seed: int = 0
 
+## Зерно раздачи лута по кубам-укрытиям в режиме EXTRACTION (см. extraction_manager.gd). 0 — ещё
+## не выбрано; менеджер выбирает случайное при старте матча и ДЕРЖИТ его весь матч, переживая
+## reload_current_scene(). Зануляется reset_series() — новый матч раскладывает лут заново. Тот же
+## приём и та же цель, что у dynamic_obstacles_seed: один int, посланный хостом, даст всем пирам
+## одинаковую карту добычи.
+var loot_seed: int = 0
+
 ## Дефолт формата матча — best-of-3; фактическое значение ставит apply_mode_defaults() при каждой
 ## загрузке карты (см. её doc-comment), поэтому переход между картами с разным форматом не
 ## оставляет протухшее число от предыдущей.
@@ -95,20 +102,21 @@ var current_round_num: int = 1
 var series_wins_attack: int = 0
 var series_wins_defense: int = 0
 
-## Формат матча — свойство РЕЖИМА, не общая константа: CONTAINER_EXTRACTION играется одним
+## Формат матча — свойство РЕЖИМА, не общая константа: EXTRACTION играется одним
 ## раундом (5 минут либо все контейнеры доставлены — матч решён), остальные режимы — best-of-3.
 ## Зовётся `map_scene.gd._setup_match_context()` при КАЖДОЙ загрузке карты, до того как HUD
 ## прочитает `total_rounds`: значение не должно протекать между картами разного формата (autoload
 ## переживает смену сцены, `reset_series()` его не трогает). `rounds_to_win()`/`series_complete()`
 ## считаются от него же, отдельной ветки под «матч из одного раунда» не нужно: 1/2+1 = 1.
 func apply_mode_defaults(mode: int) -> void:
-	total_rounds = 1 if mode == Mode.CONTAINER_EXTRACTION else 3
+	total_rounds = 1 if mode == Mode.EXTRACTION else 3
 
 func reset_series() -> void:
 	current_round_num = 1
 	player_team = 0
 	series_wins_attack = 0
 	series_wins_defense = 0
+	loot_seed = 0  # новый матч — новая раскладка лута
 	dynamic_obstacles_seed = 0  # новый матч — новая раскладка динамических препятствий (флаг dynamic_obstacles не трогаем: его ставит меню)
 
 ## Переход к следующему раунду — вызывается ИМЕННО при старте нового раунда (не при конце текущего).

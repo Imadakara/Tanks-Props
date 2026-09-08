@@ -9,7 +9,7 @@ extends RefCounted
 ##   1. mcp__godot-runtime__run_project  scene: "res://scenes/maps/<Map>.tscn"  background: true
 ##   2. mcp__godot-runtime__get_debug_output   (catch parse/scene errors first)
 ##   3. wait real time so TeamSpawner + every lazy `_physics_process` init has run (bots,
-##      ammo zones, HUD, ContainerManager all defer to the first tick): ~3 s for the flat
+##      ammo zones, HUD, ExtractionManager all defer to the first tick): ~3 s for the flat
 ##      maps, ~6 s for KitchenMap (it bakes its navmesh at load).
 ##   4. mcp__godot-runtime__run_script  script: <paste the contents of this file>
 ##      (the MCP `run_script` tool takes inline GDScript source, not a res:// path)
@@ -22,23 +22,23 @@ extends RefCounted
 ## TestGroundMap has no MatchManager/mode; it gets its own minimal branch.
 ## Extend `_MAP_EXPECT` + the per-map functions when a map gains an invariant worth locking.
 
-const _MODE_NAMES := ["TARGET_OBJECTIVE", "TEAM_ARENA", "CONTAINER_EXTRACTION"]
+const _MODE_NAMES := ["TARGET_OBJECTIVE", "TEAM_ARENA", "EXTRACTION"]
 
 ## Per-map expectations. Keyed by scene basename (no dir, no extension).
 const _MAP_EXPECT := {
 	"TargetObjectiveMap": {
 		"mode": 0, "total_rounds": 3, "round_sec": 180.0,
-		"objectives": 1, "turrets_min": 1, "containers": 0,
+		"objectives": 1, "turrets_min": 1,
 		"final_stage": false, "border": true,
 	},
 	"TeamArenaMap": {
 		"mode": 1, "total_rounds": 3, "round_sec": 180.0,
-		"objectives": 0, "turrets_min": 0, "containers": 0,
+		"objectives": 0, "turrets_min": 0,
 		"final_stage": true, "border": true,
 	},
 	"KitchenMap": {
 		"mode": 2, "total_rounds": 1, "round_sec": 300.0,
-		"objectives": 0, "turrets_min": 0, "containers": 5,
+		"objectives": 0, "turrets_min": 0,
 		"final_stage": false, "border": false,  # kitchen furniture is the boundary; .tscn sets map_border_enabled = false
 	},
 }
@@ -185,49 +185,63 @@ func _check_team_arena(st: SceneTree, cs: Node) -> void:
 
 
 func _check_kitchen(st: SceneTree, cs: Node) -> void:
-	var cm := cs.get_node_or_null("ContainerManager")
-	_expect("ContainerManager node exists", cm != null, "no child 'ContainerManager'")
+	var em := cs.get_node_or_null("ExtractionManager")
+	_expect("ExtractionManager node exists", em != null, "no child 'ExtractionManager'")
 	var gc := st.root.get_node_or_null("GameConfig")
-	if cm != null and gc != null and "total_containers" in cm:
-		# total_containers is set once at layout and never decremented, so this is
-		# timing-independent - unlike get_nodes_in_group("containers"), which shrinks as
-		# soon as a bot picks one up (a carried container leaves the group).
-		_expect("ContainerManager laid out container_count containers",
-			int(cm.total_containers) == int(gc.container_count),
-			"total_containers=%d, GameConfig.container_count=%d" % [int(cm.total_containers), int(gc.container_count)])
 	var structures := st.get_nodes_in_group("structures")
 	_expect("kitchen has Structure geometry", structures.size() > 0, "group 'structures' is empty")
 	if "bake_navmesh_on_start" in cs:
-		_expect("bake_navmesh_on_start == true", bool(cs.bake_navmesh_on_start), "kitchen should bake its navmesh at load")
+		_expect("bake_navmesh_on_start == true", bool(cs.bake_navmesh_on_start), "false")
 	if "dynamic_obstacles_supported" in cs:
-		_expect("dynamic_obstacles_supported == false", not bool(cs.dynamic_obstacles_supported), "kitchen must opt out of dynamic obstacles")
-	# Carry weight: the container is deliberately heavy (30% slower) — that slowdown is what makes
-	# a carrier want an escort and cover. Checked end-to-end (resource value -> controller forward
-	# -> TankMovement limit) because it crosses three files and has no visible failure mode: a
-	# broken forward just silently restores full speed.
-	var mod_res: Resource = load("res://scenes/modifications/container.tres")
-	_expect("container.tres carry_speed_multiplier == 0.7",
-		is_equal_approx(float(mod_res.carry_speed_multiplier), 0.7),
-		"got %.3f" % float(mod_res.carry_speed_multiplier))
+		_expect("dynamic_obstacles_supported == false", not bool(cs.dynamic_obstacles_supported), "true")
+
+	# --- Экономический цикл (Tank_Prop_Hunt_Extraction_Loop_Concept.md) ---
+	# Кубы-укрытия обязаны быть РАЗРУШАЕМЫ ВСЕ до одного: если пробный выстрел мгновенно отличает
+	# ресурсный узел от пустого укрытия, ставка «ресурс / пусто / враг» обесценивается (§6).
+	var cubes := st.get_nodes_in_group("obstacles")
+	_expect("map has cover cubes", cubes.size() > 0, "group 'obstacles' is empty")
+	var undamageable := 0
+	var with_loot := 0
+	for c in cubes:
+		if c.get_node_or_null("HealthComponent") == null:
+			undamageable += 1
+		if "loot_value" in c and int(c.loot_value) > 0:
+			with_loot += 1
+	_expect("every cube is destructible", undamageable == 0, "%d cube(s) without HealthComponent" % undamageable)
+	# Лут роздан, но НЕ во все кубы — иначе стрельба по любому укрытию всегда окупалась бы.
+	var loose := st.get_nodes_in_group("loot_crates").size()
+	if gc != null:
+		_expect("loot allocated across cubes", with_loot + loose >= 1 and with_loot <= cubes.size(),
+			"loot cubes=%d, crates already out=%d, cubes=%d" % [with_loot, loose, cubes.size()])
+		_expect("some cubes are empty", with_loot < cubes.size(),
+			"every cube holds loot - the farming gamble is gone")
+	_expect("extraction points exist", st.get_nodes_in_group("ExtractionPoint").size() > 0,
+		"no zone_role 'ExtractionPoint' markers - evacuation impossible")
+
+	# Трюм и его связка с маскировкой — центральная сцепка концепции (§5).
 	var player := cs.get_node_or_null("PlayerTank")
 	if player != null:
-		var slot := player.get_node_or_null("ModificationController")
-		var mv := player.get_node_or_null("TankMovement")
-		if slot != null and mv != null and slot.can_pick_up():
-			var base: float = mv.move_speed
-			_expect("empty slot -> full move speed",
-				is_equal_approx(mv._effective_move_speed(), base),
-				"got %.2f of %.2f" % [mv._effective_move_speed(), base])
-			slot.install(mod_res)
-			var loaded: float = mv._effective_move_speed()
-			slot.clear_slot()
-			_expect("carrying container -> 70%% of move speed",
-				is_equal_approx(loaded, base * 0.7),
-				"got %.2f, expected %.2f" % [loaded, base * 0.7])
-			_expect("speed limit restored after handover",
-				is_equal_approx(mv._effective_move_speed(), base),
-				"got %.2f" % mv._effective_move_speed())
-
+		var hold := player.get_node_or_null("CargoHold")
+		var disguise := player.get_node_or_null("DisguiseController")
+		_expect("PlayerTank/CargoHold present", hold != null, "missing cargo hold component")
+		if hold != null and disguise != null and gc != null:
+			_expect("empty hold does not block disguise", not hold.blocks_disguise(), "blocked while empty")
+			_expect("empty hold has no speed penalty", is_equal_approx(hold.speed_multiplier(), 1.0),
+				"got %.3f" % hold.speed_multiplier())
+			hold.try_take(100, false, false)
+			_expect("loaded hold blocks disguise", hold.blocks_disguise(), "cargo does not block disguise")
+			_expect("disguise controller agrees", disguise.blocked_by_cargo(), "controller disagrees with hold")
+			_expect("loaded hold slows the tank",
+				hold.speed_multiplier() < 1.0, "got %.3f" % hold.speed_multiplier())
+			# «Главный замок» (§4): со склада берут ровно один и только в пустой трюм.
+			_expect("warehouse pickup refused into a loaded hold",
+				not hold.try_take(100, true, true), "a stored crate was accepted into a non-empty hold")
+			hold.clear()
+			_expect("warehouse pickup accepted into an empty hold",
+				hold.try_take(100, true, true), "a stored crate was refused into an empty hold")
+			_expect("no top-up after a warehouse withdrawal",
+				not hold.try_take(100, false, false), "loose loot was added on top of a withdrawn crate")
+			hold.clear()
 
 func _check_test_ground(st: SceneTree, cs: Node) -> void:
 	_expect("no MatchManager (proving ground)", cs.get_node_or_null("MatchManager") == null, "TestGroundMap unexpectedly has a MatchManager")
