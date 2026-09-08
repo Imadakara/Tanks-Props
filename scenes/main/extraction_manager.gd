@@ -100,7 +100,10 @@ func _allocate_loot_nodes() -> void:
 		cubes[j] = tmp
 	var count: int = mini(GameConfig.loot_node_count, cubes.size())
 	for i in range(count):
-		cubes[i].loot_value = GameConfig.loot_base_value
+		# Свой ролл на каждый узел, из того же зерна и в уже стасованном порядке — значение ящика
+		# решается здесь, при раздаче. Узлы не респавнятся, так что это и есть «ценность при спавне
+		# ящика», и порядок роллов не зависит от того, в каком порядке кубы будут разбиты.
+		cubes[i].loot_value = _rng.randi_range(GameConfig.loot_raw_value_min, GameConfig.loot_raw_value_max)
 
 
 ## Публичный вход для куба, который только что развалился (`obstacle.gd._on_destroyed`).
