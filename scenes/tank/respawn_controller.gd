@@ -108,6 +108,11 @@ func _set_frozen(frozen: bool) -> void:
 	for child in _tank.get_children():
 		if child == self or child.name == "HealthComponent" or child.name == "TankAIController":
 			continue
+		# TumbleController должен доработать кувырок даже если танк добило посреди него (урон от
+		# падения / force_destroy на конце раунда) — он сам увидит is_alive == false и уберёт
+		# двойника, не переворачивая (см. tumble_controller._abort_dead).
+		if child.name == "TumbleController":
+			continue
 		child.process_mode = mode
 
 ## [ДОБАВЛЕНО, по тому же запросу] Публичный геттер, не завязанный на TankAIController —

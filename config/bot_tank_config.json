@@ -3,5 +3,6 @@
   "acceleration": 12.0,
   "turret_turn_speed": 1.0,
   "projectile_launch_speed": 30.0,
-  "max_hits": 3
+  "max_hits": 3,
+  "self_right_cooldown_sec": 3.0
 }

@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scenes/tank/respawn_controller.gd" id="12_n5ru5"]
 [ext_resource type="Script" path="res://scenes/tank/modification_controller.gd" id="13_modc"]
 [ext_resource type="Script" path="res://scenes/tank/hull_rig.gd" id="14_hull"]
+[ext_resource type="Script" path="res://scenes/tank/tumble_controller.gd" id="15_tumble"]
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_bfi3s"]
 points = PackedVector3Array(-0.6, 0.3, -0.9, 0.6, 0.3, -0.9, -0.6, 0.3, 0.9, 0.6, 0.3, 0.9, -0.6, -0.06, -0.9, 0.6, -0.06, -0.9, -0.6, -0.06, 0.9, 0.6, -0.06, 0.9, -0.6, -0.3, -0.62, 0.6, -0.3, -0.62, -0.6, -0.3, 0.62, 0.6, -0.3, 0.62)
@@ -157,3 +158,6 @@ script = ExtResource("10_i6w10")
 
 [node name="ModificationController" type="Node3D" parent="." unique_id=199337740]
 script = ExtResource("13_modc")
+
+[node name="TumbleController" type="Node" parent="." unique_id=199337741]
+script = ExtResource("15_tumble")

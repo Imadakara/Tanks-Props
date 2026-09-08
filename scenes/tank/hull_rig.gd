@@ -120,6 +120,11 @@ extends Node3D
 @export var max_tilt_deg: float = 32.0
 ## Скорость экспоненциального довода к целевому наклону, 1/сек. Больше — жёстче подвеска.
 @export var tilt_response: float = 9.0
+## Завал корпуса через кромку в фазе teeter. Корень танка никогда не кренится (см. заголовок),
+## поэтому «нос в пропасть» рисуется здесь: визуальный корпус доворачивается носом/бортом в
+## сторону пустоты на угол `TankMovement.tip_angle()` (тот сам его интегрирует, 0 → точка
+## невозврата). Выключить — корпус в фазе teeter останется горизонтальным.
+@export var fall_tip_enabled: bool = true
 ## Клевок на разгоне/торможении: радиан наклона на 1 м/с² продольного ускорения.
 @export var accel_pitch_gain: float = 0.012
 ## Крен наружу в повороте: радиан на (рад/с · м/с).
@@ -156,6 +161,7 @@ const _PROBE_UP := 0.7
 const _PROBE_DOWN := 1.6
 
 var _body: CharacterBody3D
+var _movement: Node  # TankMovement — источник факта свеса (is_falling) и его направления (tip_dir)
 var _generated: Array[Node] = []
 var _wheels_left: Array[Node3D] = []
 var _wheels_right: Array[Node3D] = []
@@ -182,6 +188,7 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 	assert(_body != null, "HullRig должен быть прямым ребёнком CharacterBody3D (корня танка)")
+	_movement = _body.get_node_or_null("TankMovement")
 	_prev_yaw = _body.rotation.y
 	# Респавн телепортирует танк — без сброса корпус на кадр приезжает со старым креном/просадкой.
 	var respawn: Node = _body.get_node_or_null("RespawnController")
@@ -199,6 +206,11 @@ func _on_respawned() -> void:
 	_prev_yaw = _body.rotation.y
 	rotation = Vector3.ZERO
 	position.y = 0.0
+
+## Сброс позы визуального корпуса в нейтраль. Зовёт TumbleController при возврате управления после
+## кувырка (эта нода на время кувырка заморожена по process_mode и застыла бы в последнем крене).
+func reset_pose() -> void:
+	_on_respawned()
 
 func _physics_process(delta: float) -> void:
 	if Engine.is_editor_hint() or _body == null or delta <= 0.0:
@@ -228,6 +240,18 @@ func _update_suspension(delta: float) -> void:
 		target_height = plane.z
 	ground_pitch = target_pitch
 	ground_roll = target_roll
+
+	# Фаза teeter: корпус ПЛАВНО кренится носом/бортом в сторону пустоты на угол, который
+	# интегрирует сам tank_movement.gd (_tip_angle: 0 → deg_to_rad(teeter_ponr_deg)). Это и есть
+	# «завал через кромку» — обратимый, пока не дошло до точки невозврата. tip_dir (сист. корня,
+	# XZ) — к неопёртым углам: пустота спереди (d.z < 0) → нос вниз (−pitch), справа (d.x > 0) →
+	# правый борт вниз (−roll). Экспоненциальный довод ниже сглаживает и это.
+	if fall_tip_enabled and _movement != null:
+		var ta: float = _movement.tip_angle()
+		if ta > 0.0005:
+			var tip: Vector3 = _movement.tip_dir
+			target_pitch += tip.z * ta
+			target_roll -= tip.x * ta
 
 	# Динамика подвески. Клевок: разгон задирает нос, торможение — клюёт. Крен: инерция в
 	# повороте прижимает внешний борт (поворот влево — yaw_rate > 0 — проседает правый борт,

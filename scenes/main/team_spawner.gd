@@ -327,3 +327,6 @@ func _apply_tank_config(tank: Node, config: Dictionary) -> void:
 	var health: Node = tank.get_node("HealthComponent")
 	if config.has("max_hits"):
 		health.max_hits = int(config["max_hits"])
+	var tumble: Node = tank.get_node_or_null("TumbleController")
+	if tumble != null and config.has("self_right_cooldown_sec"):
+		tumble.self_right_cooldown_sec = float(config["self_right_cooldown_sec"])

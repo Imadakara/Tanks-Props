@@ -1271,6 +1271,11 @@ func _initialize() -> void:
 	# СВОЁ AI-состояние сами, а не полагаемся на RespawnController (который физическое состояние
 	# танка сбрасывает, но ничего не знает про TankAIController.state).
 	_respawn_controller.respawned.connect(_on_respawned)
+	# Кувырок с обрыва (TumbleController) замораживает этот мозг на время падения и возвращает танк
+	# с, возможно, другим yaw — сбрасываем AI-состояние тем же обработчиком, что и на респавне.
+	var _tumble_ctrl: Node = _body.get_node_or_null("TumbleController")
+	if _tumble_ctrl != null:
+		_tumble_ctrl.recovered.connect(_on_respawned)
 	_collect_waypoints()
 	_detect_hunt_area()
 	_find_objective()

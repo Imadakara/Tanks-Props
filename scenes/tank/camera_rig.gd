@@ -37,6 +37,14 @@ extends SpringArm3D
 var _world_yaw: float = 0.0
 var _pitch: float = 0.0
 var _is_mcp_test_session: bool = false
+## Кувырок (TumbleController.set_tumble_follow): корень танка кувыркается, его rotation.y — мусор.
+## Камера НЕ меняет поведение — это та же свободная орбита мышью (_world_yaw/_pitch), просто
+## построенная в ВИРТУАЛЬНОМ ВЕРТИКАЛЬНОМ кадре в позиции танка, а не от кренящегося корня.
+## Танк при этом свободно кувыркается по всем осям, камера остаётся ровной и управляемой.
+var _tumble_follow: bool = false
+
+func set_tumble_follow(on: bool) -> void:
+	_tumble_follow = on
 
 func _ready() -> void:
 	_camera.current = is_active
@@ -88,6 +96,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		_pitch = clamp(_pitch - event.relative.y * mouse_sensitivity, deg_to_rad(pitch_min_deg), deg_to_rad(pitch_max_deg))
 
 func _physics_process(delta: float) -> void:
+	# Во время кувырка корень кувыркается (его rotation.y — мусор). Камера — GTA-стиль: свободная
+	# орбита мышью (_world_yaw/_pitch) вокруг ПОЗИЦИИ танка в вертикальном кадре; сам танк
+	# вращается свободно по всем осям, камера этого не повторяет.
+	if _tumble_follow:
+		var t: float = smoothstep(0.0, 1.0, clampf(_pitch / maxf(deg_to_rad(pitch_max_deg), 0.001), 0.0, 1.0))
+		var pivot: Vector3 = _body.global_position + Vector3(0.0, lerpf(pivot_height, pivot_height_top, t), 0.0)
+		var basis: Basis = Basis(Vector3.UP, _world_yaw) * Basis(Vector3.RIGHT, _pitch)
+		global_transform = Transform3D(basis, pivot)
+		spring_length = lerpf(spring_length_base, spring_length_top, t)
+		return
 	if reverse_camera_follow and is_active and _movement != null and _movement.last_move_input < -0.1:
 		var behind_yaw: float = _body.rotation.y + PI
 		_world_yaw = lerp_angle(_world_yaw, behind_yaw, reverse_follow_speed * delta)

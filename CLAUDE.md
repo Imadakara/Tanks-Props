@@ -45,9 +45,12 @@ the retired `Tank_Prop_Hunt_MVP_Dev_Plan.md` / `Tank_Prop_Hunt_TZ_MVP_Godot.md` 
   to terrain**: the `Hull` visual pivot (`hull_rig.gd`) that carries the code-built armour boxes,
   running gear and the terrain tilt / suspension dynamics; why the turret deliberately stays level
   (aim would drift by the roll angle otherwise) and why `VehicleBody3D` was not used; tracks/road
-  wheels with per-side speeds; the slope→speed multiplier in `tank_movement.gd`; and the
-  `TestGroundMap.tscn` proving ground with its measured ramp-climb limit. Read it before touching
-  the tank's visuals or anything that reads the hull's orientation.
+  wheels with per-side speeds; the slope→speed multiplier, the **edge brink → teeter → tumble**
+  system (slope-aware centre-of-mass vs directional edge probes; a recoverable BRINK/TEETER lead-in
+  with a defined point of no return, then `TumbleController`'s RigidBody-proxy tumble + turtle
+  self-right, GTA-style camera) that fires when a tank goes off a cliff; and the `TestGroundMap.tscn`
+  proving ground with its measured ramp-climb limit. Read it before touching the tank's visuals or
+  anything that reads the hull's orientation.
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **current-state reference for ammo drops**: the `AmmoDropZone`
   prefab (circle + high dummy) placed in every map's empty corners, its drop/pickup/anti-overlap
   rules, per-map placement, `GameConfig` defaults.
@@ -178,6 +181,66 @@ toggled between player and AI control via its own `is_player_controlled: bool`:
   `slope_speed_*` exports): uphill slower, downhill slightly faster, from `get_floor_normal()` —
   no second ray of its own. Same path for player and bots. Flat maps are unaffected (vertical
   normal ⇒ multiplier exactly 1.0); it only bites on the kitchen and the proving ground.
+  It also owns the **ledge / brink / tumble system** (`_update_support()` + `_integrate_teeter()`,
+  `ledge_*` / `teeter_*` exports), same reason again — this node holds gravity + `is_on_floor()`.
+  `CharacterBody3D.is_on_floor()` is a binary "any contact", so one edge on a platform lip kept the
+  tank glued with ¾ of the hull over a pit (and the root never tilts, so it couldn't topple).
+  **Support model**: four **directional edge-marches** (F/B/L/R, step outward, find where ground
+  ends — a drop steeper than `ledge_max_slope_deg` at that reach is a cliff, shallower is a slope;
+  same "by steepness not height" idea as the bot `ledge_check`) + a centre-ground probe + a
+  horizontal wall pre-check per direction (a wall ahead ≠ a cliff). `_com_margin` (signed: <0 CoM
+  on support with that much room, >0 past the edge) varies **continuously** as the tank creeps
+  toward a lip. CoM is a real offset (`center_of_mass`, low + slightly rear); on a slope the margin
+  is shifted **downhill** by `center_of_mass.y·tan(slope)` (`com_slope_shift_enabled`) — a taller
+  CoM / a downhill edge tips sooner. **Three stages, no abrupt switch** (this replaced an instant
+  flip-to-tumble + camera yank): **BRINK** — CoM within `teeter_brink_margin` of the edge but still
+  on support: tank auto-slows the throttle toward the void (`teeter_brake`, floored at 40%) and the
+  hull noses down to `teeter_prelean_deg`, **steering still on**, fully recoverable by turning away
+  or reversing. **TEETER** — CoM past the edge: hull tip angle integrates upward (`teeter_gravity_gain`)
+  vs reverse-throttle pull (`teeter_recover_gain`) + damping, steer off, drift toward void, still
+  reversible. **POINT OF NO RETURN** — `_tip_angle ≥ teeter_ponr_deg` (26°), or airborne after a
+  real brink / `jump_grace_sec` with no support: hands to `TumbleController` **with the current
+  angular velocity** (no snap). A level launch (trampoline) has `_edge_approach ≈ 0` ⇒ never a
+  tumble. Falling breaks disguise (`"fell"`) / overrides mortar hull-freeze.
+  `ledge_max_slope_deg` **must stay well above the ~44-45° climb limit**, and the centre/march
+  probes need generous vertical reach (`_CENTER_REACH_DOWN`, `_EDGE_CLIMB_TAN`) or a tank perched
+  nose-up on a steep ramp reads as "off a cliff" — both broke ramp climbing during development.
+  Flat maps: no edges found ⇒ `_com_margin` deeply negative ⇒ zero behaviour change (verified: 0
+  false brink/tumbles in 600 frames). Visual crest wobble ≈6° on a 44° ramp (the limit), no
+  tumble. The hull tip for all stages is `hull_rig.gd` (`fall_tip_enabled`, reads
+  `TankMovement.tip_angle()`). Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §8.
+- `TumbleController` (`tumble_controller.gd`) — the tank falling off a cliff naturally (roof /
+  side / belly landings) and righting itself turtle-style after a cooldown. The root must stay
+  upright (bots/aim/turret read its basis), so on the commit from `TankMovement` an **invisible
+  `RigidBody3D` proxy** (same convex shape, env-only collisions) takes over: **free fall, not a
+  staged flip** — it gets the tank's linear velocity and *only* the teeter's actually-accumulated
+  tip rate (`_tip_vel`, capped by `tumble_spin_max`); no baseline spin, no randomness, no
+  speed term. Whether it lands on its tracks or its roof is decided by physics: the proxy is given
+  the tank's **real low centre of mass** (`CENTER_OF_MASS_MODE_CUSTOM`, read from
+  `TankMovement.center_of_mass` — one source of truth), which does nothing in free fall but acts as
+  a pendulum **on impact** and rolls the hull back onto its tracks, plus `proxy_angular_damp` (0.35)
+  bleeding spin in flight. Measured off the 18 m kitchen table: damp 0.15 ⇒ nearly always ends on
+  its side; 0.4+ ⇒ always perfectly on tracks (self-right becomes dead code); 0.35 is the middle —
+  clean falls land on tracks at any throttle, a genuinely inverted tank still rights normally. The
+  old seed was artificial (1.0 baseline + speed·0.5 + random ≈ 4–5 rad/s, ~a revolution per second)
+  and put the tank on its roof almost every time. Each frame the proxy's transform is
+  copied onto the tank root so every code-built visual rides along. Sibling components are frozen
+  (`process_mode`, the death-freeze idiom), the root collider is off. **Camera is GTA-style**
+  (`camera_rig.set_tumble_follow(true)`): the *same* free mouse orbit (`_world_yaw`/`_pitch`) but
+  built in a virtual **upright** frame at the tank's position — the tank spins freely on all axes,
+  the camera follows the point and stays level (no reparent). On settle: deck within ~35° of up ⇒
+  recover now; else wait `self_right_cooldown_sec`, kinematically flip the proxy upright (yaw
+  kept), swap back to the `CharacterBody3D`, unfreeze, `set_tumble_follow(false)`,
+  `hull_rig.reset_pose()`, emit `recovered` (`TankMovement` + `TankAIController` resync on it).
+  Fall-damage-on-impact lives here now (`GameConfig.fall_damage_*`). `self_right_cooldown_sec` is
+  in `config/*_tank_config.json` (per-profile, upgradeable later); other thresholds are `@export`s.
+  Death mid-tumble (fall damage / round-end `force_destroy`) ⇒ `_abort_dead()` leaves the wreck for
+  the normal respawn to right and does **not** touch the freeze/collider (RespawnController owns
+  those on death); `respawned` also aborts. `TumbleController` is excluded from
+  `RespawnController._set_frozen` so it can finish. **This is the only time the root is not
+  upright** — a documented carve-out from the "root never tilts" invariant, safe because every
+  reader of the root basis is frozen
+  meanwhile. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §8.1.
 - `CameraRig` (`SpringArm3D`) — player only; free-look orbit independent of hull rotation. Its
   `rotation.y` is recomputed every physics frame as `world_yaw − body.rotation.y`, so turning the
   hull never drags the camera with it.
@@ -340,9 +403,10 @@ In TEAM_ARENA there's no swap, so "attack" is permanently team 0 / Красны�
 `round_ended`; the series accumulates across `reload_current_scene()` and is reset only from the
 main menu (`main_menu.gd`) or the "Новый матч" button after `series_complete()`.
 `config/player_tank_config.json` and `config/bot_tank_config.json` hold per-profile physical stats
-(speed, turret turn rate, projectile speed, `max_hits`) read once by `team_spawner.gd` — these are
-tank-profile data, not match balance, which is why they're JSON next to `GameConfig` rather than
-fields on it. A second, unrelated JSON layer — `config/roster_*.json` — holds "who" (team/role/
+(speed, turret turn rate, projectile speed, `max_hits`, `self_right_cooldown_sec`) read once by
+`team_spawner.gd` — these are tank-profile data, not match balance, which is why they're JSON next
+to `GameConfig` rather than fields on it. `self_right_cooldown_sec` (turtle self-right delay after
+a tumble, see `TumbleController`) is the intended-upgradeable one. A second, unrelated JSON layer — `config/roster_*.json` — holds "who" (team/role/
 waypoint prefix/...), not "what stats"; see "Spawn system" below, don't confuse the two.
 
 ### Spawn system — `TeamSpawner` + `SpawnZone` (one mechanism, every map)
@@ -851,12 +915,14 @@ its own. Launch any of them directly via `run_project`'s `scene:` param (or repo
 - `scenes/maps/TestGroundMap.tscn` — **not a map and not a mode**: the chassis proving ground
   (`test_ground.gd`). No `map_scene.gd`, no `MatchManager`/roster/HUD/navmesh — just the player
   tank, a dummy tank and a code-built course (ramps 6°…48°, a row of 0.04…0.40 lips, washboard,
-  smooth waves, a side slope to cross, a jump) plus a readout of hull pitch/roll, sag and the
-  slope-speed multiplier. Keys: `R` reset, `T` terrain tilt on/off, `Y` running-gear animation
+  smooth waves, a side slope to cross, a jump, an **"Обрыв"** raised platform with sheer edges for
+  the brink/tumble system) plus a readout of hull pitch/roll, sag, the slope-speed multiplier and
+  the edge state (`зазор ЦМ`, `подход %`, `крен`, TEETER / КУВЫРОК). Keys: `R` reset, `T` terrain
+  tilt on/off, `Y` running-gear animation
   on/off, `F` readout. This is where the collider chamfer was measured (see the collider bullet
   above): ramps pass up to 44°, lips up to 0.20. Re-measure here after any change to the collider
   or to `move_speed`/`acceleration` rather than trusting a number from another map. Detail:
-  `Tank_Prop_Hunt_Tank_Chassis.md` §9.
+  `Tank_Prop_Hunt_Tank_Chassis.md` §10.
 
 An earlier, separate "production" map (`Main.tscn`/`Map.tscn`, a 5×5 proof-of-concept predating
 stable bot behavior) was retired once these two became the real game-mode templates — recoverable

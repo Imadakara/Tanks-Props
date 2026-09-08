@@ -31,6 +31,11 @@ extends Node3D
 ##  - «Волны» справа: четыре очень пологих сегмента цилиндров — плавный тангаж без изломов.
 ##  - «Косогор» слева-впереди: широкое полотно, которое переезжают ПОПЕРЁК — чистый крен.
 ##  - «Трамплин» справа-впереди: подъём, площадка и обрыв — отрыв, приземление, просадка подвески.
+##  - «Обрыв» прямо по курсу за пандусами: пологий въезд на высокую площадку, у которой три
+##    стороны обрываются отвесно на пол. Здесь проверяется свес над кромкой (ledge_support_* в
+##    tank_movement.gd): танк, вывесивший центр масс за край, должен съезжать и падать носом
+##    вниз, а не «прилипать» ребром коллайдера. Высота ниже GameConfig.fall_damage_min_height —
+##    можно катать многократно без урона.
 ##
 ## Клавиши: R — вернуть танк на старт, T — вкл/выкл наклон корпуса (сравнить «до/после»),
 ## Y — вкл/выкл анимацию ходовой, F — вкл/выкл информационное табло.
@@ -59,6 +64,14 @@ const LIP_HEIGHTS := [0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.30, 0.40]
 const LIP_LANE_Z := 17.0
 const LIP_DEPTH := 3.0
 
+## «Обрыв»: площадка с отвесными краями и въездом-пандусом с юга. Высота — заметный, но
+## безвредный (< GameConfig.fall_damage_min_height 8.0) обрыв. Стоит за центральными полосами
+## пандусов (они не доезжают дальше z ≈ -7), три её края — чистые обрывы на пол.
+const OVERHANG_HEIGHT := 3.0
+const OVERHANG_SIZE := 8.0
+const OVERHANG_Z := -28.0
+const OVERHANG_RAMP_DEG := 22.0
+
 const COLOR_GROUND := Color(0.24, 0.42, 0.24)
 const COLOR_RAMP := Color(0.82, 0.74, 0.5)
 const COLOR_PLATFORM := Color(0.7, 0.66, 0.58)
@@ -81,6 +94,7 @@ func _ready() -> void:
 	_build_waves()
 	_build_side_slope()
 	_build_jump()
+	_build_overhang()
 	_build_info_panel()
 	_hull = _player.get_node("Hull")
 	_movement = _player.get_node("TankMovement")
@@ -297,6 +311,32 @@ func _build_jump() -> void:
 	)
 	_add_label("Трамплин %.0f°" % rad_to_deg(atan2(rise, run)), Vector3(14.0, rise + 2.0, -20.0))
 
+## «Обрыв»: площадка OVERHANG_SIZE² на высоте OVERHANG_HEIGHT, въезд-пандус с юга (yaw 0, верх
+## ложится РОВНО на южную кромку площадки — правило toy_ramp.gd). Три остальных края обрываются
+## отвесно на пол: заезжаешь, вывешиваешь корпус за кромку — танк должен съехать и упасть носом
+## вниз (ledge_support_* в tank_movement.gd), а не зависнуть ребром коллайдера.
+func _build_overhang() -> void:
+	var x := 0.0
+	var half := OVERHANG_SIZE * 0.5
+	var run: float = OVERHANG_HEIGHT / tan(deg_to_rad(OVERHANG_RAMP_DEG))
+	var south_edge: float = OVERHANG_Z + half
+	_add_box(
+		"OverhangPlatform",
+		Vector3(OVERHANG_SIZE, OVERHANG_HEIGHT, OVERHANG_SIZE),
+		Vector3(x, OVERHANG_HEIGHT * 0.5, OVERHANG_Z),
+		COLOR_PLATFORM
+	)
+	_add_ramp(
+		"OverhangRamp", Vector3(x, 0.0, south_edge + run), 0.0, run, OVERHANG_HEIGHT, RAMP_WIDTH, COLOR_RAMP
+	)
+	_add_label("Обрыв %.0f — свес над кромкой" % OVERHANG_HEIGHT, Vector3(x, OVERHANG_HEIGHT + 1.8, OVERHANG_Z))
+	# Метки долей свеса по северной кромке (дальней от въезда).
+	for f in [0.25, 0.5, 0.75]:
+		_add_label(
+			"%.0f%%" % (f * 100.0),
+			Vector3(x - half - 0.4, OVERHANG_HEIGHT + 0.3, OVERHANG_Z - half + OVERHANG_SIZE * (1.0 - f))
+		)
+
 # ---------------------------------------------------------------------------------------------
 # Обвязка: манекен и табло
 # ---------------------------------------------------------------------------------------------
@@ -349,6 +389,15 @@ func _info_text() -> String:
 			"вкл" if _hull.animate_running_gear else "ВЫКЛ"
 		],
 		"Множитель скорости от уклона: %.2f" % _movement._slope_speed_multiplier(forward * signf(speed)),
+		"Край: зазор ЦМ %+.2f м  подход %.0f%%  крен %.1f°/%.0f°   %s" % [
+			_movement.com_margin(),
+			_movement.edge_approach() * 100.0,
+			rad_to_deg(_movement.tip_angle()),
+			_movement.teeter_ponr_deg,
+			"КУВЫРОК" if _player.get_node("TumbleController").is_active() \
+				else ("TEETER" if _movement.com_margin() >= 0.0 \
+				else ("край рядом" if _movement.edge_approach() > 0.05 else ""))
+		],
 		"Позиция: (%.1f, %.1f, %.1f)" % [_player.global_position.x, _player.global_position.y, _player.global_position.z],
 	]
 	return "\n".join(lines)
