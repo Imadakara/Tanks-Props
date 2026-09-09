@@ -564,7 +564,14 @@ of it — farm weights, tier weights, tier meaning (raw range / ripen rate / cap
 `@export_file extraction_config_path` on the map root; see "Autoloads and per-tank config"). A
 non-loot roll drops the universal `Pickup` (ammo/medkit/shield — see "Pickups") or
 a `ModCrate` (mortar), placed straight on the ground. Nodes never respawn: the map is meant to run
-out of cover. `ExtractionManager` (code-created node, like `ScoreManager`) owns allocation,
+out of cover. The navmesh is **not** re-baked when a cube dies, so the cube's old footprint stays a
+conservative navmesh hole — a crate dropped dead-centre there is physically reachable but a bot's
+nav path stops at the hole rim. `_reachable_drop_point()` projects every drop
+(`NavigationServer3D.map_get_closest_point`) onto walkable navmesh: tight bounds for farm drops
+(`_NAV_FARM_MAX_XZ/Y` — nudge to the rim, never a different tier), wide bounds for death scatter
+(`_NAV_DEATH_MAX_XZ/Y` — carry loot out of a pit the tank fell into; a normal-ground death is a zero
+move). Deterministic — `map_get_closest_point` is stable on the seeded bake.
+`ExtractionManager` (code-created node, like `ScoreManager`) owns allocation,
 deposits, ripening, window scheduling, the beacon and banking. Auto-deposit / bank in
 `_physics_process` skips a tank falling through a zone's cylinder (both zones sit on raised kitchen
 tiers), which used to dump its cargo mid-air — so on a fall death the hold was already empty when
@@ -574,8 +581,8 @@ no tip, so no teeter and no tumble), `TumbleController.is_active()` (a tumble fr
 so `is_on_floor()` sticks at its last `true`), and `TankMovement.is_falling()` (BRINK / TEETER —
 still touching the ledge, `is_on_floor()` honestly `true`, but already going over). Death itself is
 dead simple: `_on_tank_destroyed` drops the **whole**
-hold as loose `LootCrate`s at the death spot, and loose crates are never auto-collected — they lie
-there until a tank drives into one or the round ends. A warehouse **is** the crates parked in the
+hold as loose `LootCrate`s at the death spot (projected onto reachable navmesh, see above), and
+loose crates are never auto-collected — they lie there until a tank drives into one or the round ends. A warehouse **is** the crates parked in the
 base circle, which is why raiding — and scouting a rich enemy base by eye — need no code of their own.
 
 `match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`

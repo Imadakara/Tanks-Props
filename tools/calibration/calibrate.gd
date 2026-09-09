@@ -254,6 +254,24 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 		_expect("deposit/bank skips teetering tanks", em_src.find("is_falling()") != -1,
 			"ExtractionManager._physics_process must skip teetering tanks for deposit/bank")
 
+	# Выпавшая добыча проецируется на достижимый навмеш: место снесённого куба само по себе —
+	# консервативная навмеш-дыра (см. obstacle.gd), бот к упавшему туда ящику не доедет.
+	if em != null:
+		_expect("ExtractionManager has _reachable_drop_point()", em.has_method("_reachable_drop_point"),
+			"loot-drop navmesh projection missing")
+		if em.has_method("_reachable_drop_point"):
+			# точка заведомо вне навмеша и далеко (высоко над картой) — границы отвергают проекцию,
+			# возвращается вход без изменений (лут не телепортируется через полкарты)
+			var far: Vector3 = Vector3(0.0, 500.0, 0.0)
+			_expect("far off-navmesh drop point left as-is", em._reachable_drop_point(far, 4.0, 3.0) == far,
+				"projection ignored its distance guard - loot would teleport across the map")
+			# точка у базы (заведомо на навмеше) — сдвиг в пределах фарм-границы, не дальше
+			var b0 = em._bases[0]
+			if b0 != null:
+				var near: Vector3 = (b0 as Node3D).global_position
+				var moved: float = near.distance_to(em._reachable_drop_point(near, 4.0, 3.0))
+				_expect("walkable drop point stays put", moved <= 4.5, "moved %.1f" % moved)
+
 	# Трюм и его связка с маскировкой — центральная сцепка концепции (§5).
 	var player := cs.get_node_or_null("PlayerTank")
 	if player != null:

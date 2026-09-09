@@ -43,6 +43,23 @@ const _GROUND_PROBE_UP: float = 2.0
 const _GROUND_PROBE_DOWN: float = 60.0
 ## Полувысота ящика — центр встаёт на эту высоту над опорой (то же, что у LootCrate/Pickup/ModCrate).
 const _REST_OFFSET: float = 0.3
+## Проекция точки выпадения ящика на ближайшую точку навмеша (см. `_reachable_drop_point`) — ящик
+## оказывается там, куда бот реально доедет. `_EPS` — ближе этого точка и так на навмеше,
+## проецировать незачем.
+## ФАРМ: куб-укрытие запечён в навмеш как препятствие, после сноса на его месте остаётся
+## КОНСЕРВАТИВНАЯ дыра проходимости (`obstacle.gd`) — навпуть бота обрывается на её кромке, а ящик,
+## упавший в центр бывшего куба, физически подбираем, но недостижим по навмешу. Границы тесные:
+## дыра от куба `2×2` + инфляция на радиус агента ≈ 3, дальше/разновысотнее «ближайшая» точка — это
+## уже соседний ярус, туда лут двигать нельзя.
+## СМЕРТЬ: танк мог свалиться в яму / за кромку, где навмеша нет вовсе — тогда лут лучше вынести на
+## ближайший достижимый край (кто-то подберёт), чем оставить в недосягаемой яме. Границы шире —
+## перепад до пары ярусов кухни, — но не через всю карту: улетевший ПОД карту по kill-plane танк за
+## этими пределами, его добыче пропасть не жалко (патология).
+const _NAV_PROJECT_EPS: float = 0.05
+const _NAV_FARM_MAX_XZ: float = 4.0
+const _NAV_FARM_MAX_Y: float = 3.0
+const _NAV_DEATH_MAX_XZ: float = 20.0
+const _NAV_DEATH_MAX_Y: float = 25.0
 ## Раскладка ящиков на складе: кольцо внутри круга базы, чтобы они не сливались в кучу и каждый
 ## можно было подобрать отдельно (склад делим по ящикам — концепт §7).
 const _PARK_RING_FRACTION: float = 0.55
@@ -250,7 +267,10 @@ func spawn_node_drop(node: Node3D) -> void:
 	var dk: int = int(node.get("drop_kind"))
 	if dk == FarmDrop.NOTHING:
 		return
-	var ground: Vector3 = _ground_under(node.global_position, node)
+	# Проецируем на проходимое место ДО спавна: место снесённого куба само по себе — навмеш-дыра,
+	# в которую бот не доедет (см. _reachable_drop_point).
+	var ground: Vector3 = _reachable_drop_point(
+			_ground_under(node.global_position, node), _NAV_FARM_MAX_XZ, _NAV_FARM_MAX_Y)
 	if dk == FarmDrop.LOOT:
 		if int(node.get("loot_value")) > 0:
 			_spawn_crate(ground, int(node.get("loot_value")), int(node.get("loot_rarity")), false)
@@ -299,6 +319,24 @@ func _spawn_crate(ground_point: Vector3, value: int, rarity: int, frozen: bool) 
 func _on_crate_picked_up(crate: Node, by_tank: Node) -> void:
 	if int(crate.owner_team) >= 0:
 		_deposit_lock[by_tank.get_instance_id()] = true
+
+
+## Ближайшая точка навмеша к `raw`, если она РЯДОМ и на ТОЙ ЖЕ высоте (границы — от вызывающего:
+## `_NAV_FARM_*` для фарма, `_NAV_DEATH_*` для россыпи при гибели). Иначе — сам `raw` без изменений.
+## Зачем: место снесённого куба и дно ямы, куда мог свалиться танк, — навмеш-дыры; ящик там
+## физически подбираем, но бот к нему по навпути не доедет. Детерминизм цел — `map_get_closest_point`
+## однозначен при том же запечённом навмеше (карта печётся детерминированно, `bake_navmesh_on_start`).
+## `closest` — точка НА полигоне навмеша (он приподнят/приспущен относительно реальной геометрии),
+## поэтому настоящую опору под ней всё равно доищем лучом, как для любого спавна.
+func _reachable_drop_point(raw: Vector3, max_xz: float, max_y: float) -> Vector3:
+	var map: RID = get_viewport().find_world_3d().get_navigation_map()
+	if not map.is_valid():
+		return raw
+	var closest: Vector3 = NavigationServer3D.map_get_closest_point(map, raw)
+	var xz: float = Vector2(closest.x - raw.x, closest.z - raw.z).length()
+	if xz <= _NAV_PROJECT_EPS or xz > max_xz or absf(closest.y - raw.y) > max_y:
+		return raw
+	return _ground_under(Vector3(closest.x, raw.y, closest.z))
 
 
 ## Опора под точкой. Ничего не нашли (танк провалился ниже карты / куб висел над пустотой) —
@@ -554,7 +592,9 @@ func _watch_tank(tank: Node) -> void:
 
 ## Смерть дешева, дорого стоит ВЛАДЕНИЕ добычей (концепт §10): убитый роняет весь трюм на землю с
 ## сохранённой ценностью, поднять может кто угодно. Это и даёт отстающей команде роль хищника
-## вместо приговора.
+## вместо приговора. Каждый ящик проецируем на достижимый навмеш (широкие границы `_NAV_DEATH_*`):
+## танк мог свалиться в яму / за кромку, где навмеша нет, — тогда лут выносится на ближайший край,
+## а не остаётся в недосягаемой дыре. На нормальной земле проекция — почти нулевой сдвиг.
 func _on_tank_destroyed(_killer: Node, tank: Node) -> void:
 	if _halted or not is_instance_valid(tank):
 		return
@@ -569,4 +609,6 @@ func _on_tank_destroyed(_killer: Node, tank: Node) -> void:
 		if lots.size() > 1:
 			var a: float = TAU * float(i) / float(lots.size())
 			offset = Vector3(cos(a) * 1.2, 0.0, sin(a) * 1.2)
-		_spawn_crate(_ground_under(ground + offset), int(lots[i]["value"]), int(lots[i].get("rarity", 0)), bool(lots[i]["frozen"]))
+		var drop: Vector3 = _reachable_drop_point(
+				_ground_under(ground + offset), _NAV_DEATH_MAX_XZ, _NAV_DEATH_MAX_Y)
+		_spawn_crate(drop, int(lots[i]["value"]), int(lots[i].get("rarity", 0)), bool(lots[i]["frozen"]))
