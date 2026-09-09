@@ -519,13 +519,18 @@ this mode (Атака/Оборона in TARGET_OBJECTIVE).
 
 **EXTRACTION** (`KitchenMap.tscn`, mode 2) — deliberately **not** CTF: reaching your base does not
 score. Value passes four states and only the last one counts — a loose `LootCrate` on the map ⇒
-lots inside a `CargoHold` (no nodes) ⇒ a crate parked in your base circle, ripening toward
-`loot_ripe_multiplier` ⇒ **banked** by driving it into an open evacuation point. The round always
-runs its full `extraction_round_sec` (300 s); everything unbanked burns, so it never ends early.
-The load-bearing rule is `CargoHold.blocks_disguise()` — **cargo forbids disguise** (and slows you
-per crate) — which welds the economy to prop hunt; `DisguiseController`, the HUD and the bot all
-read that one predicate. Loot hides inside ordinary `Obstacle` cubes: every cube carries a
-`HealthComponent` and is destructible, only some hold loot, and the allocation is seeded
+lots inside a `CargoHold` (no nodes) ⇒ a crate parked in your base circle, ripening **linearly** at
+a per-rarity rate toward a per-rarity cap ⇒ **banked** by driving it into an open evacuation point.
+Each crate is one of four **rarity tiers** (weights ~0.70/0.20/0.07/0.03), rolled at allocation from
+the seed; the tier sets its raw-value range, ripen rate and cap, and its colour. The match is one
+round ≈10 min: five evacuation windows, first at 120 s then every 120 s, and it **ends the moment
+the last window closes** — `RoundTimer.wait_time` is set from `ExtractionManager.total_match_sec()`
+(`first + interval*(count-1) + duration` = 640 s), there is no fixed `extraction_round_sec`.
+Everything unbanked burns; the round never ends early. The load-bearing rule is
+`CargoHold.blocks_disguise()` — **cargo forbids disguise** (and slows you per crate) — which welds
+the economy to prop hunt; `DisguiseController`, the HUD and the bot all read that one predicate.
+Loot hides inside ordinary `Obstacle` cubes: every cube carries a `HealthComponent` and is
+destructible, only some hold loot (`loot_node_count`), and the allocation is seeded
 (`MatchState.loot_seed`) — a loot cube is indistinguishable from an empty one and from a disguised
 tank, which is the point. Nodes never respawn: the map is meant to run out of cover.
 `ExtractionManager` (code-created node, like `ScoreManager`) owns allocation, deposits, ripening,

@@ -25,9 +25,13 @@ signal picked_up(crate: Node, by_tank: Node)
 ## уходит под пол. То же число и та же причина, что у AmmoCrate/ModCrate.
 const _REST_OFFSET: float = 0.3
 
-## Базовая (сырая) ценность. Ставится создателем: случайная `loot_raw_value_min..max` (свой ролл на
-## каждый ящик) для свежевыбитого, накопленная — для выброшенного из трюма или украденного.
+## Базовая (сырая) ценность. Ставится создателем: случайная из диапазона своего яруса редкости
+## (`GameConfig.loot_rarity_raw_*`) для свежевыбитого, накопленная — для выброшенного из трюма или
+## украденного.
 var base_value: int = 0
+## Ярус редкости 0..3 (обычный … легендарный). Задаёт диапазон сырой ценности, скорость и потолок
+## дозревания, цвет. Ставится создателем вместе с `base_value`, едет вместе с лотом через трюм.
+var rarity: int = 0
 var state: int = State.LOOSE
 ## Украденное со склада не дозревает дальше (§7: грабёж выгоден, но не выгоднее честной добычи).
 ## Флаг едет вместе с лотом через трюм и возвращается на ящик при выгрузке.
@@ -47,23 +51,30 @@ func _ready() -> void:
 	set_physics_process(false)  # часы идут только на складе, см. set_stored()
 	_refresh_visual()
 
-## Текущая ценность с учётом дозревания. Множитель растёт линейно от 1 до
-## `GameConfig.loot_ripe_multiplier` за `GameConfig.loot_ripen_sec` и упирается в потолок — без
-## потолка не было бы причины вывозить раньше последнего окна (концепт §4).
+## Индекс яруса, зажатый по фактическому размеру таблиц редкости — защита от битого значения.
+func _rar() -> int:
+	return clampi(rarity, 0, GameConfig.loot_rarity_weights.size() - 1)
+
+## Текущая ценность: сырое значение ПЛЮС линейный прирост за время на складе
+## (`loot_rarity_ripen_per_sec` очков/сек своего яруса), зажатый потолком яруса
+## (`loot_rarity_ripen_cap`). Не множитель — поэтому «обработка» дешёвого обычного ящика и дорогого
+## легендарного растут по-разному и в абсолюте, и по скорости. Не на складе / украденное — сырое.
 func current_value() -> int:
-	return int(round(float(base_value) * ripeness_multiplier()))
-
-func ripeness_multiplier() -> float:
 	if state != State.STORED or frozen:
-		return 1.0
-	var t: float = clampf(stored_elapsed / maxf(GameConfig.loot_ripen_sec, 0.001), 0.0, 1.0)
-	return lerpf(1.0, GameConfig.loot_ripe_multiplier, t)
+		return base_value
+	var rate: int = GameConfig.loot_rarity_ripen_per_sec[_rar()]
+	var cap: int = GameConfig.loot_rarity_ripen_cap[_rar()]
+	return mini(base_value + int(round(float(rate) * stored_elapsed)), cap)
 
-## Доля дозревания 0..1 — для визуала и для решений бота («самый спелый»).
+## Доля дозревания 0..1 (визуал + решение бота «самый спелый») — насколько ценность прошла путь от
+## сырой к потолку своего яруса.
 func ripeness() -> float:
 	if state != State.STORED or frozen:
 		return 0.0
-	return clampf(stored_elapsed / maxf(GameConfig.loot_ripen_sec, 0.001), 0.0, 1.0)
+	var span: int = GameConfig.loot_rarity_ripen_cap[_rar()] - base_value
+	if span <= 0:
+		return 1.0
+	return clampf(float(current_value() - base_value) / float(span), 0.0, 1.0)
 
 ## Положить на землю: свободная добыча, часы стоят. `ground_point` — точка на РЕАЛЬНОЙ поверхности
 ## (рейкаст делает вызывающий: только он знает, откуда падает ящик).
@@ -88,8 +99,8 @@ func _physics_process(delta: float) -> void:
 	if state != State.STORED or frozen:
 		set_physics_process(false)
 		return
-	if stored_elapsed >= GameConfig.loot_ripen_sec:
-		set_physics_process(false)  # дозрел до потолка — дальше считать нечего
+	if current_value() >= GameConfig.loot_rarity_ripen_cap[_rar()]:
+		set_physics_process(false)  # дозрел до потолка яруса — дальше считать нечего
 		_refresh_visual()
 		return
 	stored_elapsed += delta
@@ -102,21 +113,24 @@ func _on_body_entered(body: Node) -> void:
 	var hold: Node = body.get_node_or_null("CargoHold")
 	if hold == null:
 		return
-	if not hold.try_take(current_value(), frozen or state == State.STORED, state == State.STORED):
+	if not hold.try_take(current_value(), frozen or state == State.STORED, state == State.STORED, _rar()):
 		return
 	picked_up.emit(self, body)
 	queue_free()
 
-## Цвет и подпись отражают СПЕЛОСТЬ — без этого главное решение концепции («вывезти сейчас дешевле
-## или подождать дороже», §9) было бы принципиально невидимым для игрока. Это не отладочный
-## визуал: спелость — игровая информация, доступная всем, кто доехал и посмотрел.
+## Цвет = ЯРУС РЕДКОСТИ (виден издалека, задаёт масштаб ценности), яркость += СПЕЛОСТЬ, число над
+## ящиком = текущая ценность. Всё это игровая информация, доступная всем, кто доехал и посмотрел, —
+## без неё решения «стрелять / не стрелять» и «вывезти сейчас или дороже потом» были бы вслепую.
 func _refresh_visual() -> void:
 	if _label == null:
 		return
 	_label.text = str(current_value())
+	var col: Color = GameConfig.loot_rarity_color[_rar()]
+	_label.modulate = col.lerp(Color.WHITE, 0.4)
 	var mesh: MeshInstance3D = $CrateMesh
 	var mat: StandardMaterial3D = mesh.material_override as StandardMaterial3D
 	if mat == null:
 		return
-	# сырой — тусклый серо-зелёный, спелый — золотой; украденный всегда выглядит сырым (не растёт)
-	mat.albedo_color = Color(0.45, 0.5, 0.42).lerp(Color(0.95, 0.78, 0.15), ripeness())
+	# сырой ящик — приглушённый цвет яруса, дозревший — цвет в полную силу; украденный всегда
+	# выглядит сырым (не растёт).
+	mat.albedo_color = col.darkened(0.4).lerp(col, ripeness())

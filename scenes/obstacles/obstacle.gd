@@ -41,6 +41,8 @@ extends StaticBody3D
 ## куб НИЧЕМ не отличается от пустого и от замаскированного танка: в этом весь смысл (концепт §6 —
 ## выстрел по кубу это ставка с тремя исходами).
 var loot_value: int = 0
+## Ярус редкости выпадающего ящика 0..3. Раздаётся там же и тогда же, что и `loot_value`.
+var loot_rarity: int = 0
 
 func _ready() -> void:
 	_apply()
@@ -85,4 +87,4 @@ func _on_destroyed(_killer: Node) -> void:
 	if mgr == null:
 		return
 	# Передаём СЕБЯ, чтобы поиск опоры не наткнулся на собственный ещё живой коллайдер.
-	mgr.spawn_loose_loot(global_position, loot_value, self)
+	mgr.spawn_loose_loot(global_position, loot_value, loot_rarity, self)

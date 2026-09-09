@@ -63,7 +63,8 @@ extends Node
 ## Полное описание цикла — Tank_Prop_Hunt_Extraction_Loop_Concept.md, техрешения —
 ## Tank_Prop_Hunt_Extraction_Loop_TZ.md. Здесь ВЕСЬ числовой баланс режима: в коде правил
 ## (extraction_manager.gd, cargo_hold.gd, loot_crate.gd) не должно быть ни одного числа.
-@export var extraction_round_sec: float = 300.0  # единственный раунд, 5 минут
+## Длину матча задаёт расписание окон эвакуации (extraction_window_* ниже): матч кончается, когда
+## закрывается последнее окно (`ExtractionManager.total_match_sec()`). Отдельного «раунд N секунд» нет.
 ## Насколько танк может отличаться по высоте от центра зоны (склад, точка выхода), чтобы попадание
 ## в круг засчиталось. На многоуровневой карте под базой проходит пол — без этого выгрузка
 ## срабатывала бы этажом ниже склада.
@@ -75,18 +76,23 @@ extends Node
 ## Сколько кубов карты содержат лут. Раздаётся детерминированно по MatchState.loot_seed среди ВСЕХ
 ## кубов группы "obstacles" — визуально лутовый куб неотличим от пустого и от замаскированного танка.
 @export var loot_node_count: int = 10
-## Сырая ценность только что выбитого ящика — случайна в диапазоне [min, max], свой ролл на КАЖДЫЙ
-## ящик (детерминированно по MatchState.loot_seed). Смысл разброса — находить разные по ценности
-## сырые ящики; на дозревание на складе и его потолок это никак не влияет.
-@export var loot_raw_value_min: int = 1
-@export var loot_raw_value_max: int = 10
-
-## Склад. Припаркованный на своей базе ящик дорожает от ×1 до этого потолка за loot_ripen_sec.
-## Потолок обязателен (концепт §4): без него нет причины вывозить раньше последнего окна.
-@export var loot_ripe_multiplier: float = 2.0
-## За сколько секунд на складе ящик дозревает до потолка. Должно быть НЕ МЕНЬШЕ интервала окон,
-## иначе рост ценности превращается в декорацию (концепт §13, критерий 3).
-@export var loot_ripen_sec: float = 90.0
+## --- Редкость ящиков. Четыре яруса; индекс = ярус (0 обычный … 3 легендарный). Все массивы строго
+## по 4 элемента. Разлом «обработки на складе» именно здесь: обычный ящик и растёт медленно, и
+## упирается в низкий потолок; легендарный — быстро и до высокого.
+@export var loot_rarity_names: PackedStringArray = PackedStringArray(["Обычный", "Редкий", "Эпический", "Легендарный"])
+## Шанс, что разрушенный ЛУТОВЫЙ куб отдаст ящик этого яруса. Сумма строго 1.0.
+@export var loot_rarity_weights: PackedFloat32Array = PackedFloat32Array([0.70, 0.20, 0.07, 0.03])
+## Сырая ценность свежевыбитого ящика — случайна в [min, max] своего яруса, свой ролл на каждый.
+@export var loot_rarity_raw_min: PackedInt32Array = PackedInt32Array([1, 5, 10, 20])
+@export var loot_rarity_raw_max: PackedInt32Array = PackedInt32Array([10, 15, 25, 50])
+## Прибавка ценности за каждую секунду на складе (очков/сек) — линейный прирост, не множитель.
+@export var loot_rarity_ripen_per_sec: PackedInt32Array = PackedInt32Array([1, 2, 3, 4])
+## Потолок ценности на складе: дозрев до него, ящик больше не растёт (концепт §4 — без потолка нет
+## причины вывозить раньше последнего окна).
+@export var loot_rarity_ripen_cap: PackedInt32Array = PackedInt32Array([75, 150, 300, 500])
+## Цвет ящика яруса — виден издалека, задаёт масштаб ценности; спелость добавляет яркости поверх
+## (loot_crate.gd._refresh_visual()).
+@export var loot_rarity_color: PackedColorArray = PackedColorArray([Color(0.62, 0.64, 0.66), Color(0.28, 0.55, 1.0), Color(0.62, 0.3, 0.9), Color(1.0, 0.55, 0.12)])
 
 ## Трюм. Вместимость — сколько СВОБОДНЫХ ящиков танк увозит за раз. Ящик со склада всегда ровно
 ## один и только в пустой трюм («главный замок», концепт §4) — это правило в cargo_hold.gd, не число.
@@ -94,14 +100,14 @@ extends Node
 ## Штраф к скорости за КАЖДЫЙ ящик в трюме (мультипликативно). 0.85 при трёх ящиках даёт ×0.61.
 @export var cargo_speed_penalty_per_lot: float = 0.85
 
-## Окна эвакуации. Расписание известно заранее, точка — нет (концепт §8).
-@export var extraction_first_window_sec: float = 75.0   # когда открывается первое окно от старта раунда
-@export var extraction_window_interval_sec: float = 75.0  # период между открытиями
-@export var extraction_window_duration_sec: float = 35.0  # длительность окна
-@export var extraction_announce_lead_sec: float = 12.0    # за сколько до открытия объявляется точка
-## Последнее окно обязано ЗАКРЫТЬСЯ не позже, чем за столько до конца раунда — иначе матч сводится
-## к финальной свалке (концепт §8).
-@export var extraction_last_window_margin_sec: float = 40.0
+## Окна эвакуации. Расписание известно заранее, точка — нет (концепт §8). Первое окно через `first`
+## от старта, дальше каждые `interval`, всего `count` штук. Матч заканчивается ровно в момент
+## закрытия последнего окна — см. `ExtractionManager.total_match_sec()`.
+@export var extraction_first_window_sec: float = 120.0
+@export var extraction_window_interval_sec: float = 120.0
+@export var extraction_window_duration_sec: float = 40.0
+@export var extraction_window_count: int = 5
+@export var extraction_announce_lead_sec: float = 15.0    # за сколько до открытия объявляется точка
 
 ## Каденс красного ящика мортиры в режиме EXTRACTION — РЕЖЕ, чем в TARGET_OBJECTIVE (30 с):
 ## мортира там эпизодическое усиление, а не постоянная опция.

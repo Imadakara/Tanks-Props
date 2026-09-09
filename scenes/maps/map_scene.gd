@@ -340,19 +340,18 @@ func _setup_match_context() -> void:
 	var round_sec: float = GameConfig.round_timer_sec
 	if match_mode == MatchState.Mode.TEAM_ARENA:
 		round_sec = GameConfig.team_arena_round_sec
-	elif match_mode == MatchState.Mode.EXTRACTION:
-		round_sec = GameConfig.extraction_round_sec
 
 	# Правила режима EXTRACTION целиком (раздача добычи по кубам, склады, окна эвакуации, банк,
 	# россыпь трюма при гибели) — отдельный менеджер. Тот же паттерн «узел из кода в корне сцены»,
 	# что у ScoreManager, и тот же порядок: после спавна состава, до MatchManager, который читает у
-	# него счёт при подведении итога.
+	# него счёт при подведении итога. Длину матча в этом режиме задаёт он же — по расписанию окон.
 	if match_mode == MatchState.Mode.EXTRACTION:
 		_extraction_manager = Node.new()
 		_extraction_manager.name = "ExtractionManager"
 		_extraction_manager.set_script(ExtractionManagerScript)
 		add_child(_extraction_manager)
 		_extraction_manager.setup()
+		round_sec = _extraction_manager.total_match_sec()
 
 	# Полноценный постраундовый цикл (см. match_manager.gd): TARGET_OBJECTIVE — уничтожение цели →
 	# победа атаки / таймаут → победа защиты; TEAM_ARENA — таймаут → победитель по убийствам; плюс

@@ -37,7 +37,7 @@ const _MAP_EXPECT := {
 		"final_stage": true, "border": true,
 	},
 	"KitchenMap": {
-		"mode": 2, "total_rounds": 1, "round_sec": 300.0,
+		"mode": 2, "total_rounds": 1, "round_sec": 640.0,  # 120 + 120*4 + 40 — момент закрытия 5-го (последнего) окна эвакуации
 		"objectives": 0, "turrets_min": 0,
 		"final_stage": false, "border": false,  # kitchen furniture is the boundary; .tscn sets map_border_enabled = false
 	},
@@ -208,6 +208,19 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 		if "loot_value" in c and int(c.loot_value) > 0:
 			with_loot += 1
 	_expect("every cube is destructible", undamageable == 0, "%d cube(s) without HealthComponent" % undamageable)
+	# Каждый лутовый куб: ярус редкости 0..3 и сырое значение в диапазоне ЭТОГО яруса.
+	if gc != null:
+		var rar_bad := 0
+		for c in cubes:
+			if not ("loot_value" in c) or int(c.loot_value) <= 0:
+				continue
+			var rr: int = int(c.loot_rarity)
+			if rr < 0 or rr >= gc.loot_rarity_weights.size():
+				rar_bad += 1
+			elif int(c.loot_value) < gc.loot_rarity_raw_min[rr] or int(c.loot_value) > gc.loot_rarity_raw_max[rr]:
+				rar_bad += 1
+		_expect("loot rarity + raw value consistent", rar_bad == 0,
+			"%d loot node(s) with a bad rarity or out-of-range raw value" % rar_bad)
 	# Лут роздан, но НЕ во все кубы — иначе стрельба по любому укрытию всегда окупалась бы.
 	var loose := st.get_nodes_in_group("loot_crates").size()
 	if gc != null:

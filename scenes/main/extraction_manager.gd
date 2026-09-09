@@ -100,27 +100,43 @@ func _allocate_loot_nodes() -> void:
 		cubes[j] = tmp
 	var count: int = mini(GameConfig.loot_node_count, cubes.size())
 	for i in range(count):
-		# Свой ролл на каждый узел, из того же зерна и в уже стасованном порядке — значение ящика
-		# решается здесь, при раздаче. Узлы не респавнятся, так что это и есть «ценность при спавне
-		# ящика», и порядок роллов не зависит от того, в каком порядке кубы будут разбиты.
-		cubes[i].loot_value = _rng.randi_range(GameConfig.loot_raw_value_min, GameConfig.loot_raw_value_max)
+		# Свой ролл яруса и сырой ценности на каждый узел, из того же зерна и в уже стасованном
+		# порядке — раскладка добычи детерминирована и не зависит от того, в каком порядке кубы
+		# будут разбиты. Узлы не респавнятся: этот ролл и есть «ценность при спавне ящика».
+		var rar: int = _roll_rarity()
+		cubes[i].loot_rarity = rar
+		cubes[i].loot_value = _rng.randi_range(
+			GameConfig.loot_rarity_raw_min[rar], GameConfig.loot_rarity_raw_max[rar])
+
+
+## Ярус ящика тянется из зерна по весам `GameConfig.loot_rarity_weights` (в сумме 1.0).
+func _roll_rarity() -> int:
+	var w: PackedFloat32Array = GameConfig.loot_rarity_weights
+	var r: float = _rng.randf()
+	var acc: float = 0.0
+	for i in range(w.size() - 1):
+		acc += w[i]
+		if r < acc:
+			return i
+	return w.size() - 1
 
 
 ## Публичный вход для куба, который только что развалился (`obstacle.gd._on_destroyed`).
-func spawn_loose_loot(from_pos: Vector3, value: int, ignore_body: Node = null) -> void:
+func spawn_loose_loot(from_pos: Vector3, value: int, rarity: int, ignore_body: Node = null) -> void:
 	if _halted:
 		return
 	# `ignore_body` — сам разваливающийся куб. Его коллайдер в этот момент ЕЩЁ ЖИВ (queue_free()
 	# отрабатывает после сигнала destroyed), и без исключения луч находил бы КРЫШУ куба: ящик
 	# зависал бы на его высоте над реальной опорой и становился физически неподбираемым.
-	_spawn_crate(_ground_under(from_pos, ignore_body), value, false)
+	_spawn_crate(_ground_under(from_pos, ignore_body), value, rarity, false)
 
 
 # --- Ящики -------------------------------------------------------------------------------------
 
-func _spawn_crate(ground_point: Vector3, value: int, frozen: bool) -> Node3D:
+func _spawn_crate(ground_point: Vector3, value: int, rarity: int, frozen: bool) -> Node3D:
 	var crate: Node3D = LootCrateScene.instantiate()
 	crate.base_value = value
+	crate.rarity = rarity
 	crate.frozen = frozen
 	crate.picked_up.connect(_on_crate_picked_up)
 	get_tree().current_scene.add_child(crate)
@@ -201,6 +217,7 @@ func _deposit(hold: Node, team: int, base: Node3D) -> void:
 	for lot in hold.take_all():
 		var crate: Node3D = LootCrateScene.instantiate()
 		crate.base_value = int(lot["value"])
+		crate.rarity = int(lot.get("rarity", 0))
 		crate.frozen = bool(lot["frozen"])
 		crate.picked_up.connect(_on_crate_picked_up)
 		get_tree().current_scene.add_child(crate)
@@ -250,18 +267,24 @@ func _inside(tank: Node3D, zone: Node3D) -> bool:
 
 ## Расписание известно заранее (концепт §8) — считается арифметикой от старта раунда, а не
 ## таймерами: так в любой момент можно сказать, когда следующее окно, не заводя лишних узлов.
+## Всего окон — `extraction_window_count`; после последнего окон больше нет, и в момент его
+## закрытия заканчивается матч (RoundTimer выставлен на `total_match_sec()`).
 func _schedule_next_window() -> void:
-	var open_at: float = GameConfig.extraction_first_window_sec \
-		+ GameConfig.extraction_window_interval_sec * float(_next_window_index)
-	var close_at: float = open_at + GameConfig.extraction_window_duration_sec
-	# Последнее окно обязано закрыться заметно раньше конца матча, иначе исход сводится к финальной
-	# свалке на пятачке (концепт §8).
-	if close_at > GameConfig.extraction_round_sec - GameConfig.extraction_last_window_margin_sec:
+	if _next_window_index >= GameConfig.extraction_window_count:
 		_window_open_at = INF
 		_window_close_at = INF
 		return
-	_window_open_at = open_at
-	_window_close_at = close_at
+	_window_open_at = GameConfig.extraction_first_window_sec \
+		+ GameConfig.extraction_window_interval_sec * float(_next_window_index)
+	_window_close_at = _window_open_at + GameConfig.extraction_window_duration_sec
+
+
+## Полная длина матча = момент закрытия последнего окна. Единый источник и для RoundTimer
+## (map_scene.gd читает отсюда при setup), и для расписания выше.
+func total_match_sec() -> float:
+	return GameConfig.extraction_first_window_sec \
+		+ GameConfig.extraction_window_interval_sec * float(maxi(GameConfig.extraction_window_count - 1, 0)) \
+		+ GameConfig.extraction_window_duration_sec
 
 
 func _tick_window() -> void:
@@ -370,4 +393,4 @@ func _on_tank_destroyed(_killer: Node, tank: Node) -> void:
 		if lots.size() > 1:
 			var a: float = TAU * float(i) / float(lots.size())
 			offset = Vector3(cos(a) * 1.2, 0.0, sin(a) * 1.2)
-		_spawn_crate(_ground_under(ground + offset), int(lots[i]["value"]), bool(lots[i]["frozen"]))
+		_spawn_crate(_ground_under(ground + offset), int(lots[i]["value"]), int(lots[i].get("rarity", 0)), bool(lots[i]["frozen"]))

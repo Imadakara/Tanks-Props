@@ -2,7 +2,7 @@ extends Node
 ## CargoHold — трюм танка: сколько ценности он везёт ПРЯМО СЕЙЧАС и чем за это платит.
 ##
 ## Компонент-сиблинг под корнем `Tank.tscn`, как остальные части танка. Хранит не узлы, а «лоты» —
-## `{value: int, frozen: bool}`: пока ящик едет, физического узла не существует (см.
+## `{value: int, frozen: bool, rarity: int}`: пока ящик едет, физического узла не существует (см.
 ## `scenes/loot/loot_crate.gd` — четыре состояния ценности).
 ##
 ## ЦЕНТРАЛЬНАЯ СВЯЗКА КОНЦЕПЦИИ (§5): гружёный танк **не может маскироваться** и едет медленнее.
@@ -19,7 +19,7 @@ extends Node
 
 signal cargo_changed(lots: int, total_value: int)
 
-## Список лотов: `{"value": int, "frozen": bool}`. Порядок = порядок подбора.
+## Список лотов: `{"value": int, "frozen": bool, "rarity": int}`. Порядок = порядок подбора.
 var _lots: Array[Dictionary] = []
 ## true — в трюме ящик, взятый со склада: добор запрещён до выгрузки/сдачи/гибели.
 var _withdrawn: bool = false
@@ -56,13 +56,13 @@ func speed_multiplier() -> float:
 ## Попытка принять ящик. `frozen` — не дозревает дальше (украденное/уже дозревшее);
 ## `from_warehouse` — ящик взят с ЧЬЕГО-ЛИБО склада, значит действует правило «только один и только
 ## в пустой трюм». false — подбор не состоялся, ящик остаётся лежать (это не ошибка, а штатный отказ).
-func try_take(value: int, frozen: bool, from_warehouse: bool) -> bool:
+func try_take(value: int, frozen: bool, from_warehouse: bool, rarity: int = 0) -> bool:
 	if from_warehouse:
 		if not _lots.is_empty():
 			return false
 	elif is_full() or _withdrawn:
 		return false
-	_lots.append({"value": value, "frozen": frozen})
+	_lots.append({"value": value, "frozen": frozen, "rarity": rarity})
 	if from_warehouse:
 		_withdrawn = true
 	cargo_changed.emit(_lots.size(), total_value())
