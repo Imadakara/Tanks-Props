@@ -1,0 +1,66 @@
+{
+  "_comment": "Баланс выпадения в режиме EXTRACTION. Путь задаётся @export extraction_config_path на корне карты (map_scene.gd); одна карта = один файл. Читает ExtractionManager.setup(). Справочник — Tank_Prop_Hunt_Extraction_Mode.md §8.",
+  "loot_node_count": 10,
+  "farm_drop_weights": {
+    "loot": 0.5,
+    "nothing": 0.2,
+    "ammo": 0.2,
+    "mortar": 0.02,
+    "medkit": 0.05,
+    "shield": 0.03
+  },
+  "rarity_tiers": [
+    {
+      "name": "Обычный",
+      "weight": 0.7,
+      "raw_min": 1,
+      "raw_max": 10,
+      "ripen_per_sec": 1,
+      "ripen_cap": 75,
+      "color": [
+        0.62,
+        0.64,
+        0.66
+      ]
+    },
+    {
+      "name": "Редкий",
+      "weight": 0.2,
+      "raw_min": 5,
+      "raw_max": 15,
+      "ripen_per_sec": 2,
+      "ripen_cap": 150,
+      "color": [
+        0.28,
+        0.55,
+        1
+      ]
+    },
+    {
+      "name": "Эпический",
+      "weight": 0.07,
+      "raw_min": 10,
+      "raw_max": 25,
+      "ripen_per_sec": 3,
+      "ripen_cap": 300,
+      "color": [
+        0.62,
+        0.3,
+        0.9
+      ]
+    },
+    {
+      "name": "Легендарный",
+      "weight": 0.03,
+      "raw_min": 20,
+      "raw_max": 50,
+      "ripen_per_sec": 4,
+      "ripen_cap": 500,
+      "color": [
+        1,
+        0.55,
+        0.12
+      ]
+    }
+  ]
+}

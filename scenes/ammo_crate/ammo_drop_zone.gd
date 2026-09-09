@@ -22,9 +22,11 @@ extends Marker3D
 ##
 ## Смысл механики: заставить расходовать боезапас тактичнее, добавить точку интереса на карте.
 
-## Ссылка на сцену ящика через preload, НЕ class_name — headless `run_project` не подхватывает
+## Ссылки на сцены через preload, НЕ class_name — headless `run_project` не подхватывает
 ## свежедобавленный class_name без пересканирования редактором (грабля проекта, см. CLAUDE.md).
-const AmmoCrateScene := preload("res://scenes/ammo_crate/AmmoCrate.tscn")
+## Зона роняет УНИВЕРСАЛЬНЫЙ `Pickup` (боеприпасы / аптечка / щит — один узел, тип задаётся строкой
+## kind_id, числа эффекта — в config/pickups.json).
+const PickupScene := preload("res://scenes/pickups/Pickup.tscn")
 ## Красный ящик модификации (см. Tank_Prop_Hunt_Modifications.md). Тот же префаб-механизм зоны
 ## роняет и его — отдельным каденсом (см. _mortar_timer / _on_mortar_drop_tick).
 const ModCrateScene := preload("res://scenes/mod_crate/ModCrate.tscn")
@@ -32,8 +34,13 @@ const ModCrateScene := preload("res://scenes/mod_crate/ModCrate.tscn")
 ## Все `DropOrigin` на карте — в этой группе; по ней лидер собирает список зон карты.
 const _GROUP := "ammo_drop_zones"
 
-## Содержимое одного ящика (ТЗ — 3). Настраивается на каждой зоне отдельно.
+## Содержимое одного ящика ПАТРОНОВ (ТЗ — 3). Настраивается на каждой зоне отдельно; уезжает в
+## `Pickup.amount_override`, где перебивает `ammo_amount` из config/pickups.json.
 @export var ammo_per_crate: int = 3
+## Какие типы бонусов роняет эта зона: id из config/pickups.json (`ammo` / `medkit` / `shield`).
+## Пусто → только `ammo` (обратная совместимость). Задан список — зона роняет случайный из него
+## каждый тик. Так аптечка/щит «появляются в зоне сброса», распределение — решение дизайнера карты.
+@export var pickup_kind_ids: PackedStringArray = PackedStringArray()
 ## Раз в столько секунд боя — сброс ОДНОГО ящика на случайной зоне карты. Действует значение
 ## зоны-лидера (см. шапку); на остальных зонах игнорируется.
 @export var drop_interval_sec: float = 30.0
@@ -53,8 +60,8 @@ const _GROUP := "ammo_drop_zones"
 @export var max_pending_mortar_crates: int = 1
 
 const _PLACEMENT_ATTEMPTS: int = 20
-## environment(1) | tanks(2) | ammo_crates(32) | mod_crates(64) | loot_crates(128) — не ронять в
-## стену/дом/танк/чужой ящик (патроны, мортира или ящик добычи режима EXTRACTION).
+## environment(1) | tanks(2) | pickups(32) | mod_crates(64) | loot_crates(128) — не ронять в
+## стену/дом/танк/чужой ящик (бонус-Pickup, мортира или ящик добычи режима EXTRACTION).
 ## Та же маска и приём (sphere query), что в match_manager._find_free_crate_position.
 const _PROBE_MASK: int = 227
 const _PROBE_RADIUS: float = 0.6
@@ -206,12 +213,19 @@ func _try_drop() -> bool:
 	var target: Variant = _pick_drop_point()
 	if target == null:
 		return false
-	var crate: Node3D = AmmoCrateScene.instantiate()
-	crate.ammo_amount = ammo_per_crate
+	var crate: Node3D = PickupScene.instantiate()
+	crate.kind_id = _pick_pickup_kind_id()
+	crate.amount_override = ammo_per_crate  # используется только патронным типом (см. pickup.gd)
 	get_tree().current_scene.add_child(crate)
 	crate.fall_to(target, global_position.y, fall_speed)
 	_pending.append(crate)
 	return true
+
+## Тип роняемого бонуса: случайный id из `pickup_kind_ids`, либо &"ammo", если список пуст.
+func _pick_pickup_kind_id() -> StringName:
+	if pickup_kind_ids.is_empty():
+		return &"ammo"
+	return StringName(pickup_kind_ids[randi() % pickup_kind_ids.size()])
 
 ## Случайная точка круга (_area.pick_spawn_position, где _area == родительский AmmoDropZone на
 ## spawn_zone.gd — равномерная по площади + raycast на

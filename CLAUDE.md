@@ -183,7 +183,9 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   `spring_length` interpolate by `smoothstep` over the up-pitch range so at the top of the aim the
   camera clears the turret roof and sits close behind; looking down is untouched. Camera
   `pitch_max_deg` 25° keeps a margin over the gun's 20°. GTA-style level-follow during a tumble
-  (`set_tumble_follow(true)`).
+  (`set_tumble_follow(true)`). Orientation lives entirely in `_world_yaw` / `_pitch`, which death
+  and respawn don't touch — so `reset_to_default()` is wired to `RespawnController.respawned`
+  (else the camera stays tilted after a fall+respawn).
 - root **collider** (`CollisionShape3D` on the root) — a `ConvexPolygonShape3D`, not a box: same
   `1.2 × 0.6 × 1.8` bounding size at `+0.3` y, but the bottom **nose and tail edges are chamfered**
   (0.24 × 0.28, ≈40°; the sides stay square — that's where the tracks are). Result: lips up to
@@ -332,8 +334,14 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   `GameConfig.mortar_objective_damage`. `attackers_only` lets an objective ignore friendly fire;
   `free_on_destroy = false` on tanks hands cleanup to `RespawnController`; `invincible` is a debug
   point override, not normal balance. `force_destroy(killer := null)` bypasses `invincible` /
-  `attackers_only` but still routes through `destroyed` — for "removed from play regardless of
-  debug immortality" (only caller today: fell below the map).
+  `attackers_only` **and the shield** but still routes through `destroyed` — for "removed from play
+  regardless of debug immortality" (only caller today: fell below the map). Also owns the two
+  pickup-bonus effects (no extra node on `Tank.tscn`): `heal(hits) -> bool` (green medkit; subtracts
+  accumulated hits, emits its own `healed` signal not `damaged`, returns false at full HP so the
+  crate isn't wasted) and a **timed shield** (blue crate) — `grant_shield(sec)` / `has_shield()` /
+  `clear_shield()`; while `_shield_left > 0` `take_hit()` returns early like `invincible` but on a
+  `_process` countdown, so it also negates fall damage (same `take_hit(killer=null)` path).
+  `RespawnController` clears it on respawn.
 - `RespawnController` — on death, disables the tank in place (hidden, colliders off, `process_mode =
   DISABLED` on every sibling except itself and `HealthComponent`) instead of freeing it, then
   teleports/resets it after `GameConfig.respawn_cooldown_sec`. Its `_physics_process` (never frozen)
@@ -343,9 +351,16 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   scene load — no more respawn, fall-check off.
 - `CargoHold` — the EXTRACTION cargo bay: holds value **as data** (no nodes) and imposes the two
   costs that make carrying a decision — `blocks_disguise()` (read by `DisguiseController`, the HUD
-  and the bot alike) and a per-crate speed penalty (`speed_multiplier()`). Also owns the "a
-  warehouse crate goes only into an empty hold, and blocks top-up" lock in `try_take()`, so no
-  pickup site has to know that rule.
+  and the bot alike) and a per-crate speed penalty (`speed_multiplier()`). `try_take(value, frozen,
+  rarity)` accepts any crate — raw or ripened — for one slot, up to `GameConfig.cargo_capacity` (3);
+  the old "warehouse crate only into an empty hold, no top-up" lock was removed (raw and ripe loot
+  now carry identically). Instant re-deposit of a just-withdrawn crate is instead blocked by
+  `ExtractionManager._deposit_lock` (keyed off `LootCrate.owner_team`). `block_pickup()` refuses all
+  pickups for `GameConfig.cargo_respawn_pickup_block_sec` (2 s) — `RespawnController` arms it right
+  after the spawn teleport, because a tank **materialises** in its base circle and a `LootCrate`
+  `Area3D` fires `body_entered` on a teleport too: without it a tank that died with cargo near its
+  own base silently re-absorbed its own just-dropped loot on respawn and banked it to the warehouse
+  the next frame. Pickup must be an *action* — you drive into a crate, you don't appear inside one.
 - `TankAIController` — the single AI brain (own section below). Present on every `Tank.tscn`
   instance but inert (`enabled = false`) unless a spawner turns it on; when enabled it flips every
   sibling's `is_player_controlled` to `false` and drives them through the same public contract the
@@ -404,11 +419,20 @@ sides between rounds, so "the player's team" isn't stable; the attack/defense **
 "defense" team 1 / Синие. The series accumulates across `reload_current_scene()` and resets only
 from the main menu or the "Новый матч" button after `series_complete()`.
 
-Two unrelated JSON layers: `config/player_tank_config.json` / `config/bot_tank_config.json` hold
-per-profile **physical stats** (speed, turret turn rate, projectile speed, `max_hits`,
-`self_right_cooldown_sec`), read once by `team_spawner.gd` via `_apply_tank_config()` regardless of
-roster — tank-profile data, not match balance. `config/roster_*.json` holds **who** (team / role /
-difficulty / count / waypoint routes). Don't confuse the two.
+`config/*.json` layers (each loaded by its own consumer via a local `FileAccess` + `JSON.parse_string`
+helper; missing/broken file is non-fatal — `push_warning` + code defaults):
+- `config/player_tank_config.json` / `config/bot_tank_config.json` — per-profile **physical stats**
+  (speed, turret turn rate, projectile speed, `max_hits`, `self_right_cooldown_sec`), read by
+  `team_spawner.gd._apply_tank_config()` regardless of roster.
+- `config/roster_*.json` — **who** (team / role / difficulty / count / waypoint routes), read by
+  `team_spawner.gd`.
+- `config/extraction_kitchen.json` — **EXTRACTION drop balance** (per-map; path is
+  `@export_file extraction_config_path` on the map root). `farm_drop_weights`, `rarity_tiers`
+  (weight + raw range + ripen rate/cap + colour), `loot_node_count`. Read by
+  `ExtractionManager.setup()`; `LootCrate` gets tier meaning through `ExtractionManager.rarity_*()`
+  getters (no `GameConfig` rarity fields left).
+- `config/pickups.json` — **pickup-bonus numbers** (global: `ammo`/`medkit`/`shield` → `color` +
+  effect). Read by `GameConfig._ready()`; `Pickup` gets its via `GameConfig.pickup_kind(id)`.
 
 ### Spawn system — `TeamSpawner` + `SpawnZone` (one mechanism, every map)
 
@@ -530,12 +554,29 @@ Everything unbanked burns; the round never ends early. The load-bearing rule is
 `CargoHold.blocks_disguise()` — **cargo forbids disguise** (and slows you per crate) — which welds
 the economy to prop hunt; `DisguiseController`, the HUD and the bot all read that one predicate.
 Loot hides inside ordinary `Obstacle` cubes: every cube carries a `HealthComponent` and is
-destructible, only some hold loot (`loot_node_count`), and the allocation is seeded
-(`MatchState.loot_seed`) — a loot cube is indistinguishable from an empty one and from a disguised
-tank, which is the point. Nodes never respawn: the map is meant to run out of cover.
-`ExtractionManager` (code-created node, like `ScoreManager`) owns allocation, deposits, ripening,
-window scheduling, the beacon and banking. A warehouse **is** the crates parked in the base circle,
-which is why raiding — and scouting a rich enemy base by eye — need no code of their own.
+destructible, and the allocation is seeded (`MatchState.loot_seed`) — a loot cube is
+indistinguishable from an empty one and from a disguised tank, which is the point.
+`_allocate_loot_nodes()` rolls **two seeded picks** per cube (over `loot_node_count` cubes): first a
+**farm drop table** — `farm_drop_weights` `[loot, nothing, ammo, mortar, medkit, shield]`
+(`ExtractionManager.FarmDrop` / `obstacle.drop_kind`) — then, only on `LOOT`, the rarity tier. **All
+of it — farm weights, tier weights, tier meaning (raw range / ripen rate / cap / colour),
+`loot_node_count` — lives in `config/extraction_kitchen.json`** (per-map path via
+`@export_file extraction_config_path` on the map root; see "Autoloads and per-tank config"). A
+non-loot roll drops the universal `Pickup` (ammo/medkit/shield — see "Pickups") or
+a `ModCrate` (mortar), placed straight on the ground. Nodes never respawn: the map is meant to run
+out of cover. `ExtractionManager` (code-created node, like `ScoreManager`) owns allocation,
+deposits, ripening, window scheduling, the beacon and banking. Auto-deposit / bank in
+`_physics_process` skips a tank falling through a zone's cylinder (both zones sit on raised kitchen
+tiers), which used to dump its cargo mid-air — so on a fall death the hold was already empty when
+`_on_tank_destroyed` ran and the loot ended up on the warehouse instead of at the crash site. It
+takes **all three** flags, each catching a case the others can't: `is_on_floor()` (flat free fall —
+no tip, so no teeter and no tumble), `TumbleController.is_active()` (a tumble freezes the siblings,
+so `is_on_floor()` sticks at its last `true`), and `TankMovement.is_falling()` (BRINK / TEETER —
+still touching the ledge, `is_on_floor()` honestly `true`, but already going over). Death itself is
+dead simple: `_on_tank_destroyed` drops the **whole**
+hold as loose `LootCrate`s at the death spot, and loose crates are never auto-collected — they lie
+there until a tank drives into one or the round ends. A warehouse **is** the crates parked in the
+base circle, which is why raiding — and scouting a rich enemy base by eye — need no code of their own.
 
 `match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
 = 0, `TeamArenaMap` = 1, `KitchenMap` = 2). Its script default is **`-1`, a deliberate invalid
@@ -579,7 +620,8 @@ node itself *is* the spawn-sized ground circle (`spawn_zone.gd` on the root) plu
 `Marker3D` child (`DropOrigin`, script `ammo_crate/ammo_drop_zone.gd`). Sits in each map's two empty
 corners. Cadence is **map-level, not per-zone**: the drop zones join group `ammo_drop_zones`, the
 lowest-`get_path()` one is the leader and owns the sole `DropTimer`; every `drop_interval_sec`
-(30 s) the leader drops **one** `AmmoCrate` at a **random** zone (`shuffle` + first that accepts).
+(30 s) the leader drops **one** `Pickup` (`kind_id` from the zone's `pickup_kind_ids`, `&"ammo"` by
+default — see "Pickups") at a **random** zone (`shuffle` + first that accepts).
 The crate falls kinematically to a random clear point in that zone's circle, never overlapping a
 still-unpicked crate (`min_crate_separation`, per-zone cap `max_pending_crates` →
 `GameConfig.ammo_crate_count` — these three stay per-zone; only the interval + round-end stop are
@@ -590,9 +632,20 @@ centralized on the leader). Pickup is `Area3D.body_entered` → `AmmoComponent.a
 a `MortarDropTimer` that drops one **red `ModCrate`** in *every* zone simultaneously (not one at a
 random zone). A `ModCrate` fills the tank's `ModificationController` slot with the mortar mod when
 empty. Cadence is `GameConfig.mortar_drop_interval_sec` (30 s) in TARGET_OBJECTIVE and the rarer
-`mortar_drop_interval_container_sec` (75 s) in EXTRACTION, where the mortar is meant to be an
-occasional complication. `TeamArenaMap.tscn` starts no such timer. Full detail:
-`Tank_Prop_Hunt_Modifications.md`.
+`mortar_drop_interval_extraction_sec` (75 s) in EXTRACTION, where the mortar is meant to be an
+occasional complication (it also drops from the EXTRACTION farm table, ~2 %). `TeamArenaMap.tscn`
+starts no such timer. Full detail: `Tank_Prop_Hunt_Modifications.md`.
+
+**Pickups** (`scenes/pickups/`, all maps): one universal `Pickup` (`Area3D`, layer `pickups` = 32)
+typed by a string `@export kind_id` (`&"ammo"` / `&"medkit"` / `&"shield"`); colour + effect numbers
+come from `config/pickups.json` via `GameConfig.pickup_kind(id)` (no `.tres`). `medkit` = +2 HP
+(`HealthComponent.heal`), `shield` = 30 s invuln (`HealthComponent.grant_shield`). Kinematic fall
+(`fall_to`) from a drop zone, or `place_at` on the ground from the EXTRACTION farm table. An ammo
+`Pickup` also joins group `"ammo_crates"` so the bot's `AMMO_SEEK` is unchanged; medkit/shield are
+ignored by the AI for now. The red `ModCrate` stays a separate scene (conditional pickup — empty
+slot only — plus its own AI coordination). `AmmoDropZone` drops `ammo` by default; its
+`@export pickup_kind_ids: PackedStringArray` lets a map's zone drop the others. Full detail:
+`Tank_Prop_Hunt_Ammo_Drops.md`.
 
 The **HUD match block** (top-center, all maps, `hud.gd`): line 1 `Раунд N/M | MM:SS`; line 2 the
 mode-dependent overall score — TARGET_OBJECTIVE: series only (`По раундам — Атака N : M Оборона`);
@@ -622,12 +675,20 @@ What the flag gates (each also keeps its finer per-instance filter, e.g. the bot
   gated in `TankAIController._can_see()` / `_on_damaged()`; bot-vs-bot unaffected).
 - `tank.gd` — the billboard `Label3D` "HP N/M" above each tank. The team-colour mesh tint
   (`apply_team_visuals()`) is **not** gated — it always applies.
-- `tank_ai_controller.gd._initialize()` — FOV-cone / nav-path / brain-panel overlays (setup **and**
+- `tank_ai_controller.gd._initialize()` — FOV-sector / nav-path / brain-panel overlays (setup **and**
   the `_physics_process` update calls, so the meshes/labels are never touched when null). The FOV
-  cones can clip at the first obstacle/tank blocking line of sight — gated by its own sub-toggle,
-  `MatchState.fov_debug_clip_obstacles` (default **off**: full-radius cones, zero extra raycasts;
-  flip it from code for a point-in-time LOS check, no UI button). Cost analysis: Bot AI vault doc
-  §17.
+  overlay draws a **spherical sector** — rings of constant polar angle, meridians and the axis —
+  because `_can_see()` tests a real solid angle (`Vector3.angle_to()`, all three axes) inside a ball
+  of radius `vision_range`. `FovDebugMesh` hangs off the **tank root**, never `Hull`: the main
+  sector's axis in logic is `-_body.global_transform.basis.z` and the root never tilts (Invariant 1),
+  so a mesh parented to the tilting `Hull` both drew the wrong angle and — being a flat fan
+  `vision_range` long — got thrown `vision_range · sin(tilt)` off the ground, slicing through
+  `KitchenMap`'s tiers as stray lines. The turret sub-sector keeps the deck tilt, matching its own
+  logic axis `-_turret.global_transform.basis.z`. Sectors clip at the first obstacle/tank blocking
+  line of sight — same ray and mask as the real LOS check — gated by `MatchState.fov_debug_clip_obstacles`
+  (default **on**; the tank AI caches those rays and refreshes them every `_FOV_RAY_REFRESH_FRAMES`
+  (10 Hz) instead of every frame, which is what made the default affordable — `turret_ai.gd` reads
+  the same flag but has no such cache). No UI button. Cost analysis: Bot AI vault doc §17.
 - `spawn_zone.gd` — the on-ground debug circle. **Every circular area marker in the project is this
   one script / one visual** (per-instance `@export radius`, movable/scalable in the editor): spawn
   zones, the ammo/mod drop-zone circle (the `AmmoDropZone` prefab **root** runs this script),
@@ -704,7 +765,8 @@ Map geometry is **instances of prefab scenes**, not hand-built `StaticBody3D` + 
   `BoxMesh` + material (defaults `2×1.25×2`, brown — matches `GameConfig.disguise_prop_*`).
   `collision_layer = 1` / `collision_mask = 0` baked into the prefab so the NavMesh baker sees it.
   It doubles as the disguise prop, and in EXTRACTION it carries a `HealthComponent` so every cube
-  is destructible and some hide loot. **Wiped by the dynamic-obstacle pass.**
+  is destructible; `ExtractionManager` seeds `loot_value` / `loot_rarity` / `drop_kind` on it at
+  match start (the farm drop table). **Wiped by the dynamic-obstacle pass.**
 - `HazardZone.tscn` (`hazard_zone.gd`, `@tool`, `extends Area3D`) — impassable area, `@export size`,
   translucent-red material, `collision_layer = 4`.
 - `Structure.tscn` (`structure.gd`, `@tool`) — **permanent level geometry** (furniture, walls,
@@ -829,8 +891,10 @@ menu.
   43.2) joined only by `ToyRamp` inclines. Bases sit on surfaces (attack on the table, defense on
   the counter) and double as **warehouses**; five `ExtractionPoint`-role markers spread over the
   tiers are the evacuation-point candidates. Its ~20 `Obstacle` cubes are cover, disguise props
-  **and** the loot nodes at once. It bakes its navmesh at load (`bake_navmesh_on_start`) instead of
-  storing it, and opts out of dynamic obstacles (`dynamic_obstacles_supported = false`). **Before
+  **and** the farm nodes at once. EXTRACTION drop balance (farm weights, rarity tiers, node count)
+  is in `config/extraction_kitchen.json`, pointed at by `@export_file extraction_config_path` on the
+  root. It bakes its navmesh at load (`bake_navmesh_on_start`) instead of storing it, and opts out
+  of dynamic obstacles (`dynamic_obstacles_supported = false`). **Before
   editing its geometry read `Tank_Prop_Hunt_Kitchen_Map.md`** — ramps must stay ≤ 24° (a box
   `CharacterBody3D` stalls dead at ~28° despite `floor_max_angle` 45°), must end exactly on a
   platform edge, must not lie flat across a platform, and a diagonal ramp needs a flat coplanar

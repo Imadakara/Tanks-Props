@@ -16,11 +16,33 @@ extends Node
 ## `scenes/loot/loot_crate.gd`.
 
 const LootCrateScene := preload("res://scenes/loot/LootCrate.tscn")
+## Бонусы, которые может отдать разрушенный лут-узел (см. `_spawn_bonus_crate` / farm_drop_weights).
+## Патроны / аптечка / щит — универсальный `Pickup` (тип задаётся строкой kind_id, числа — в
+## config/pickups.json); мортира — отдельный `ModCrate` (условный подбор).
+const PickupScene := preload("res://scenes/pickups/Pickup.tscn")
+const ModCrateScene := preload("res://scenes/mod_crate/ModCrate.tscn")
 const ExtractionPointRole := "ExtractionPoint"
+
+## Что даёт разрушенный лут-узел. Ролится ПЕРВЫМ, до яруса редкости (only LOOT дальше роллит ярус +
+## ценность). Порядок = ключи `farm_drop_weights` в config/extraction_*.json.
+enum FarmDrop { LOOT, NOTHING, AMMO, MOD, MEDKIT, SHIELD }
+const _FARM_KEYS := ["loot", "nothing", "ammo", "mortar", "medkit", "shield"]  # индекс = FarmDrop
+
+## Дефолты баланса — фолбэк, если config/extraction_*.json отсутствует / битый (некритично, как
+## у team_spawner._load_json_config). Реальные значения — в JSON карты.
+const _DEF_FARM := {"loot": 0.40, "nothing": 0.40, "ammo": 0.10, "mortar": 0.02, "medkit": 0.05, "shield": 0.03}
+const _DEF_TIERS := [
+	{"name": "Обычный", "weight": 0.70, "raw_min": 1, "raw_max": 10, "ripen_per_sec": 1, "ripen_cap": 75, "color": [0.62, 0.64, 0.66]},
+	{"name": "Редкий", "weight": 0.20, "raw_min": 5, "raw_max": 15, "ripen_per_sec": 2, "ripen_cap": 150, "color": [0.28, 0.55, 1.0]},
+	{"name": "Эпический", "weight": 0.07, "raw_min": 10, "raw_max": 25, "ripen_per_sec": 3, "ripen_cap": 300, "color": [0.62, 0.3, 0.9]},
+	{"name": "Легендарный", "weight": 0.03, "raw_min": 20, "raw_max": 50, "ripen_per_sec": 4, "ripen_cap": 500, "color": [1.0, 0.55, 0.12]},
+]
 
 ## Куда и как далеко вниз ищем опору под точкой (гибель носителя, разрушенный куб).
 const _GROUND_PROBE_UP: float = 2.0
 const _GROUND_PROBE_DOWN: float = 60.0
+## Полувысота ящика — центр встаёт на эту высоту над опорой (то же, что у LootCrate/Pickup/ModCrate).
+const _REST_OFFSET: float = 0.3
 ## Раскладка ящиков на складе: кольцо внутри круга базы, чтобы они не сливались в кучу и каждый
 ## можно было подобрать отдельно (склад делим по ящикам — концепт §7).
 const _PARK_RING_FRACTION: float = 0.55
@@ -47,6 +69,13 @@ var _window_open_at: float = 0.0
 var _window_close_at: float = 0.0
 var _rng := RandomNumberGenerator.new()
 var _halted: bool = false
+## Баланс из config/extraction_*.json (путь — @export extraction_config_path на корне карты),
+## читается в setup(). `_rarity` — массив словарей яруса; LootCrate берёт смысл яруса через
+## геттеры rarity_*() ниже.
+var _farm_weights: PackedFloat32Array = PackedFloat32Array()
+var _rarity_weights: PackedFloat32Array = PackedFloat32Array()
+var _rarity: Array = []
+var _node_count: int = 10
 ## Танки, которым запрещена автовыгрузка, пока они не покинут круг своей базы. Иначе ящик, взятый
 ## со склада для вывоза, тем же кадром лёг бы обратно. Ключ — instance id танка.
 var _deposit_lock: Dictionary = {}
@@ -57,6 +86,7 @@ var _beacon: MeshInstance3D = null
 func setup() -> void:
 	add_to_group("extraction_manager")
 	var scene := get_tree().current_scene
+	_load_config(String(scene.get("extraction_config_path")) if scene.get("extraction_config_path") != null else "")
 	_bases[0] = scene.find_child("AttackSpawnZone", true, false) as Node3D
 	_bases[1] = scene.find_child("DefenseSpawnZone", true, false) as Node3D
 	_points = get_tree().get_nodes_in_group(ExtractionPointRole)
@@ -74,6 +104,78 @@ func halt() -> void:
 	_halted = true
 	set_physics_process(false)
 	_clear_beacon()
+
+
+# --- Конфиг баланса (config/extraction_*.json) ------------------------------------------------
+
+## Читает JSON-файл баланса выпадения. Отсутствует / битый — дефолты `_DEF_*` (некритично, тот же
+## приём, что у `team_spawner._load_json_config`).
+func _load_config(path: String) -> void:
+	var data: Dictionary = {}
+	if path != "" and FileAccess.file_exists(path):
+		var f := FileAccess.open(path, FileAccess.READ)
+		var parsed: Variant = JSON.parse_string(f.get_as_text())
+		f.close()
+		if parsed is Dictionary:
+			data = parsed
+		else:
+			push_warning("ExtractionManager: битый JSON %s — беру дефолты" % path)
+	else:
+		push_warning("ExtractionManager: конфиг '%s' не найден — беру дефолты" % path)
+
+	var fw: Dictionary = data.get("farm_drop_weights", _DEF_FARM)
+	_farm_weights = PackedFloat32Array()
+	for key in _FARM_KEYS:
+		_farm_weights.append(float(fw.get(key, 0.0)))
+
+	var tiers: Array = data.get("rarity_tiers", _DEF_TIERS)
+	_rarity.clear()
+	_rarity_weights = PackedFloat32Array()
+	for t in tiers:
+		var col := Color(1, 1, 1)
+		var cv: Variant = t.get("color")
+		if cv is Array and (cv as Array).size() >= 3:
+			col = Color(float(cv[0]), float(cv[1]), float(cv[2]))
+		_rarity.append({
+			"name": String(t.get("name", "?")),
+			"raw_min": int(t.get("raw_min", 1)),
+			"raw_max": int(t.get("raw_max", 1)),
+			"ripen_per_sec": int(t.get("ripen_per_sec", 1)),
+			"ripen_cap": int(t.get("ripen_cap", 1)),
+			"color": col,
+		})
+		_rarity_weights.append(float(t.get("weight", 0.0)))
+	if _rarity.is_empty():
+		push_warning("ExtractionManager: в конфиге нет rarity_tiers — лут будет пустым")
+
+	_node_count = int(data.get("loot_node_count", 10))
+
+
+# --- Смысл яруса редкости (для LootCrate, у которого своего доступа к конфигу нет) ------------
+
+func rarity_count() -> int:
+	return _rarity.size()
+
+func _ri(i: int) -> int:
+	return clampi(i, 0, maxi(_rarity.size() - 1, 0))
+
+func rarity_name(i: int) -> String:
+	return String(_rarity[_ri(i)]["name"]) if not _rarity.is_empty() else "?"
+
+func rarity_raw_min(i: int) -> int:
+	return int(_rarity[_ri(i)]["raw_min"]) if not _rarity.is_empty() else 0
+
+func rarity_raw_max(i: int) -> int:
+	return int(_rarity[_ri(i)]["raw_max"]) if not _rarity.is_empty() else 0
+
+func rarity_ripen_per_sec(i: int) -> int:
+	return int(_rarity[_ri(i)]["ripen_per_sec"]) if not _rarity.is_empty() else 0
+
+func rarity_ripen_cap(i: int) -> int:
+	return int(_rarity[_ri(i)]["ripen_cap"]) if not _rarity.is_empty() else 0
+
+func rarity_color(i: int) -> Color:
+	return _rarity[_ri(i)]["color"] if not _rarity.is_empty() else Color(1, 1, 1)
 
 
 # --- Добыча: раздача по кубам ------------------------------------------------------------------
@@ -98,40 +200,86 @@ func _allocate_loot_nodes() -> void:
 		var tmp = cubes[i]
 		cubes[i] = cubes[j]
 		cubes[j] = tmp
-	var count: int = mini(GameConfig.loot_node_count, cubes.size())
+	var count: int = mini(_node_count, cubes.size())
 	for i in range(count):
-		# Свой ролл яруса и сырой ценности на каждый узел, из того же зерна и в уже стасованном
-		# порядке — раскладка добычи детерминирована и не зависит от того, в каком порядке кубы
-		# будут разбиты. Узлы не респавнятся: этот ролл и есть «ценность при спавне ящика».
-		var rar: int = _roll_rarity()
-		cubes[i].loot_rarity = rar
-		cubes[i].loot_value = _rng.randi_range(
-			GameConfig.loot_rarity_raw_min[rar], GameConfig.loot_rarity_raw_max[rar])
+		# На каждый узел, из того же зерна и в уже стасованном порядке: сперва ЧТО он даст
+		# (farm_drop_weights из JSON), и только если «лут» — ярус + сырая ценность. Раскладка
+		# детерминирована и не зависит от порядка разрушения кубов. Узлы не респавнятся.
+		var drop: int = _roll_farm_drop()
+		cubes[i].drop_kind = drop
+		if drop == FarmDrop.LOOT:
+			var rar: int = _roll_rarity()
+			cubes[i].loot_rarity = rar
+			cubes[i].loot_value = _rng.randi_range(rarity_raw_min(rar), rarity_raw_max(rar))
 
 
-## Ярус ящика тянется из зерна по весам `GameConfig.loot_rarity_weights` (в сумме 1.0).
-func _roll_rarity() -> int:
-	var w: PackedFloat32Array = GameConfig.loot_rarity_weights
-	var r: float = _rng.randf()
+## Взвешенный выбор индекса из массива весов по зерну. Веса не обязаны быть нормированы.
+func _weighted_pick(w: PackedFloat32Array) -> int:
+	var total: float = 0.0
+	for x in w:
+		total += x
+	if total <= 0.0:
+		return 0
+	var r: float = _rng.randf() * total
 	var acc: float = 0.0
-	for i in range(w.size() - 1):
+	for i in range(w.size()):
 		acc += w[i]
 		if r < acc:
 			return i
 	return w.size() - 1
 
 
-## Публичный вход для куба, который только что развалился (`obstacle.gd._on_destroyed`).
-func spawn_loose_loot(from_pos: Vector3, value: int, rarity: int, ignore_body: Node = null) -> void:
+## Что даст этот узел при разрушении — индекс FarmDrop по `farm_drop_weights` из JSON.
+func _roll_farm_drop() -> int:
+	return _weighted_pick(_farm_weights) if not _farm_weights.is_empty() else int(FarmDrop.NOTHING)
+
+
+## Ярус ЛУТА по весам ярусов (`rarity_tiers[i].weight` из JSON).
+func _roll_rarity() -> int:
+	return _weighted_pick(_rarity_weights) if not _rarity_weights.is_empty() else 0
+
+
+## Вход для куба, который только что развалился (`obstacle.gd._on_destroyed`). Менеджер сам читает
+## у куба `drop_kind` / `loot_value` / `loot_rarity` (розданы в `_allocate_loot_nodes`) и решает,
+## что уронить. `node` же — `ignore_body` для рейкаста опоры: его коллайдер в этот момент ЕЩЁ ЖИВ
+## (queue_free() отрабатывает после сигнала destroyed), без исключения луч нашёл бы КРЫШУ куба и
+## ящик завис бы на его высоте, физически неподбираемый.
+func spawn_node_drop(node: Node3D) -> void:
 	if _halted:
 		return
-	# `ignore_body` — сам разваливающийся куб. Его коллайдер в этот момент ЕЩЁ ЖИВ (queue_free()
-	# отрабатывает после сигнала destroyed), и без исключения луч находил бы КРЫШУ куба: ящик
-	# зависал бы на его высоте над реальной опорой и становился физически неподбираемым.
-	_spawn_crate(_ground_under(from_pos, ignore_body), value, rarity, false)
+	var dk: int = int(node.get("drop_kind"))
+	if dk == FarmDrop.NOTHING:
+		return
+	var ground: Vector3 = _ground_under(node.global_position, node)
+	if dk == FarmDrop.LOOT:
+		if int(node.get("loot_value")) > 0:
+			_spawn_crate(ground, int(node.get("loot_value")), int(node.get("loot_rarity")), false)
+		return
+	_spawn_bonus_crate(ground, dk)
 
 
 # --- Ящики -------------------------------------------------------------------------------------
+
+## Бонус из фарма (не лут): ящик патронов / аптечка / щит — универсальный `Pickup`; мортира —
+## отдельный `ModCrate`. Ставится сразу на опору (без падения с неба), как и лут-ящик.
+func _spawn_bonus_crate(ground_point: Vector3, drop_kind: int) -> void:
+	if drop_kind == FarmDrop.MOD:
+		var mc: Node3D = ModCrateScene.instantiate()
+		get_tree().current_scene.add_child(mc)
+		mc.fall_to(ground_point, ground_point.y + _REST_OFFSET, 1.0)  # start_y == rest_y → сразу на опоре
+		return
+	var kid: StringName = &""
+	match drop_kind:
+		FarmDrop.AMMO: kid = &"ammo"
+		FarmDrop.MEDKIT: kid = &"medkit"
+		FarmDrop.SHIELD: kid = &"shield"
+	if kid == &"":
+		return
+	var p: Node3D = PickupScene.instantiate()
+	p.kind_id = kid
+	get_tree().current_scene.add_child(p)
+	p.place_at(ground_point)
+
 
 func _spawn_crate(ground_point: Vector3, value: int, rarity: int, frozen: bool) -> Node3D:
 	var crate: Node3D = LootCrateScene.instantiate()
@@ -197,13 +345,41 @@ func _physics_process(delta: float) -> void:
 		var team: int = int(tank.team)
 		var base: Node3D = _bases[team]
 		var in_base: bool = base != null and _inside(tank, base)
+		var window_here: bool = window_state == WindowState.OPEN and active_point != null \
+				and _inside(tank, active_point)
 		var key: int = tank.get_instance_id()
 		if not in_base:
 			_deposit_lock.erase(key)  # покинул базу — автовыгрузка снова разрешена
+		if not in_base and not window_here:
+			continue
+
+		# Выгрузка/банк — только у танка, который СТОИТ ИЛИ ЕДЕТ по зоне сам, а не проваливается
+		# сквозь её объём. Обе зоны (база, точки выхода) стоят на приподнятых ярусах кухни, поэтому
+		# траектория падения с верхнего яруса протыкает их цилиндр (радиус ~8, ±
+		# `extraction_zone_height_tolerance`). Без этой отсечки гружёный танк выгружал трюм «в
+		# воздухе»: к моменту смерти трюм уже пуст, `_on_tank_destroyed` рассыпать нечего — добыча
+		# появлялась на складе вместо места гибели.
+		#
+		# Три флага, и все три нужны: каждый ловит случай, невидимый для остальных.
+		#   1. НЕ НА ЗЕМЛЕ — свободный полёт. Съехал с кромки ровно или улетел с трамплина: крена
+		#      нет (`_tip_angle == 0`), кувырок не запускается (`_edge_approach ≈ 0`) — оба флага
+		#      ниже молчат, ловит только `is_on_floor()`.
+		#   2. КУВЫРОК — `is_on_floor()` тут бесполезен: сиблинги заморожены (`process_mode`),
+		#      `move_and_slide()` не идёт, и значение застревает на последнем `true`.
+		#   3. КРЕН НА КРОМКЕ (BRINK / TEETER) — танк ещё касается опоры, `is_on_floor()` честно
+		#      `true`, кувырок ещё не начался, но танк уже валится в пустоту.
+		if tank.has_method("is_on_floor") and not tank.is_on_floor():
+			continue
+		var tc: Node = tank.get_node_or_null("TumbleController")
+		if tc != null and tc.has_method("is_active") and tc.is_active():
+			continue
+		var mv: Node = tank.get_node_or_null("TankMovement")
+		if mv != null and mv.has_method("is_falling") and mv.is_falling():
+			continue
+
 		# Банк ВЫШЕ выгрузки: если точка выхода окажется рядом с базой, вывоз должен побеждать —
 		# он окончателен, а склад лишь промежуточен.
-		if window_state == WindowState.OPEN and active_point != null and hold.is_loaded() \
-				and _inside(tank, active_point):
+		if window_here and hold.is_loaded():
 			_bank(hold, team)
 			continue
 		if in_base and hold.is_loaded() and not _deposit_lock.has(key):

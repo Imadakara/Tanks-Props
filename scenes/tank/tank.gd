@@ -31,6 +31,7 @@ func _ready() -> void:
 	if _health != null:
 		_health.damaged.connect(_on_damaged)
 		_health.destroyed.connect(_on_destroyed)
+		_health.healed.connect(_on_healed)
 	apply_team_visuals()
 	if MatchState.debug_enabled:
 		_setup_hp_label()
@@ -80,6 +81,9 @@ func on_respawned() -> void:
 	_refresh_hp_label()
 
 func _on_damaged(_current_hits: int, _max_hits: int, _killer: Node) -> void:
+	_refresh_hp_label()
+
+func _on_healed(_current_hits: int, _max_hits: int) -> void:
 	_refresh_hp_label()
 
 func _on_destroyed(_killer: Node) -> void:

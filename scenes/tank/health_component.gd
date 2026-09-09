@@ -13,6 +13,11 @@ extends Node
 ## обновлены под новую сигнатуру.
 signal damaged(current_hits: int, max_hits: int, killer: Node)
 signal destroyed(killer: Node)
+## Лечение зелёным ящиком-аптечкой (config/pickups.json). Отдельно от `damaged`, чтобы не
+## трогать его подписчиков (бот разворачивается на выстрел, маскировка спадает от попадания).
+signal healed(current_hits: int, max_hits: int)
+## Изменение временного щита (config/pickups.json): секунды до конца, 0.0 — щит снят.
+signal shield_changed(seconds_left: float)
 
 ## Танки — 3 HP (config/*_tank_config.json + этот дефолт): мортира (20 ≥ 3) гарантированно
 ## one-shot, обычный снаряд — 3 попадания. Objective перетирается на 100 (см. objective_hits_required).
@@ -31,12 +36,53 @@ signal destroyed(killer: Node)
 @export var invincible: bool = false
 var current_hits: int = 0
 var is_alive: bool = true
+## Секунды оставшегося ВРЕМЕННОГО щита (синий ящик-подбираемое, config/pickups.json). Пока
+## > 0 — `take_hit()` выходит сразу, как при invincible, но по таймеру и снимается на респавне.
+## Гасит и урон от падения (тот идёт тем же `take_hit` с killer = null). `force_destroy()` щит НЕ
+## смотрит: провал за пределы карты убивает и со щитом. Не путать с дебаг-тумблером `invincible`.
+var _shield_left: float = 0.0
+
+func _ready() -> void:
+	set_process(false)  # тикает только пока активен щит
+
+func has_shield() -> bool:
+	return _shield_left > 0.0
+
+## Выдать/продлить щит. Берём максимум — подбор второго ящика не «сбивает» уже больший остаток.
+func grant_shield(seconds: float) -> void:
+	_shield_left = maxf(_shield_left, seconds)
+	set_process(_shield_left > 0.0)
+	shield_changed.emit(_shield_left)
+
+## Снять щит немедленно (респавн — respawn_controller.gd).
+func clear_shield() -> void:
+	if _shield_left <= 0.0:
+		return
+	_shield_left = 0.0
+	set_process(false)
+	shield_changed.emit(0.0)
+
+func _process(delta: float) -> void:
+	_shield_left -= delta
+	if _shield_left <= 0.0:
+		_shield_left = 0.0
+		set_process(false)
+	shield_changed.emit(_shield_left)
+
+## Аптечка (зелёный ящик, config/pickups.json): снимает `hits` единиц накопленного урона,
+## не ниже 0. Возвращает true, если ЧТО-ТО вылечила (танк был подранен) — иначе ящик не тратится.
+func heal(hits: int) -> bool:
+	if not is_alive or current_hits <= 0:
+		return false
+	current_hits = maxi(0, current_hits - hits)
+	healed.emit(current_hits, max_hits)
+	return true
 
 ## damage — сколько единиц урона снимает это попадание (обычный снаряд = 1, спец-выстрел мортиры =
 ## GameConfig.mortar_objective_damage 20). current_hits/max_hits для цели трактуются как HP; для
 ## танков (max_hits = 3) мортира (20) — гарантированный one-shot, отдельной ветки не нужно.
 func take_hit(killer: Node = null, damage: int = 1) -> void:
-	if invincible:
+	if invincible or _shield_left > 0.0:
 		return
 	if not is_alive:
 		return

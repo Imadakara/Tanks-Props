@@ -201,35 +201,58 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 	var cubes := st.get_nodes_in_group("obstacles")
 	_expect("map has cover cubes", cubes.size() > 0, "group 'obstacles' is empty")
 	var undamageable := 0
-	var with_loot := 0
 	for c in cubes:
 		if c.get_node_or_null("HealthComponent") == null:
 			undamageable += 1
-		if "loot_value" in c and int(c.loot_value) > 0:
-			with_loot += 1
 	_expect("every cube is destructible", undamageable == 0, "%d cube(s) without HealthComponent" % undamageable)
-	# Каждый лутовый куб: ярус редкости 0..3 и сырое значение в диапазоне ЭТОГО яруса.
-	if gc != null:
-		var rar_bad := 0
+	# Баланс выпадения грузится из config/extraction_*.json (ExtractionManager). Проверяем, что
+	# конфиг загрузился (ярусы есть) и раздача им консистентна.
+	if em != null:
+		_expect("rarity tiers loaded from JSON", int(em.rarity_count()) >= 1,
+			"ExtractionManager.rarity_count() == 0 — config/extraction_*.json не загрузился")
+	# Раздача выпадения по кубам: у каждого разыгранного узла валидный drop_kind (0 LOOT … 5 SHIELD),
+	# у лут-узлов (drop_kind == 0) ярус в пределах таблицы и сырое значение в диапазоне ЭТОГО яруса.
+	if em != null:
+		var rar_cap: int = int(em.rarity_count())
+		var bad := 0
+		var with_drop := 0   # drop_kind != NOTHING
 		for c in cubes:
-			if not ("loot_value" in c) or int(c.loot_value) <= 0:
+			if not ("drop_kind" in c):
 				continue
-			var rr: int = int(c.loot_rarity)
-			if rr < 0 or rr >= gc.loot_rarity_weights.size():
-				rar_bad += 1
-			elif int(c.loot_value) < gc.loot_rarity_raw_min[rr] or int(c.loot_value) > gc.loot_rarity_raw_max[rr]:
-				rar_bad += 1
-		_expect("loot rarity + raw value consistent", rar_bad == 0,
-			"%d loot node(s) with a bad rarity or out-of-range raw value" % rar_bad)
-	# Лут роздан, но НЕ во все кубы — иначе стрельба по любому укрытию всегда окупалась бы.
-	var loose := st.get_nodes_in_group("loot_crates").size()
-	if gc != null:
-		_expect("loot allocated across cubes", with_loot + loose >= 1 and with_loot <= cubes.size(),
-			"loot cubes=%d, crates already out=%d, cubes=%d" % [with_loot, loose, cubes.size()])
-		_expect("some cubes are empty", with_loot < cubes.size(),
-			"every cube holds loot - the farming gamble is gone")
+			var dk: int = int(c.drop_kind)
+			if dk < 0 or dk > 5:
+				bad += 1
+				continue
+			if dk != 1:  # 1 == FarmDrop.NOTHING
+				with_drop += 1
+			if dk == 0:  # FarmDrop.LOOT
+				var rr: int = int(c.loot_rarity)
+				if rr < 0 or rr >= rar_cap or int(c.loot_value) <= 0:
+					bad += 1
+				elif int(c.loot_value) < int(em.rarity_raw_min(rr)) or int(c.loot_value) > int(em.rarity_raw_max(rr)):
+					bad += 1
+		var loose := st.get_nodes_in_group("loot_crates").size()
+		_expect("farm drop-kinds valid + loot values in tier range", bad == 0, "%d bad node(s)" % bad)
+		# Таблица что-то раздала (узел ещё жив ЛИБО ящик уже выбит — бот мог начать фарм до проверки).
+		_expect("farm table produced drops", with_drop + loose > 0, "no node yields anything")
+		# Не каждый куб что-то даёт — ставка «ресурс / пусто / враг» жива.
+		_expect("some cubes yield nothing", with_drop < cubes.size(),
+			"every cube holds something - the farming gamble is gone")
 	_expect("extraction points exist", st.get_nodes_in_group("ExtractionPoint").size() > 0,
 		"no zone_role 'ExtractionPoint' markers - evacuation impossible")
+	# Выгрузка/банк — только у стоящего/едущего танка. Гружёный танк, проваливающийся сквозь объём
+	# зоны, раньше выгружал лут «в воздухе», и на fall-смерти добыча появлялась на складе вместо
+	# места гибели. Нужны ВСЕ ТРИ флага, каждый ловит своё: is_on_floor() — ровный свободный полёт
+	# (крена нет, кувырка нет); is_active() — кувырок (is_on_floor застревает на true); is_falling()
+	# — крен на кромке BRINK/TEETER (is_on_floor честно true, кувырок ещё не начался).
+	if em != null:
+		var em_src := FileAccess.get_file_as_string("res://scenes/main/extraction_manager.gd")
+		_expect("deposit/bank skips airborne tanks", em_src.find("is_on_floor()") != -1,
+			"ExtractionManager._physics_process must skip airborne tanks for deposit/bank")
+		_expect("deposit/bank skips tumbling tanks", em_src.find("is_active()") != -1,
+			"ExtractionManager._physics_process must skip tumbling tanks for deposit/bank")
+		_expect("deposit/bank skips teetering tanks", em_src.find("is_falling()") != -1,
+			"ExtractionManager._physics_process must skip teetering tanks for deposit/bank")
 
 	# Трюм и его связка с маскировкой — центральная сцепка концепции (§5).
 	var player := cs.get_node_or_null("PlayerTank")
@@ -241,20 +264,38 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 			_expect("empty hold does not block disguise", not hold.blocks_disguise(), "blocked while empty")
 			_expect("empty hold has no speed penalty", is_equal_approx(hold.speed_multiplier(), 1.0),
 				"got %.3f" % hold.speed_multiplier())
-			hold.try_take(100, false, false)
+			hold.try_take(100, false)
 			_expect("loaded hold blocks disguise", hold.blocks_disguise(), "cargo does not block disguise")
 			_expect("disguise controller agrees", disguise.blocked_by_cargo(), "controller disagrees with hold")
 			_expect("loaded hold slows the tank",
 				hold.speed_multiplier() < 1.0, "got %.3f" % hold.speed_multiplier())
-			# «Главный замок» (§4): со склада берут ровно один и только в пустой трюм.
-			_expect("warehouse pickup refused into a loaded hold",
-				not hold.try_take(100, true, true), "a stored crate was accepted into a non-empty hold")
+			# Вместимость: любой ящик (сырой / дозревший) — 1 место, набор до cargo_capacity.
+			# Отдельного «со склада только один за рейс» больше нет.
 			hold.clear()
-			_expect("warehouse pickup accepted into an empty hold",
-				hold.try_take(100, true, true), "a stored crate was refused into an empty hold")
-			_expect("no top-up after a warehouse withdrawal",
-				not hold.try_take(100, false, false), "loose loot was added on top of a withdrawn crate")
+			var cap: int = int(gc.cargo_capacity)
+			var took := 0
+			for i in range(cap + 2):  # пробуем набрать БОЛЬШЕ вместимости, чередуя сырой/дозревший
+				if hold.try_take(50, i % 2 == 0):
+					took += 1
+			_expect("hold fills to cargo_capacity, mixed raw/ripe", took == cap,
+				"took %d, cargo_capacity %d" % [took, cap])
+			_expect("hold reports full at capacity", hold.is_full(), "is_full() false at %d lots" % hold.lot_count())
 			hold.clear()
+			# Подбор — ДЕЙСТВИЕ, а не телепорт. Танк появляется в круге своей базы, и Area3D ящика
+			# шлёт body_entered на телепорт: без запрета воскресший танк всасывал собственный лут,
+			# выпавший при гибели у базы, и следующим кадром выгружал его на склад.
+			_expect("CargoHold has block_pickup()", hold.has_method("block_pickup"), "missing")
+			if hold.has_method("block_pickup"):
+				hold.block_pickup()
+				_expect("post-respawn block refuses pickup", not hold.try_take(50, false),
+					"hold accepted loot while the post-respawn block was active")
+				hold._pickup_block_left = 0.0
+				_expect("pickup works once the block expires", hold.try_take(50, false),
+					"hold refuses loot with no block active")
+				hold.clear()
+			var rc_src := FileAccess.get_file_as_string("res://scenes/tank/respawn_controller.gd")
+			_expect("RespawnController arms the pickup block", rc_src.find("block_pickup()") != -1,
+				"_on_respawn_timeout must call CargoHold.block_pickup() after the spawn teleport")
 
 func _check_test_ground(st: SceneTree, cs: Node) -> void:
 	_expect("no MatchManager (proving ground)", cs.get_node_or_null("MatchManager") == null, "TestGroundMap unexpectedly has a MatchManager")

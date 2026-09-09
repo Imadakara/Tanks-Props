@@ -69,7 +69,7 @@ toggle_disguise={
 3d_physics/layer_3="projectiles"
 3d_physics/layer_4="disguise_obstacle"
 3d_physics/layer_5="objective_zone"
-3d_physics/layer_6="ammo_crates"
+3d_physics/layer_6="pickups"
 3d_physics/layer_7="mod_crates"
 3d_physics/layer_8="loot_crates"
 

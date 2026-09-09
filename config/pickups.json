@@ -1,0 +1,7 @@
+{
+  "_comment": "Подбираемые бонусы: цвет куба + эффект. Глобально (используются и зонами сброса, и farm-таблицей EXTRACTION). Читает GameConfig._ready(). Справочник — Tank_Prop_Hunt_Ammo_Drops.md §7.",
+
+  "ammo":   { "color": [0.95, 0.85, 0.10], "ammo_amount": 3 },
+  "medkit": { "color": [0.20, 0.85, 0.30], "heal_hits": 2 },
+  "shield": { "color": [0.20, 0.45, 0.90], "shield_sec": 30.0 }
+}

@@ -11,18 +11,21 @@ extends Node
 ## методами (`blocks_disguise()`, `speed_multiplier()`), которые читают `disguise_controller.gd` и
 ## `tank_movement.gd`; здесь нет ни одного числа — весь баланс в `GameConfig`.
 ##
-## ПРАВИЛО «ГЛАВНЫЙ ЗАМОК» (§4). Свободную добычу с земли можно набирать до вместимости трюма, а вот
-## ящик СО СКЛАДА (своего или чужого — грабёж это тот же физический акт) берётся только в ПУСТОЙ
-## трюм и блокирует добор до конца рейса. Без этого можно было бы накопить всё и вывезти разом, и
-## весь цикл выродился бы в один финальный рейс. Правило живёт ЗДЕСЬ, в одной точке, а не в местах
-## подбора: подбирающему коду (`loot_crate.gd`) достаточно спросить `try_take()`.
+## ВМЕСТИМОСТЬ. Любой ящик — сырой с земли или дозревший со склада — это 1 место трюма, набирать
+## можно до `GameConfig.cargo_capacity` (3). Отдельного правила «со склада только один за рейс» нет
+## (снято по решению дизайнера — сырой и созревший лут должны везтись одинаково). Мгновенную
+## авто-переукладку только что взятого со склада ящика гасит `ExtractionManager._deposit_lock`
+## (отдельный механизм, по `LootCrate.owner_team`).
 
 signal cargo_changed(lots: int, total_value: int)
 
 ## Список лотов: `{"value": int, "frozen": bool, "rarity": int}`. Порядок = порядок подбора.
 var _lots: Array[Dictionary] = []
-## true — в трюме ящик, взятый со склада: добор запрещён до выгрузки/сдачи/гибели.
-var _withdrawn: bool = false
+## Сколько секунд ещё нельзя подбирать (см. block_pickup). 0 — можно.
+var _pickup_block_left: float = 0.0
+
+func _ready() -> void:
+	set_process(false)  # тикаем только пока идёт запрет подбора
 
 func lot_count() -> int:
 	return _lots.size()
@@ -32,10 +35,6 @@ func is_loaded() -> bool:
 
 func is_full() -> bool:
 	return _lots.size() >= GameConfig.cargo_capacity
-
-## Взят ли в трюм ящик со склада (см. правило «главный замок» в шапке).
-func has_withdrawn() -> bool:
-	return _withdrawn
 
 func total_value() -> int:
 	var sum: int = 0
@@ -53,18 +52,28 @@ func blocks_disguise() -> bool:
 func speed_multiplier() -> float:
 	return pow(GameConfig.cargo_speed_penalty_per_lot, float(_lots.size()))
 
-## Попытка принять ящик. `frozen` — не дозревает дальше (украденное/уже дозревшее);
-## `from_warehouse` — ящик взят с ЧЬЕГО-ЛИБО склада, значит действует правило «только один и только
-## в пустой трюм». false — подбор не состоялся, ящик остаётся лежать (это не ошибка, а штатный отказ).
-func try_take(value: int, frozen: bool, from_warehouse: bool, rarity: int = 0) -> bool:
-	if from_warehouse:
-		if not _lots.is_empty():
-			return false
-	elif is_full() or _withdrawn:
+## Запретить подбор на `GameConfig.cargo_respawn_pickup_block_sec`. Зовёт `RespawnController` сразу
+## после телепорта на точку спавна: танк ПОЯВЛЯЕТСЯ в круге своей базы, а `Area3D` ящика честно шлёт
+## `body_entered` и на телепорт — без этого запрета воскресший танк молча всасывал лежащий там лут
+## (прежде всего свой же, выпавший при гибели у базы) и следующим кадром выгружал его на склад.
+## Игрок видел «умер с лутом — лут выпал — на респавне оказался на базе». Подбор должен быть
+## действием: надо ВЪЕХАТЬ в ящик, а не появиться в нём.
+func block_pickup() -> void:
+	_pickup_block_left = GameConfig.cargo_respawn_pickup_block_sec
+	set_process(true)
+
+func _process(delta: float) -> void:
+	_pickup_block_left -= delta
+	if _pickup_block_left <= 0.0:
+		_pickup_block_left = 0.0
+		set_process(false)
+
+## Попытка принять ящик. `frozen` — не дозревает дальше (украденное / уже дозревшее). false —
+## трюм полон или идёт пост-респавн запрет; ящик остаётся лежать (штатный отказ, не ошибка).
+func try_take(value: int, frozen: bool, rarity: int = 0) -> bool:
+	if _pickup_block_left > 0.0 or is_full():
 		return false
 	_lots.append({"value": value, "frozen": frozen, "rarity": rarity})
-	if from_warehouse:
-		_withdrawn = true
 	cargo_changed.emit(_lots.size(), total_value())
 	return true
 
@@ -73,15 +82,13 @@ func try_take(value: int, frozen: bool, from_warehouse: bool, rarity: int = 0) -
 func take_all() -> Array[Dictionary]:
 	var out: Array[Dictionary] = _lots.duplicate()
 	_lots.clear()
-	_withdrawn = false
 	cargo_changed.emit(0, 0)
 	return out
 
 ## Полный сброс без выдачи содержимого — только для респавна (груз уже рассыпан на месте гибели
 ## обработчиком смерти; здесь просто гарантируем, что воскресший танк пуст).
 func clear() -> void:
-	if _lots.is_empty() and not _withdrawn:
+	if _lots.is_empty():
 		return
 	_lots.clear()
-	_withdrawn = false
 	cargo_changed.emit(0, 0)

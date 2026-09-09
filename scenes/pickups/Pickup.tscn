@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scenes/pickups/pickup.gd" id="1_pickup"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_pk"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_pk"]
+size = Vector3(0.6, 0.6, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pk"]
+resource_local_to_scene = true
+albedo_color = Color(1, 1, 1, 1)
+
+[node name="Pickup" type="Area3D"]
+collision_layer = 32
+collision_mask = 2
+script = ExtResource("1_pickup")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_pk")
+
+[node name="CrateMesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("StandardMaterial3D_pk")
+mesh = SubResource("BoxMesh_pk")

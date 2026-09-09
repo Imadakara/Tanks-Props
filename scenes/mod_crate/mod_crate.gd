@@ -1,8 +1,9 @@
 extends Area3D
 ## ModCrate — подбираемый КРАСНЫЙ ящик модификации (см. Tank_Prop_Hunt_Modifications.md).
-## Аналог AmmoCrate (scenes/ammo_crate/ammo_crate.gd), но:
-## - слой `mod_crates` (7, бит 64), не `ammo_crates` (32) — зона сброса и AI-сканы различают
-##   красные и жёлтые ящики;
+## Родня универсальному `Pickup` (scenes/pickups/pickup.gd) по механике падения/подбора, но
+## ОТДЕЛЬНЫЙ, потому что:
+## - слой `mod_crates` (7, бит 64), не `pickups` (32) — зона сброса и AI-сканы различают
+##   красные ящики и обычные бонусы;
 ## - при контакте выдаёт МОДИФИКАЦИЮ в слот танка (ModificationController.install), и только если
 ##   слот пуст — иначе ящик остаётся лежать (подбор строго в пустой слот, для обеих команд);
 ## - MVP: содержит всегда «мортиру» (scenes/modifications/mortar.tres).
@@ -11,7 +12,7 @@ extends Area3D
 ## патронные ящики) раз в GameConfig.mortar_drop_interval_sec ОДНОВРЕМЕННО в каждой зоне —
 ## только на картах режима TARGET_OBJECTIVE.
 ##
-## Падение КИНЕМАТИЧЕСКОЕ (прямо вниз с фикс. скоростью) — тот же приём, что у AmmoCrate/Projectile:
+## Падение КИНЕМАТИЧЕСКОЕ (прямо вниз с фикс. скоростью) — тот же приём, что у Pickup/Projectile:
 ## детерминированно и легко проверяется `run_script`.
 
 ## Модификация в этом ящике. preload, НЕ class_name — headless run_project не подхватывает свежий
@@ -30,7 +31,7 @@ func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	set_physics_process(false)  # включается только на время падения из fall_to()
 
-## Зовётся зоной сразу после add_child() — та же сигнатура, что AmmoCrate.fall_to().
+## Зовётся зоной сразу после add_child() — та же сигнатура, что Pickup.fall_to().
 func fall_to(ground_point: Vector3, start_y: float, speed: float) -> void:
 	_rest_y = ground_point.y + _REST_OFFSET
 	_fall_speed = speed

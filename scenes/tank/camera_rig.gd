@@ -46,10 +46,24 @@ var _tumble_follow: bool = false
 func set_tumble_follow(on: bool) -> void:
 	_tumble_follow = on
 
+## Сброс камеры в дефолт: смотрим туда же, куда корпус, питч 0, tumble-follow снят. Вешается на
+## RespawnController.respawned — ориентация камеры живёт ЦЕЛИКОМ в _world_yaw/_pitch, а смерть/
+## респаун их не трогают, поэтому после падения/кувырка камера оставалась наклонённой.
+## face_center() в _on_respawn_timeout уже развернул корпус ДО эмита сигнала — берём его yaw.
+func reset_to_default() -> void:
+	_tumble_follow = false
+	_pitch = 0.0
+	_world_yaw = _body.rotation.y
+	rotation = Vector3.ZERO
+	_apply_pitch_framing()
+
 func _ready() -> void:
 	_camera.current = is_active
 	_world_yaw = _body.rotation.y  # старт — смотрим туда же, куда корпус
 	_is_mcp_test_session = get_tree().root.has_node("McpBridge")
+	var respawn: Node = _body.get_node_or_null("RespawnController")
+	if respawn != null:
+		respawn.respawned.connect(reset_to_default)
 	if not is_active:
 		return
 	var window := get_window()

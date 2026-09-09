@@ -41,8 +41,11 @@ extends StaticBody3D
 ## куб НИЧЕМ не отличается от пустого и от замаскированного танка: в этом весь смысл (концепт §6 —
 ## выстрел по кубу это ставка с тремя исходами).
 var loot_value: int = 0
-## Ярус редкости выпадающего ящика 0..3. Раздаётся там же и тогда же, что и `loot_value`.
+## Ярус редкости выпадающего ящика 0..3. Осмыслен только при `drop_kind == LOOT`.
 var loot_rarity: int = 0
+## Что выпадет при разрушении — индекс `ExtractionManager.FarmDrop` (0 LOOT … 5 SHIELD). Раздаётся
+## в `_allocate_loot_nodes()` тем же зерном, ПЕРЕД ярусом. Дефолт = NOTHING (куб без роли).
+var drop_kind: int = 1  # FarmDrop.NOTHING
 
 func _ready() -> void:
 	_apply()
@@ -81,10 +84,9 @@ func _apply() -> void:
 ## КОНСЕРВАТИВНОЙ (боты обходят место, где уже ничего нет) — это безопасно и дёшево, в отличие от
 ## перепечки на каждый разрушенный куб.
 func _on_destroyed(_killer: Node) -> void:
-	if loot_value <= 0:
-		return
 	var mgr: Node = get_tree().get_first_node_in_group("extraction_manager")
 	if mgr == null:
 		return
-	# Передаём СЕБЯ, чтобы поиск опоры не наткнулся на собственный ещё живой коллайдер.
-	mgr.spawn_loose_loot(global_position, loot_value, loot_rarity, self)
+	# Менеджер сам читает у нас drop_kind/loot_value/loot_rarity и решает, что уронить (лут / бонус /
+	# ничего). Передаём СЕБЯ — чтобы рейкаст опоры не наткнулся на собственный ещё живой коллайдер.
+	mgr.spawn_node_drop(self)

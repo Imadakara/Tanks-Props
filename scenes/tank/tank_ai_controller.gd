@@ -112,7 +112,7 @@ extends Node
 ##   ОКРУЖНОСТИ (не обязательно доехав до центра) — если в зоне уже лежит ящик (группа
 ##   "ammo_crates") → AMMO_RETRIEVE; иначе едет в случайную точку внутри той же окружности → по
 ##   прибытии AMMO_WAIT.
-## - AMMO_RETRIEVE — едет к конкретному ящику. Подбор — чисто физический (AmmoCrate.body_entered),
+## - AMMO_RETRIEVE — едет к конкретному ящику. Подбор — чисто физический (Pickup.body_entered),
 ##   само прибытие уже забирает патроны, отдельного действия не требуется. Ящик исчез (кто-то
 ##   опередил) — AMMO_WAIT у той же зоны; исчез из-за того, что боезапас САМОГО бота уже не низкий
 ##   (значит подобрал он сам) — обычное ролевое поведение (см. _physics_process()).
@@ -743,12 +743,16 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## четверть"] теперь `(0.75 / 1.5) * 1.25 = 0.625` поверх замедленного значения.
 @export var move_speed_multiplier: float = (0.75 / 1.5) * 1.25
 
-## Дебажная отрисовка (ImmediateMesh) поверх земли под ботом: веер — ГЛАВНЫЙ конус обзора
-## (look_cone_deg, жёстко по направлению корпуса, радиус vision_range); цвет = текущий стейт
-## (зелёный IDLE, голубой PATROL, красный ATTACK). Жёлтая линия — куда РЕАЛЬНО сейчас повёрнута
-## башня; узкий белый контур вокруг неё — прицельный конус (secondary_cone_deg). Оранжевая дуга
-## внутри ОБОИХ конусов — граница fire_range: видит бот до vision_range, но стреляет только
-## внутри этой дуги (см. _update_fov_debug_draw()).
+## Дебажная отрисовка (ImmediateMesh) — каркас СФЕРИЧЕСКОГО сектора обзора, а не плоский веер по
+## земле: `_can_see()` меряет настоящий телесный угол (`Vector3.angle_to()`, все три оси) в шаре
+## радиусом vision_range, и оверлей рисует ровно эту фигуру — кольца постоянного полярного угла,
+## меридианы и ось. Главный сектор (look_cone_deg) идёт от направления ROOT и цветом показывает
+## стейт (зелёный IDLE, голубой PATROL, красный ATTACK); узкий белый — прицельный сектор башни
+## (secondary_cone_deg), его ось наклонена вместе с палубой, как и в логике. Оранжевое кольцо в
+## каждом из них — граница fire_range: видит бот до vision_range, а стреляет только внутри неё.
+## Фиолетовая метка — куда башня СТРЕМИТСЯ довернуться (_look_yaw). При включённом
+## MatchState.fov_debug_clip_obstacles сектор обрезается по стенкам тем же лучом и той же маской,
+## что реальный LOS в _can_see() (см. _update_fov_debug_draw()).
 @export var show_fov_debug: bool = true
 ## Линия текущего NavMesh-пути (голубая) — видна только в PATROL, см. _update_path_debug_draw().
 @export var show_path_debug: bool = true
@@ -988,6 +992,18 @@ var _stationary_shot_will_hit: bool = true
 var _miss_offset: Vector3 = Vector3.ZERO
 var _think_timer: float = 0.0
 var _fov_debug_mesh: MeshInstance3D
+## Разбиение СФЕРИЧЕСКОГО сектора обзора для дебаг-отрисовки: _FOV_SECTORS — шагов по азимуту
+## вокруг оси сектора, _FOV_RINGS — колец по полярному углу от оси до края.
+const _FOV_SECTORS: int = 12
+const _FOV_RINGS: int = 2
+## Кэш дистанций обрезки по препятствиям (порядок индексов — см. _fov_sector_dists). Меш
+## перестраивается КАЖДЫЙ физ.кадр, чтобы сектор ехал за танком без рывков, а лучи кастуются раз в
+## _FOV_RAY_REFRESH_FRAMES: 25 + 13 лучей на бота каждый кадр — заметная цена, раз в 6 кадров
+## (10 Гц) — нет, а отставание обрезки на десятую долю секунды в дебаг-оверлее глазом не читается.
+const _FOV_RAY_REFRESH_FRAMES: int = 6
+var _fov_main_dists: PackedFloat32Array = PackedFloat32Array()
+var _fov_turret_dists: PackedFloat32Array = PackedFloat32Array()
+var _fov_ray_age: int = _FOV_RAY_REFRESH_FRAMES
 
 ## Состояние блуждания взгляда в IDLE/PATROL (см. _wander()).
 var _wander_holding: bool = false
@@ -1761,9 +1777,9 @@ func _physics_process(delta: float) -> void:
 			_wander(delta, true)
 			_turret.target_yaw = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 		State.AMMO_RETRIEVE:
-			# Подбор — чисто физический (AmmoCrate.body_entered, см. ammo_crate.gd), не отдельное
+			# Подбор — чисто физический (Pickup.body_entered, см. pickup.gd), не отдельное
 			# действие бота: доехать вплотную уже достаточно. Ящик пропал — либо подобрал кто-то
-			# другой (наш боезапас всё ещё низкий), либо подобрали МЫ (add_ammo() в ammo_crate.gd
+			# другой (наш боезапас всё ещё низкий), либо подобрали МЫ (add_ammo() в pickup.gd
 			# вызывается СИНХРОННО до queue_free(), гонки нет — собственный current_ammo уже отражает
 			# исход к этому кадру).
 			if not is_instance_valid(_ammo_target_crate):
@@ -3085,7 +3101,7 @@ func _has_mortar() -> bool:
 
 ## Красный ящик В ПРЕДЕЛАХ РАДИУСА зоны от её центра (аналог _find_crate_in_zone для патронов).
 ## [ИСПРАВЛЕНО, живьём — "бот прибыл на зону сброса и впал в ступор, крутится на месте"] ЖДЁМ
-## приземления (`_falling == false`) — `fall_to()` (mod_crate.gd/ammo_crate.gd) ставит X/Z СРАЗУ на
+## приземления (`_falling == false`) — `fall_to()` (mod_crate.gd/pickup.gd) ставит X/Z СРАЗУ на
 ## финальную точку, а Y падает постепенно (кинематическое падение с высокого DropOrigin), так что
 ## XZ-проверка радиуса зоны выше находила ящик, ещё летящий по воздуху — `_nav_agent.target_position`
 ## получал реальный (высокий) Y ящика, NavMesh не может проложить путь к точке над землёй, pure
@@ -4626,13 +4642,13 @@ func _pick_new_alert_target() -> void:
 func _ammo_zone_area(zone: Node) -> Node3D:
 	return zone.get_parent()
 
-## Ближайший ящик (группа "ammo_crates", та же, что ammo_crate.gd заводит на себя) в пределах
+## Ближайший ящик (группа "ammo_crates", та же, что pickup.gd заводит на патронный тип) в пределах
 ## РАДИУСА зоны от её центра — не reach_dist, по прямому запросу "заезжает в пределы окружности".
 ## Валидный (is_instance_valid) — ящик, который кто-то только что подобрал, ещё "существует" один
 ## кадр как невалидная ссылка, если её вообще где-то держали, но из свежего group-запроса уже не
 ## вернётся вовсе (queue_free() убирает из группы синхронно). Null — ни одного в радиусе.
 ## [ИСПРАВЛЕНО, живьём — тот же класс, что и _find_mod_crate_in_zone() выше] Пропускаем ещё
-## падающие ящики (`_falling == true`, ammo_crate.gd) — X/Z уже на месте, Y ещё высоко, целиться в
+## падающие ящики (`_falling == true`, pickup.gd) — X/Z уже на месте, Y ещё высоко, целиться в
 ## такую точку заставляет NavMesh-путь вырождаться, бот крутится на месте вместо движения.
 func _find_crate_in_zone(zone: Node) -> Node:
 	var area: Node3D = _ammo_zone_area(zone)
@@ -4831,22 +4847,20 @@ func _pick_random_point_near(center: Vector3, radius: float) -> Vector3:
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
 ## в _update_fov_debug_draw().
 ##
-## [ИЗМЕНЕНО, по прямому запросу — "сектор обзора корпуса и башни ботов не учитывает наклон
-## танка"] Ребёнок `Hull` (визуальный pivot, `hull_rig.gd`), НЕ `_body` (root) — родительский
-## узел раньше был `_body`, и веер оставался идеально горизонтальным на любом склоне, потому что
-## root у танка НИКОГДА не наклоняется (инвариант проекта, см. корневой CLAUDE.md "Tank as a
-## composed entity", п.1: "The tank root never tilts. Only Hull ... and Turret ... tilt"), а
-## визуально наклоняется именно `Hull` (`rotation = Vector3(_pitch, 0.0, _roll)` в
-## `hull_rig.gd` — yaw там всегда 0, весь yaw несёт root). На ровной земле `Hull.rotation` тоже
-## нулевой, так что визуально ничего не меняется; на скате конус теперь физически идёт из
-## наклонённого корпуса/башни (та же ось, вокруг которой реально наклоняется дуло — "поворот
-## вокруг нормали наклонённой палубы", см. CLAUDE.md про `Hull/Turret`), а не парит горизонтально
-## сквозь визуально задранный/опущенный нос танка.
-## ВАЖНО: это ТОЛЬКО визуальный дебаг-оверлей — сама игровая логика видимости (`_can_see()`)
-## по-прежнему читает исключительно `_body.rotation.y`/`_turret.rotation.y` и остаётся полностью
-## горизонтальной (2D по yaw), как и требует тот же инвариант 1 (весь мозг бота обязан читать
-## root basis, не наклон) — этот файл её не трогает, меняется только то, как отрисован
-## существующий угол, не то, что бот реально засекает.
+## [ИСПРАВЛЕНО, живьём — "сломалось отображение секторов ботов"] Ребёнок `_body` (root), НЕ `Hull`.
+## Промежуточная версия вешала меш на `Hull`, чтобы сектор наклонялся вместе с корпусом, но это
+## расходилось с логикой и ломало картинку:
+##  - ГЛАВНЫЙ конус в `_can_see()` считается от `hull_forward = -_body.global_transform.basis.z`,
+##    то есть от root, который НИКОГДА не наклоняется (Invariant 1). Нарисованный от `Hull` сектор
+##    показывал не тот телесный угол, которым бот реально видит;
+##  - `hull_rig.gd` кренит `Hull` до `max_tilt_deg` (32°), складывая рельеф, дифферент от разгона и
+##    `fall_tip`. Плоский веер длиной `vision_range` (10.8/18/25.2 по тирам) уводило от земли на
+##    `vision_range · sin(наклон)` — до ~13 юнитов при клампе, при том что ярусы `KitchenMap` стоят
+##    через 10.8–21.6. Веер целиком проваливался под пол или взлетал над ним, наружу торчали только
+##    куски — те самые «лучи». На спавне крена нет, поэтому сразу после старта всё выглядело верно.
+## Наклон башни при этом не потерян: прицельный сектор рисуется вокруг оси `Turret`, переведённой в
+## локальные координаты корпуса (см. _update_fov_debug_draw()) — в логике он и правда наклонный,
+## `-_turret.global_transform.basis.z` берётся из-под `Hull`.
 func _setup_fov_debug_draw() -> void:
 	_fov_debug_mesh = MeshInstance3D.new()
 	_fov_debug_mesh.name = "FovDebugMesh"
@@ -4858,35 +4872,110 @@ func _setup_fov_debug_draw() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.vertex_color_use_as_albedo = true
 	_fov_debug_mesh.material_override = mat
-	# call_deferred: _ready() всей ветки Tank-инстанса (в т.ч. Hull) ещё выполняется в момент,
+	# call_deferred: _ready() всей ветки Tank-инстанса (в т.ч. _body) ещё выполняется в момент,
 	# когда доходит очередь до этого (последнего) сиблинга — add_child() в это окно падает
 	# с "Parent node is busy setting up children" (тот же класс проблемы, что описан в корневом
 	# CLAUDE.md, "Scene bring-up ordering").
-	_hull.add_child.call_deferred(_fov_debug_mesh)
+	_body.add_child.call_deferred(_fov_debug_mesh)
 
-## Точка в ЛОКАЛЬНЫХ координатах бота: local_deg=0 — прямо вперёд по корпусу (локальный -Z,
-## та же система отсчёта, что и rotation.y у Turret).
-func _local_point(local_deg: float, radius: float, height: float) -> Vector3:
-	var rad: float = deg_to_rad(local_deg)
-	return Vector3(-sin(rad) * radius, height, -cos(rad) * radius)
+## Ортонормированная пара, перпендикулярная оси сектора: по ней раскладывается азимут вокруг оси.
+## Опорный вектор берём заведомо НЕ параллельный оси, иначе cross() выродится в ноль (ось смотрит
+## строго вверх/вниз — на многоуровневой карте башня реально может смотреть почти вертикально).
+func _fov_frame(axis: Vector3) -> Array:
+	var ref: Vector3 = Vector3.UP if absf(axis.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+	var u: Vector3 = axis.cross(ref).normalized()
+	return [u, axis.cross(u).normalized()]
 
-## Дистанция до первого препятствия по лучу из башни (та же точка отсчёта, что реальный LOS в
-## _can_see()) в направлении local_deg — той же локальной системе отсчёта, что _local_point()
-## (0° = вперёд по корпусу). Используется ТОЛЬКО debug-отрисовкой (_update_fov_debug_draw()), чтобы
-## заливка/дуги конуса визуально обрывались на стене/танке, а не рисовались сквозь них — маска
-## та же (environment+tanks), что у реального _can_see(), так нарисованный веер зрительно совпадает
-## с тем, что бот реально видит. Считается РАЗ на угол, не на каждый радиус отдельно — fire_range
-## всегда <= vision_range (см. @export-блок), одна и та же обрезка годится для обеих дуг на одном
-## угле.
-func _fov_obstacle_dist(local_deg: float, max_range: float) -> float:
-	var world_yaw: float = _body.rotation.y + deg_to_rad(local_deg)
-	var dir := Vector3(-sin(world_yaw), 0.0, -cos(world_yaw))
+## Направление на сфере: `theta` — полярный угол ОТ оси сектора, `phi` — азимут вокруг неё.
+## theta = 0 даёт саму ось, theta = половине угла конуса — точку на границе сектора.
+func _fov_dir(axis: Vector3, u: Vector3, v: Vector3, theta: float, phi: float) -> Vector3:
+	return (axis * cos(theta) + (u * cos(phi) + v * sin(phi)) * sin(theta)).normalized()
+
+## Дистанция до первого препятствия из башни — та же точка отсчёта и та же маска
+## (environment+tanks), что у настоящего LOS-луча в _can_see(), поэтому нарисованный сектор
+## обрывается там же, где реально обрывается видимость бота. Направление задаётся в ЛОКАЛЬНЫХ
+## координатах корпуса и трёхмерное: сектор телесный, обрезать его надо и по высоте тоже (прежняя
+## версия принимала один угол по азимуту и умела резать только горизонталь).
+func _fov_dist_local(dir_local: Vector3, max_range: float) -> float:
 	var origin: Vector3 = _turret.global_position
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * max_range)
+	var dir_world: Vector3 = (_body.global_transform.basis * dir_local).normalized()
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir_world * max_range)
 	query.exclude = [_body]
 	query.collision_mask = _LAYER_ENVIRONMENT | _LAYER_TANKS
 	var result: Dictionary = _body.get_world_3d().direct_space_state.intersect_ray(query)
 	return max_range if result.is_empty() else origin.distance_to(result["position"])
+
+## Лучи обрезки одного сектора в ФИКСИРОВАННОМ порядке сетки: кольцо r (1..rings) × азимут s
+## (0.._FOV_SECTORS-1), индекс = (r-1)*_FOV_SECTORS + s; последним элементом идёт сама ось.
+## Тот же порядок читает _draw_fov_sector() — поэтому кэш и отрисовка не могут разъехаться.
+func _fov_sector_dists(axis: Vector3, half_deg: float, max_range: float, rings: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var fr: Array = _fov_frame(axis)
+	var ha: float = deg_to_rad(half_deg)
+	for r in range(1, rings + 1):
+		var theta: float = ha * float(r) / float(rings)
+		for s in range(_FOV_SECTORS):
+			var phi: float = TAU * float(s) / float(_FOV_SECTORS)
+			out.append(_fov_dist_local(_fov_dir(axis, fr[0], fr[1], theta, phi), max_range))
+	out.append(_fov_dist_local(axis, max_range))
+	return out
+
+## Радиус узла сетки: из кэша лучей, а если обрезка выключена (кэш пуст) — полная дальность.
+func _fov_d(dists: PackedFloat32Array, idx: int, max_range: float) -> float:
+	return float(dists[idx]) if idx >= 0 and idx < dists.size() else max_range
+
+## Каркас СФЕРИЧЕСКОГО сектора: кольца постоянного полярного угла (внешнее — граница сектора),
+## меридианы от вершины до края и ось. Заливки нет намеренно: плоский веер можно было залить
+## полупрозрачным, а телесный сектор радиусом vision_range залил бы собой пол-экрана и перекрыл
+## сцену — каркас читается на любой дистанции и не мешает смотреть на карту.
+func _draw_fov_sector(mesh: ImmediateMesh, apex: Vector3, axis: Vector3, half_deg: float,
+		max_range: float, rings: int, dists: PackedFloat32Array, color: Color) -> void:
+	var fr: Array = _fov_frame(axis)
+	var u: Vector3 = fr[0]
+	var v: Vector3 = fr[1]
+	var ha: float = deg_to_rad(half_deg)
+	var dim := Color(color.r, color.g, color.b, color.a * 0.4)
+	for r in range(1, rings + 1):
+		var theta: float = ha * float(r) / float(rings)
+		mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		mesh.surface_set_color(color if r == rings else dim)  # граница сектора ярче внутренних колец
+		for s in range(_FOV_SECTORS + 1):  # +1 — замыкаем кольцо на первую точку
+			var si: int = s % _FOV_SECTORS
+			var dir: Vector3 = _fov_dir(axis, u, v, theta, TAU * float(si) / float(_FOV_SECTORS))
+			mesh.surface_add_vertex(apex + dir * _fov_d(dists, (r - 1) * _FOV_SECTORS + si, max_range))
+		mesh.surface_end()
+	# Меридианы (каждый третий азимут) — без них кольца читаются как плоские, объём не виден.
+	for s2 in range(0, _FOV_SECTORS, 3):
+		var phi2: float = TAU * float(s2) / float(_FOV_SECTORS)
+		mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		mesh.surface_set_color(dim)
+		mesh.surface_add_vertex(apex)
+		for r2 in range(1, rings + 1):
+			var theta2: float = ha * float(r2) / float(rings)
+			var dir2: Vector3 = _fov_dir(axis, u, v, theta2, phi2)
+			mesh.surface_add_vertex(apex + dir2 * _fov_d(dists, (r2 - 1) * _FOV_SECTORS + s2, max_range))
+		mesh.surface_end()
+	# Ось сектора — куда он смотрит.
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_set_color(color)
+	mesh.surface_add_vertex(apex)
+	mesh.surface_add_vertex(apex + axis * _fov_d(dists, rings * _FOV_SECTORS, max_range))
+	mesh.surface_end()
+
+## Граница дистанции стрельбы — кольцо ТОГО ЖЕ телесного угла, но радиусом fire_range: видно, где
+## «вижу» переходит в «могу стрелять». fire_range всегда <= vision_range (см. @export-блок), так
+## что кольцо физически лежит внутри сектора; обрезка по препятствиям — та же, что у его границы.
+func _draw_fov_range_rim(mesh: ImmediateMesh, apex: Vector3, axis: Vector3, half_deg: float,
+		dists: PackedFloat32Array, rings: int) -> void:
+	var fr: Array = _fov_frame(axis)
+	var ha: float = deg_to_rad(half_deg)
+	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
+	for s in range(_FOV_SECTORS + 1):
+		var si: int = s % _FOV_SECTORS
+		var dir: Vector3 = _fov_dir(axis, fr[0], fr[1], ha, TAU * float(si) / float(_FOV_SECTORS))
+		mesh.surface_add_vertex(apex + dir * minf(fire_range, _fov_d(dists, (rings - 1) * _FOV_SECTORS + si, vision_range)))
+	mesh.surface_end()
 
 func _update_fov_debug_draw() -> void:
 	var mesh: ImmediateMesh = _fov_debug_mesh.mesh
@@ -4894,9 +4983,6 @@ func _update_fov_debug_draw() -> void:
 	if state == State.DISGUISE or state == State.DISGUISE_PREP:
 		return  # конусы обзора заморожены — рисовать их как активные вводит в заблуждение
 
-	const SEGMENTS := 16
-	const HEIGHT := 0.55  # чуть выше корпуса — видно поверх HullMesh, не тонет в земле
-	var radius: float = vision_range
 	var fill_color: Color
 	match state:
 		State.ATTACK:
@@ -4919,119 +5005,51 @@ func _update_fov_debug_draw() -> void:
 			fill_color = Color(1.0, 0.35, 0.75, 0.3)  # пурпурный — навесная атака мортирой
 		_:
 			fill_color = Color(0.15, 0.9, 0.2, 0.22)
-	var center := Vector3(0.0, HEIGHT, 0.0)
+	# Ось ГЛАВНОГО сектора — строго вперёд по ROOT (локальный -Z). Это ровно тот вектор, который
+	# _can_see() берёт как `hull_forward = -_body.global_transform.basis.z`: root никогда не
+	# наклоняется (Invariant 1), значит и сектор обязан стоять неподвижно относительно корпуса.
+	var main_axis := Vector3(0.0, 0.0, -1.0)
+	# Ось ПРИЦЕЛЬНОГО сектора — башня, переведённая в локальные координаты корпуса. В логике это
+	# `-_turret.global_transform.basis.z`, то есть С наклоном палубы (Turret живёт под Hull) —
+	# здесь наклон обязан быть, в отличие от главного сектора.
+	var turret_axis: Vector3 = (_body.global_transform.basis.inverse() \
+			* (-_turret.global_transform.basis.z)).normalized()
+	# Вершина обоих секторов — башня: та же точка отсчёта, из которой _can_see() меряет дистанцию
+	# и кастует LOS-луч, поэтому нарисованное совпадает с тем, что бот реально проверяет.
+	var apex: Vector3 = _body.to_local(_turret.global_position)
 
-	# ГЛАВНЫЙ конус обзора (v2) — жёстко на направлении корпуса (0° в локальных координатах
-	# бота), НЕ двигается сам по себе — только вместе с поворотом всего корпуса.
-	var cone_min_deg: float = -look_cone_deg * 0.5
-	var cone_max_deg: float = look_cone_deg * 0.5
-
-	# Обрезка по препятствиям (см. doc-comment _fov_obstacle_dist()) — один луч на угол сегмента,
-	# переиспользуется ниже и для заливки/контура (радиус vision_range), и для дуги fire_range на
-	# том же угле. [ОПЦИОНАЛЬНО, по прямому запросу — "обрезание вижена опционально в дебаг-режиме,
-	# по умолчанию выкл"] Только когда MatchState.fov_debug_clip_obstacles — иначе НИ ОДНОГО
-	# raycast'а не кастуется, веер рисуется на полный радиус как раньше (см. её doc-comment в
-	# match_state.gd — это точечный тумблер для проверки LOS-геометрии, не повседневный вид дебага).
-	var main_clip: Array[float] = []
-	for i in range(SEGMENTS + 1):
+	# Лучи обрезки — раз в _FOV_RAY_REFRESH_FRAMES; сам меш перестраивается каждый кадр, чтобы
+	# сектор ехал за танком без рывков. Обрезка опциональна (MatchState.fov_debug_clip_obstacles):
+	# выключена — кэш пуст, _fov_d() отдаёт полную дальность и ни одного луча не кастуется.
+	_fov_ray_age += 1
+	if _fov_ray_age >= _FOV_RAY_REFRESH_FRAMES:
+		_fov_ray_age = 0
 		if MatchState.fov_debug_clip_obstacles:
-			var t0: float = float(i) / float(SEGMENTS)
-			main_clip.append(_fov_obstacle_dist(lerp(cone_min_deg, cone_max_deg, t0), radius))
+			_fov_main_dists = _fov_sector_dists(main_axis, look_cone_deg * 0.5, vision_range, _FOV_RINGS)
+			_fov_turret_dists = _fov_sector_dists(turret_axis, secondary_cone_deg * 0.5, vision_range, 1)
 		else:
-			main_clip.append(radius)
+			_fov_main_dists = PackedFloat32Array()
+			_fov_turret_dists = PackedFloat32Array()
 
-	# Заливка веера — треугольниками (у ImmediateMesh нет отдельного TRIANGLE_FAN).
-	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	mesh.surface_set_color(fill_color)
-	var prev_point: Vector3 = _local_point(cone_min_deg, main_clip[0], HEIGHT)
-	for i in range(1, SEGMENTS + 1):
-		var t: float = float(i) / float(SEGMENTS)
-		var deg: float = lerp(cone_min_deg, cone_max_deg, t)
-		var cur_point: Vector3 = _local_point(deg, main_clip[i], HEIGHT)
-		mesh.surface_add_vertex(center)
-		mesh.surface_add_vertex(prev_point)
-		mesh.surface_add_vertex(cur_point)
-		prev_point = cur_point
-	mesh.surface_end()
+	_draw_fov_sector(mesh, apex, main_axis, look_cone_deg * 0.5, vision_range, _FOV_RINGS,
+			_fov_main_dists, Color(fill_color.r, fill_color.g, fill_color.b, 0.9))
+	_draw_fov_range_rim(mesh, apex, main_axis, look_cone_deg * 0.5, _fov_main_dists, _FOV_RINGS)
+	# Прицельный сектор башни — узкий (secondary_cone_deg), белый, одно кольцо: он и в логике
+	# отдельный вход в _can_see(), цель может попасть в кадр через любой из двух секторов.
+	_draw_fov_sector(mesh, apex, turret_axis, secondary_cone_deg * 0.5, vision_range, 1,
+			_fov_turret_dists, Color(1.0, 1.0, 1.0, 0.6))
+	_draw_fov_range_rim(mesh, apex, turret_axis, secondary_cone_deg * 0.5, _fov_turret_dists, 1)
 
-	# Контур конуса (боковые радиусы + дуга) — ярче заливки, чтобы границы читались чётко.
-	var outline_color := Color(fill_color.r, fill_color.g, fill_color.b, 0.9)
-	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-	mesh.surface_set_color(outline_color)
-	mesh.surface_add_vertex(center)
-	for i in range(SEGMENTS + 1):
-		var t2: float = float(i) / float(SEGMENTS)
-		var deg2: float = lerp(cone_min_deg, cone_max_deg, t2)
-		mesh.surface_add_vertex(_local_point(deg2, main_clip[i], HEIGHT))
-	mesh.surface_add_vertex(center)
-	mesh.surface_end()
-
-	# Граница дистанции стрельбы (fire_range) — дуга ВНУТРИ главного конуса, без линий к центру
-	# (не заливка, чисто маркер порога), чтобы отличать "вижу" (весь конус, до vision_range) от
-	# "могу стрелять" (только внутри этой дуги). fire_range всегда <= vision_range по конструкции
-	# (см. @export-блок выше), дуга физически ложится внутри конуса, не выходит за его пределы.
-	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
-	for i in range(SEGMENTS + 1):
-		var t2b: float = float(i) / float(SEGMENTS)
-		var deg2b: float = lerp(cone_min_deg, cone_max_deg, t2b)
-		mesh.surface_add_vertex(_local_point(deg2b, minf(fire_range, main_clip[i]), HEIGHT))
-	mesh.surface_end()
-
-	# Текущее РЕАЛЬНОЕ направление башни (куда башня уже физически довернула, не куда стремится) —
-	# turret уже дочерний узел _body, rotation.y у неё локальный без пересчёта.
-	var turret_local_deg: float = rad_to_deg(_turret.rotation.y)
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-	mesh.surface_set_color(Color(1.0, 1.0, 0.2, 0.95))
-	mesh.surface_add_vertex(center)
-	mesh.surface_add_vertex(_local_point(turret_local_deg, radius, HEIGHT))
-	mesh.surface_end()
-
-	# Прицельный сектор (см. _can_see()) — узкий контур белым, зафиксирован на РЕАЛЬНОМ угле
-	# башни (том же turret_local_deg, что и жёлтая линия выше), не на _look_yaw. Только контур,
-	# не заливка — чтобы не забивать читаемость главного конуса поверх него.
-	var sec_min_deg: float = turret_local_deg - secondary_cone_deg * 0.5
-	var sec_max_deg: float = turret_local_deg + secondary_cone_deg * 0.5
-	# Своя обрезка по углу — сектор башни смотрит в другую сторону от главного конуса корпуса
-	# (турель может быть довёрнута), угол-в-угол с main_clip не совпадает.
-	var sec_clip: Array[float] = []
-	for i in range(SEGMENTS + 1):
-		if MatchState.fov_debug_clip_obstacles:
-			var t3s: float = float(i) / float(SEGMENTS)
-			sec_clip.append(_fov_obstacle_dist(lerp(sec_min_deg, sec_max_deg, t3s), radius))
-		else:
-			sec_clip.append(radius)
-	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-	mesh.surface_set_color(Color(1.0, 1.0, 1.0, 0.6))
-	mesh.surface_add_vertex(center)
-	for i in range(SEGMENTS + 1):
-		var t3: float = float(i) / float(SEGMENTS)
-		var deg3: float = lerp(sec_min_deg, sec_max_deg, t3)
-		mesh.surface_add_vertex(_local_point(deg3, sec_clip[i], HEIGHT))
-	mesh.surface_add_vertex(center)
-	mesh.surface_end()
-
-	# Та же граница дистанции стрельбы, но внутри прицельного (башенного) сектора — цель может
-	# попасть в кадр через ЛЮБОЙ из двух конусов (см. _can_see()), поэтому порог стрельбы отмечен
-	# в обоих.
-	mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-	mesh.surface_set_color(Color(1.0, 0.35, 0.0, 0.95))
-	for i in range(SEGMENTS + 1):
-		var t3b: float = float(i) / float(SEGMENTS)
-		var deg3b: float = lerp(sec_min_deg, sec_max_deg, t3b)
-		mesh.surface_add_vertex(_local_point(deg3b, minf(fire_range, sec_clip[i]), HEIGHT))
-	mesh.surface_end()
-
-	# Целевой угол блуждания башни (_look_yaw — куда башня СЕЙЧАС стремится довернуться, "линия",
-	# см. заголовок файла) — короткая пунктирная-по-цвету (сплошная линия, ImmediateMesh не умеет
-	# пунктир) фиолетовая метка ближе к центру, чтобы не путать с реальным углом башни (жёлтая,
-	# полной длины) выше — видно, куда башня едет, ДО того как физически туда довернёт.
-	var wander_target_local_deg: float = rad_to_deg(wrapf(_look_yaw - _body.rotation.y, -PI, PI))
+	# Целевой угол блуждания башни (_look_yaw — куда башня СТРЕМИТСЯ довернуться, ещё не довернула,
+	# см. заголовок файла). Горизонтальная метка вполовину дальности, фиолетовая — чтобы не путать
+	# с реальной осью башни (белый сектор выше).
+	var wander_yaw: float = wrapf(_look_yaw - _body.rotation.y, -PI, PI)
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	mesh.surface_set_color(Color(0.85, 0.2, 0.95, 0.9))
-	mesh.surface_add_vertex(center)
-	mesh.surface_add_vertex(_local_point(wander_target_local_deg, radius * 0.5, HEIGHT))
+	mesh.surface_add_vertex(apex)
+	mesh.surface_add_vertex(apex + Vector3(-sin(wander_yaw), 0.0, -cos(wander_yaw)) * vision_range * 0.5)
 	mesh.surface_end()
+
 
 ## Тот же приём, что и с конусом обзора (_setup_fov_debug_draw) — отдельный MeshInstance3D,
 ## ребёнок _body, ребилдится каждый физ.кадр.

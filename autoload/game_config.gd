@@ -71,34 +71,67 @@ extends Node
 @export var extraction_zone_height_tolerance: float = 4.0
 
 ## Добыча. Куб-укрытие держит столько попаданий, прежде чем развалиться — фарм обязан ощутимо
-## стоить боеприпасов (концепт §6: «хорошо пофармил» = «встречу врага полупустым»).
+## стоить боеприпасов (концепт §6: «хорошо пофармил» = «встречу врага полупустым»). Кросс-режимная
+## прочность укрытия (обычный Obstacle на любой карте), поэтому здесь, а не в JSON drop-баланса.
 @export var loot_node_hits: int = 2
-## Сколько кубов карты содержат лут. Раздаётся детерминированно по MatchState.loot_seed среди ВСЕХ
-## кубов группы "obstacles" — визуально лутовый куб неотличим от пустого и от замаскированного танка.
-@export var loot_node_count: int = 10
-## --- Редкость ящиков. Четыре яруса; индекс = ярус (0 обычный … 3 легендарный). Все массивы строго
-## по 4 элемента. Разлом «обработки на складе» именно здесь: обычный ящик и растёт медленно, и
-## упирается в низкий потолок; легендарный — быстро и до высокого.
-@export var loot_rarity_names: PackedStringArray = PackedStringArray(["Обычный", "Редкий", "Эпический", "Легендарный"])
-## Шанс, что разрушенный ЛУТОВЫЙ куб отдаст ящик этого яруса. Сумма строго 1.0.
-@export var loot_rarity_weights: PackedFloat32Array = PackedFloat32Array([0.70, 0.20, 0.07, 0.03])
-## Сырая ценность свежевыбитого ящика — случайна в [min, max] своего яруса, свой ролл на каждый.
-@export var loot_rarity_raw_min: PackedInt32Array = PackedInt32Array([1, 5, 10, 20])
-@export var loot_rarity_raw_max: PackedInt32Array = PackedInt32Array([10, 15, 25, 50])
-## Прибавка ценности за каждую секунду на складе (очков/сек) — линейный прирост, не множитель.
-@export var loot_rarity_ripen_per_sec: PackedInt32Array = PackedInt32Array([1, 2, 3, 4])
-## Потолок ценности на складе: дозрев до него, ящик больше не растёт (концепт §4 — без потолка нет
-## причины вывозить раньше последнего окна).
-@export var loot_rarity_ripen_cap: PackedInt32Array = PackedInt32Array([75, 150, 300, 500])
-## Цвет ящика яруса — виден издалека, задаёт масштаб ценности; спелость добавляет яркости поверх
-## (loot_crate.gd._refresh_visual()).
-@export var loot_rarity_color: PackedColorArray = PackedColorArray([Color(0.62, 0.64, 0.66), Color(0.28, 0.55, 1.0), Color(0.62, 0.3, 0.9), Color(1.0, 0.55, 0.12)])
 
-## Трюм. Вместимость — сколько СВОБОДНЫХ ящиков танк увозит за раз. Ящик со склада всегда ровно
-## один и только в пустой трюм («главный замок», концепт §4) — это правило в cargo_hold.gd, не число.
+## --- Числа выпадения лута/бонусов вынесены в JSON:
+##   config/extraction_kitchen.json (per-map, @export extraction_config_path на корне карты) —
+##     farm_drop_weights, rarity_tiers (веса + диапазон ценности + дозревание + цвет), loot_node_count.
+##     Читает ExtractionManager.setup(); LootCrate берёт смысл яруса через него.
+##   config/pickups.json (глобально) — цвет и эффект ammo/medkit/shield. Читает GameConfig._ready()
+##     ниже; Pickup берёт своё через pickup_kind(id).
+
+## id бонуса → {color: Color, ammo_amount: int, heal_hits: int, shield_sec: float}.
+var _pickup_kinds: Dictionary = {}
+
+func _ready() -> void:
+	_load_pickups()
+
+func _load_pickups() -> void:
+	const PATH := "res://config/pickups.json"
+	if not FileAccess.file_exists(PATH):
+		push_warning("GameConfig: %s не найден — бонусы без эффекта/цвета" % PATH)
+		return
+	var f := FileAccess.open(PATH, FileAccess.READ)
+	var parsed: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if not (parsed is Dictionary):
+		push_warning("GameConfig: некорректный JSON в %s" % PATH)
+		return
+	for id in (parsed as Dictionary):
+		if String(id).begins_with("_"):
+			continue  # служебные ключи вроде "_comment"
+		var d: Dictionary = parsed[id]
+		_pickup_kinds[StringName(id)] = {
+			"color": _color_from(d.get("color")),
+			"ammo_amount": int(d.get("ammo_amount", 0)),
+			"heal_hits": int(d.get("heal_hits", 0)),
+			"shield_sec": float(d.get("shield_sec", 0.0)),
+		}
+
+## [r, g, b] из JSON → Color. null/битое → белый.
+func _color_from(v: Variant) -> Color:
+	if v is Array and (v as Array).size() >= 3:
+		return Color(float(v[0]), float(v[1]), float(v[2]))
+	return Color(1, 1, 1)
+
+## Конфиг одного типа бонуса. Неизвестный id → пустой эффект (Pickup просто ничего не сделает).
+func pickup_kind(id: StringName) -> Dictionary:
+	return _pickup_kinds.get(id, {"color": Color(1, 1, 1), "ammo_amount": 0, "heal_hits": 0, "shield_sec": 0.0})
+
+## Трюм. Вместимость — сколько ящиков танк увозит за раз; сырой с земли и дозревший со склада
+## занимают по одному месту одинаково (правило в cargo_hold.gd, не число).
 @export var cargo_capacity: int = 3
 ## Штраф к скорости за КАЖДЫЙ ящик в трюме (мультипликативно). 0.85 при трёх ящиках даёт ×0.61.
 @export var cargo_speed_penalty_per_lot: float = 0.85
+## Сколько секунд после респавна трюм не принимает добычу. Танк МАТЕРИАЛИЗУЕТСЯ в круге своей базы,
+## а `Area3D` ящика шлёт `body_entered` и на телепорт — воскресший танк молча всасывал лут, лежащий
+## в точке спавна (в первую очередь свой же, выпавший при гибели рядом с базой), и следующим кадром
+## `ExtractionManager` выгружал всё на склад. Подбор обязан быть ДЕЙСТВИЕМ: надо въехать в ящик, а
+## не появиться в нём. Хватает пары секунд — сигнал входа уже отработал и, пока танк стоит, не
+## повторится. См. cargo_hold.block_pickup() / respawn_controller._on_respawn_timeout().
+@export var cargo_respawn_pickup_block_sec: float = 2.0
 
 ## Окна эвакуации. Расписание известно заранее, точка — нет (концепт §8). Первое окно через `first`
 ## от старта, дальше каждые `interval`, всего `count` штук. Матч заканчивается ровно в момент

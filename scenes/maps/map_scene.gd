@@ -78,6 +78,13 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 ## кубы, разбросанные по XZ без понятия об этажах, на многоуровневой карте всё равно бессмысленны.
 @export var dynamic_obstacles_supported: bool = true
 
+## Настройка режима EXTRACTION (на других картах не используется): путь к JSON-файлу баланса
+## выпадения — farm_drop_weights (что выпадет: лут / ничего / патроны / мортира / аптечка / щит),
+## rarity_tiers (веса ярусов + диапазон ценности + дозревание + цвет), loot_node_count. Читает
+## `ExtractionManager.setup()`. Формат/справочник — Tank_Prop_Hunt_Extraction_Mode.md §8. Одна
+## карта = один файл; своя карта может указать свой (например config/extraction_rich.json).
+@export_file("*.json") var extraction_config_path: String = "res://config/extraction_kitchen.json"
+
 @onready var _player_camera_rig: Node3D = $PlayerTank/CameraRig
 @onready var _player_health: Node = $PlayerTank/HealthComponent
 @onready var _objective_camera: Camera3D = $ObjectiveCamera

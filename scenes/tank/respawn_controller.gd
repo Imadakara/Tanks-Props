@@ -82,14 +82,24 @@ func _on_respawn_timeout() -> void:
 	_ammo.current_ammo = _ammo.max_ammo
 	_ammo.ammo_changed.emit(_ammo.current_ammo, _ammo.max_ammo)
 	_state_machine.force_reset()
+	# Временный щит (синий ящик-подбираемое) не переживает смерть — воскресший танк без бонусов.
+	if _health.has_method("clear_shield"):
+		_health.clear_shield()
 	# Модификация теряется вместе с танком (сбросить/сохранить её нельзя, см.
 	# Tank_Prop_Hunt_Modifications.md) — слот освобождается на респавне.
 	_mod.clear_slot()
 	# Трюм тоже пуст: содержимое уже рассыпано на месте гибели (extraction_manager.gd слушает
 	# destroyed). Здесь — гарантия, что воскресший танк не увёз ценность «с того света».
+	# И сразу запрет подбора на пару секунд: танк не приезжает на точку спавна, а ПОЯВЛЯЕТСЯ в ней,
+	# а `Area3D` ящика шлёт `body_entered` и на телепорт. Без запрета воскресший танк молча всасывал
+	# лут, лежащий в круге его базы — в первую очередь свой же, только что выпавший при гибели рядом
+	# с базой, — и следующим кадром ExtractionManager выгружал всё на склад. Выпавший лут обязан
+	# лежать там, где выпал, пока в него кто-нибудь не ВЪЕДЕТ.
 	var cargo: Node = get_parent().get_node_or_null("CargoHold")
 	if cargo != null:
 		cargo.clear()
+		if cargo.has_method("block_pickup"):
+			cargo.block_pickup()
 	_tank.on_respawned()
 	_set_frozen(false)
 	respawned.emit()

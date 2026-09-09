@@ -22,12 +22,12 @@ enum State { LOOSE, STORED }
 signal picked_up(crate: Node, by_tank: Node)
 
 ## Полувысота коллизии/меша (0.6³) — центр встаёт на эту высоту над точкой опоры, иначе половина
-## уходит под пол. То же число и та же причина, что у AmmoCrate/ModCrate.
+## уходит под пол. То же число и та же причина, что у Pickup/ModCrate.
 const _REST_OFFSET: float = 0.3
 
-## Базовая (сырая) ценность. Ставится создателем: случайная из диапазона своего яруса редкости
-## (`GameConfig.loot_rarity_raw_*`) для свежевыбитого, накопленная — для выброшенного из трюма или
-## украденного.
+## Базовая (сырая) ценность. Ставится создателем: случайная из диапазона своего яруса
+## (`raw_min..raw_max` в config/extraction_*.json) для свежевыбитого, накопленная — для
+## выброшенного из трюма или украденного.
 var base_value: int = 0
 ## Ярус редкости 0..3 (обычный … легендарный). Задаёт диапазон сырой ценности, скорость и потолок
 ## дозревания, цвет. Ставится создателем вместе с `base_value`, едет вместе с лотом через трюм.
@@ -43,6 +43,10 @@ var stored_elapsed: float = 0.0
 var owner_team: int = -1
 
 var _label: Label3D
+## Смысл яруса (диапазон/дозревание/цвет) живёт в config/extraction_*.json, который грузит
+## ExtractionManager — свой доступ к JSON у ящика заводить незачем. LootCrate есть только в
+## режиме EXTRACTION, где менеджер гарантированно существует; кэшируем ссылку.
+var _mgr_cache: Node = null
 
 func _ready() -> void:
 	add_to_group("loot_crates")
@@ -51,27 +55,40 @@ func _ready() -> void:
 	set_physics_process(false)  # часы идут только на складе, см. set_stored()
 	_refresh_visual()
 
-## Индекс яруса, зажатый по фактическому размеру таблиц редкости — защита от битого значения.
-func _rar() -> int:
-	return clampi(rarity, 0, GameConfig.loot_rarity_weights.size() - 1)
+func _mgr() -> Node:
+	if _mgr_cache == null or not is_instance_valid(_mgr_cache):
+		_mgr_cache = get_tree().get_first_node_in_group("extraction_manager")
+	return _mgr_cache
 
-## Текущая ценность: сырое значение ПЛЮС линейный прирост за время на складе
-## (`loot_rarity_ripen_per_sec` очков/сек своего яруса), зажатый потолком яруса
-## (`loot_rarity_ripen_cap`). Не множитель — поэтому «обработка» дешёвого обычного ящика и дорогого
-## легендарного растут по-разному и в абсолюте, и по скорости. Не на складе / украденное — сырое.
+## Индекс яруса, зажатый по числу ярусов из конфига — защита от битого значения.
+func _rar() -> int:
+	var m: Node = _mgr()
+	var n: int = m.rarity_count() if m != null else 4
+	return clampi(rarity, 0, maxi(n - 1, 0))
+
+func _ripen_cap() -> int:
+	var m: Node = _mgr()
+	return m.rarity_ripen_cap(_rar()) if m != null else base_value
+
+## Текущая ценность: сырое значение ПЛЮС линейный прирост за время на складе (`ripen_per_sec`
+## очков/сек своего яруса из JSON), зажатый потолком яруса (`ripen_cap`). Не множитель — поэтому
+## «обработка» дешёвого обычного ящика и дорогого легендарного растут по-разному и в абсолюте, и
+## по скорости. Не на складе / украденное — сырое.
 func current_value() -> int:
 	if state != State.STORED or frozen:
 		return base_value
-	var rate: int = GameConfig.loot_rarity_ripen_per_sec[_rar()]
-	var cap: int = GameConfig.loot_rarity_ripen_cap[_rar()]
-	return mini(base_value + int(round(float(rate) * stored_elapsed)), cap)
+	var m: Node = _mgr()
+	if m == null:
+		return base_value
+	var rate: int = m.rarity_ripen_per_sec(_rar())
+	return mini(base_value + int(round(float(rate) * stored_elapsed)), m.rarity_ripen_cap(_rar()))
 
 ## Доля дозревания 0..1 (визуал + решение бота «самый спелый») — насколько ценность прошла путь от
 ## сырой к потолку своего яруса.
 func ripeness() -> float:
 	if state != State.STORED or frozen:
 		return 0.0
-	var span: int = GameConfig.loot_rarity_ripen_cap[_rar()] - base_value
+	var span: int = _ripen_cap() - base_value
 	if span <= 0:
 		return 1.0
 	return clampf(float(current_value() - base_value) / float(span), 0.0, 1.0)
@@ -99,21 +116,21 @@ func _physics_process(delta: float) -> void:
 	if state != State.STORED or frozen:
 		set_physics_process(false)
 		return
-	if current_value() >= GameConfig.loot_rarity_ripen_cap[_rar()]:
+	if current_value() >= _ripen_cap():
 		set_physics_process(false)  # дозрел до потолка яруса — дальше считать нечего
 		_refresh_visual()
 		return
 	stored_elapsed += delta
 	_refresh_visual()
 
-## Подбор — тем же контактом для ЛЮБОГО состояния и любой команды. Решение «можно ли взять» целиком
-## принимает трюм (`CargoHold.try_take`): правило «со склада — только один и только в пустой трюм»
-## живёт там, а не размазано по местам подбора.
+## Подбор — тем же контактом для ЛЮБОГО состояния и любой команды. Решение «влезет ли» целиком
+## принимает трюм (`CargoHold.try_take` — вместимость). `frozen` в лоте: со склада (`STORED`) взятый
+## ящик дальше не дозревает.
 func _on_body_entered(body: Node) -> void:
 	var hold: Node = body.get_node_or_null("CargoHold")
 	if hold == null:
 		return
-	if not hold.try_take(current_value(), frozen or state == State.STORED, state == State.STORED, _rar()):
+	if not hold.try_take(current_value(), frozen or state == State.STORED, _rar()):
 		return
 	picked_up.emit(self, body)
 	queue_free()
@@ -125,7 +142,8 @@ func _refresh_visual() -> void:
 	if _label == null:
 		return
 	_label.text = str(current_value())
-	var col: Color = GameConfig.loot_rarity_color[_rar()]
+	var m: Node = _mgr()
+	var col: Color = m.rarity_color(_rar()) if m != null else Color(1, 1, 1)
 	_label.modulate = col.lerp(Color.WHITE, 0.4)
 	var mesh: MeshInstance3D = $CrateMesh
 	var mat: StandardMaterial3D = mesh.material_override as StandardMaterial3D

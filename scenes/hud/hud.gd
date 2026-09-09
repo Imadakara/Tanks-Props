@@ -41,6 +41,8 @@ var _score_manager: Node
 var _objective_health: Node  # HealthComponent objective-цели (режим TARGET_OBJECTIVE), резолвится лениво
 var _extraction_manager: Node  # ExtractionManager (режим EXTRACTION), резолвится лениво
 var _cargo: Node  # CargoHold танка игрока
+var _player_health: Node  # HealthComponent танка игрока — читаем остаток временного щита
+var _shield_left: float = 0.0
 var _round_timer: Timer
 var _barrel: Node3D
 var _camera: Camera3D
@@ -65,6 +67,9 @@ func _ready() -> void:
 		_cargo = tank.get_node_or_null("CargoHold")
 		if _cargo != null:
 			_cargo.cargo_changed.connect(_on_cargo_changed)
+		_player_health = tank.get_node_or_null("HealthComponent")
+		if _player_health != null and _player_health.has_signal("shield_changed"):
+			_player_health.shield_changed.connect(_on_shield_changed)
 
 	# MatchManager/ScoreManager/RoundTimer/objective резолвятся лениво (см. _resolve_*) и
 	# поллятся: карта заводит эти узлы из кода уже ПОСЛЕ этого _ready(), а objective может
@@ -372,18 +377,26 @@ func _on_ammo_changed(current: int, max_ammo: int) -> void:
 func _on_state_changed(_old_state, _new_state) -> void:
 	_update_state_label()
 
+func _on_shield_changed(seconds_left: float) -> void:
+	_shield_left = seconds_left
+	_update_state_label()
+
 func _update_state_label() -> void:
+	var base: String
 	match _fsm.state:
 		TankStateMachineScript.State.NORMAL:
 			if _cargo != null and _cargo.blocks_disguise():
 				# Концепт §5: груз — сознательный отказ от главного защитного инструмента. Игрок должен
 				# видеть ПРИЧИНУ, а не молча жать бесполезную клавишу.
-				_state_label.text = "Статус: обычное  |  Маскировка НЕДОСТУПНА: гружён"
+				base = "Статус: обычное  |  Маскировка НЕДОСТУПНА: гружён"
 			else:
-				_state_label.text = "Статус: обычное  |  Маскировка: M"
+				base = "Статус: обычное  |  Маскировка: M"
 		TankStateMachineScript.State.DISGUISED:
-			_state_label.text = "Статус: маскировка (%.1f с)" % _fsm.get_node("DisguiseTimer").time_left
+			base = "Статус: маскировка (%.1f с)" % _fsm.get_node("DisguiseTimer").time_left
 		TankStateMachineScript.State.DISGUISE_COOLDOWN:
-			_state_label.text = "Статус: кулдаун маскировки (%.1f с)" % _fsm.get_node("CooldownTimer").time_left
+			base = "Статус: кулдаун маскировки (%.1f с)" % _fsm.get_node("CooldownTimer").time_left
 		TankStateMachineScript.State.RELOAD:
-			_state_label.text = "Статус: перезарядка (%.1f с)" % _fsm.get_node("ReloadTimer").time_left
+			base = "Статус: перезарядка (%.1f с)" % _fsm.get_node("ReloadTimer").time_left
+	if _shield_left > 0.0:
+		base += "  |  ЩИТ %d с" % int(ceil(_shield_left))
+	_state_label.text = base
