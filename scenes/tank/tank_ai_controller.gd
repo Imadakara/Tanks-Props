@@ -889,6 +889,7 @@ const _DIFFICULTY_PRESETS := {
 
 @onready var _body: CharacterBody3D = get_parent()
 @onready var _movement: Node = get_parent().get_node("TankMovement")
+@onready var _hull: Node3D = get_parent().get_node("Hull")
 @onready var _turret: Node3D = get_parent().get_node("Hull/Turret")
 @onready var _barrel: Node3D = get_parent().get_node("Hull/Turret/Barrel")
 @onready var _weapon: Node = get_parent().get_node("WeaponController")
@@ -3711,13 +3712,28 @@ func _can_see(target: Node3D, ignore_disguise: bool = false) -> bool:
 	var dist: float = to_target.length()
 	if dist > vision_range or dist < 0.01:
 		return false
-	var world_yaw: float = _yaw_to_world_point(_turret.global_position, target.global_position)
 
-	var hull_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - _body.rotation.y, -PI, PI)))
+	# [ИЗМЕНЕНО, по прямому запросу — "сделай сектор трёхмерной проекцией, чтобы и по высоте тоже
+	# работало обнаружение"] Раньше угол считался ЧИСТО по азимуту — `_yaw_to_world_point()` берёт
+	# `atan2(-d.x, -d.z)`, полностью игнорируя `d.y` — цель прямо над/под ботом (лестница/балкон на
+	# `KitchenMap`) давала вырожденное или произвольное направление в горизонтальной проекции и
+	# могла пройти проверку конуса как "прямо по курсу", независимо от реального угла возвышения.
+	# Раньше это не било в глаза (все карты, кроме `KitchenMap`, плоские, `d.y` там пренебрежимо
+	# мал), но на многоуровневой карте ломало саму суть "конус обзора" — вертикаль не участвовала
+	# вообще. Теперь сравниваем НАСТОЯЩИЙ 3D-угол между вектором взгляда и направлением на цель
+	# (`Vector3.angle_to()`, учитывает все три оси) — это одновременно ограничивает и азимут, и
+	# возвышение одним и тем же конусом, как у настоящего прожектора, а не горизонтальную полосу
+	# бесконечной высоты. Векторы взгляда — те же самые оси, что и раньше (корпус для главного
+	# конуса, башня для прицельного): у корпуса всегда чисто горизонтальный (root никогда не
+	# наклоняется, см. корневой CLAUDE.md Invariant 1), у башни включает наклон палубы (`Hull`),
+	# которым уже легитимно управляет иерархия `Hull/Turret` — не новая зависимость, тот же базис,
+	# что и для выстрела.
+	var hull_forward: Vector3 = -_body.global_transform.basis.z
+	var hull_diff_deg: float = rad_to_deg(hull_forward.angle_to(to_target))
 	var in_hull_cone: bool = hull_diff_deg <= look_cone_deg * 0.5
 
-	var turret_world_yaw: float = _body.rotation.y + _turret.rotation.y
-	var turret_diff_deg: float = rad_to_deg(absf(wrapf(world_yaw - turret_world_yaw, -PI, PI)))
+	var turret_forward: Vector3 = -_turret.global_transform.basis.z
+	var turret_diff_deg: float = rad_to_deg(turret_forward.angle_to(to_target))
 	var in_turret_cone: bool = turret_diff_deg <= secondary_cone_deg * 0.5
 
 	if not (in_hull_cone or in_turret_cone):
@@ -4813,9 +4829,24 @@ func _pick_random_point_near(center: Vector3, radius: float) -> Vector3:
 	return center + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
 
 ## Создаётся один раз в _ready(): MeshInstance3D с ImmediateMesh — ребилдится каждый физ.кадр
-## в _update_fov_debug_draw(). Ребёнок именно _body (CharacterBody3D), не self (self — plain
-## Node, у Node3D-детей под ним не было бы осмысленной мировой трансформации) — так веер сам
-## наследует позицию/поворот корпуса, координаты внутри считаем в ЛОКАЛЬНОМ пространстве бота.
+## в _update_fov_debug_draw().
+##
+## [ИЗМЕНЕНО, по прямому запросу — "сектор обзора корпуса и башни ботов не учитывает наклон
+## танка"] Ребёнок `Hull` (визуальный pivot, `hull_rig.gd`), НЕ `_body` (root) — родительский
+## узел раньше был `_body`, и веер оставался идеально горизонтальным на любом склоне, потому что
+## root у танка НИКОГДА не наклоняется (инвариант проекта, см. корневой CLAUDE.md "Tank as a
+## composed entity", п.1: "The tank root never tilts. Only Hull ... and Turret ... tilt"), а
+## визуально наклоняется именно `Hull` (`rotation = Vector3(_pitch, 0.0, _roll)` в
+## `hull_rig.gd` — yaw там всегда 0, весь yaw несёт root). На ровной земле `Hull.rotation` тоже
+## нулевой, так что визуально ничего не меняется; на скате конус теперь физически идёт из
+## наклонённого корпуса/башни (та же ось, вокруг которой реально наклоняется дуло — "поворот
+## вокруг нормали наклонённой палубы", см. CLAUDE.md про `Hull/Turret`), а не парит горизонтально
+## сквозь визуально задранный/опущенный нос танка.
+## ВАЖНО: это ТОЛЬКО визуальный дебаг-оверлей — сама игровая логика видимости (`_can_see()`)
+## по-прежнему читает исключительно `_body.rotation.y`/`_turret.rotation.y` и остаётся полностью
+## горизонтальной (2D по yaw), как и требует тот же инвариант 1 (весь мозг бота обязан читать
+## root basis, не наклон) — этот файл её не трогает, меняется только то, как отрисован
+## существующий угол, не то, что бот реально засекает.
 func _setup_fov_debug_draw() -> void:
 	_fov_debug_mesh = MeshInstance3D.new()
 	_fov_debug_mesh.name = "FovDebugMesh"
@@ -4827,11 +4858,11 @@ func _setup_fov_debug_draw() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.vertex_color_use_as_albedo = true
 	_fov_debug_mesh.material_override = mat
-	# call_deferred: _ready() всей ветки Tank-инстанса (в т.ч. _body) ещё выполняется в момент,
+	# call_deferred: _ready() всей ветки Tank-инстанса (в т.ч. Hull) ещё выполняется в момент,
 	# когда доходит очередь до этого (последнего) сиблинга — add_child() в это окно падает
 	# с "Parent node is busy setting up children" (тот же класс проблемы, что описан в корневом
 	# CLAUDE.md, "Scene bring-up ordering").
-	_body.add_child.call_deferred(_fov_debug_mesh)
+	_hull.add_child.call_deferred(_fov_debug_mesh)
 
 ## Точка в ЛОКАЛЬНЫХ координатах бота: local_deg=0 — прямо вперёд по корпусу (локальный -Z,
 ## та же система отсчёта, что и rotation.y у Turret).
