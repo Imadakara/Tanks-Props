@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://scenes/tank/hull_rig.gd" id="14_hull"]
 [ext_resource type="Script" path="res://scenes/tank/tumble_controller.gd" id="15_tumble"]
 [ext_resource type="Script" path="res://scenes/tank/cargo_hold.gd" id="16_cargo"]
+[ext_resource type="Script" path="res://scenes/tank/chassis.gd" id="17_chassis"]
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_bfi3s"]
 points = PackedVector3Array(-0.6, 0.3, -0.9, 0.6, 0.3, -0.9, -0.6, 0.3, 0.9, 0.6, 0.3, 0.9, -0.6, -0.06, -0.9, 0.6, -0.06, -0.9, -0.6, -0.06, 0.9, 0.6, -0.06, 0.9, -0.6, -0.3, -0.62, 0.6, -0.3, -0.62, -0.6, -0.3, 0.62, 0.6, -0.3, 0.62)
@@ -165,3 +166,12 @@ script = ExtResource("15_tumble")
 
 [node name="CargoHold" type="Node" parent="." unique_id=199337742]
 script = ExtResource("16_cargo")
+
+[node name="Chassis" type="Node" parent="." unique_id=199337743]
+script = ExtResource("17_chassis")
+chassis_id = &"medium"
+display_name = "Средний"
+trait_text = "С лутом нельзя маскироваться"
+disguise_duration_sec = 20.0
+disguise_charges = 3
+cargo_blocks_disguise = true

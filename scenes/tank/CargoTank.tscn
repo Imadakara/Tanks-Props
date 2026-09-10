@@ -1,0 +1,19 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_base"]
+
+[node name="CargoTank" instance=ExtResource("1_base")]
+
+[node name="Chassis" parent="."]
+chassis_id = &"cargo"
+display_name = "Грузовой"
+trait_text = "Лут не замедляет"
+size_scale = 1.5
+move_speed = 6.0
+max_hits = 4
+cargo_capacity = 5
+cargo_speed_penalty_enabled = false
+ammo_capacity = 5
+disguise_duration_sec = 15.0
+disguise_charges = 3
+cargo_blocks_disguise = false

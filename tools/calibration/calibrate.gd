@@ -47,6 +47,7 @@ const _TANK_COMPONENTS := [
 	"Hull", "CameraRig", "TankMovement", "TankStateMachine", "WeaponController",
 	"AmmoComponent", "HealthComponent", "DisguiseController", "CollisionDetector",
 	"RespawnController", "TankAIController", "ModificationController", "TumbleController",
+	"CargoHold", "Chassis",
 ]
 
 var _passed: Array[String] = []
@@ -134,6 +135,24 @@ func _check_common(st: SceneTree, cs: Node, exp: Dictionary) -> void:
 		var p_mv := player.get_node_or_null("TankMovement")
 		if p_mv != null and "is_player_controlled" in p_mv:
 			_expect("PlayerTank TankMovement.is_player_controlled", bool(p_mv.is_player_controlled), "is false on the player")
+		# Игровой класс: карта подменила PlayerTank на класс из лобби (map_scene._enter_tree).
+		var p_ch := player.get_node_or_null("Chassis")
+		if p_ch != null:
+			_expect("PlayerTank chassis == MatchState.player_chassis",
+				StringName(p_ch.chassis_id) == StringName(match_state.player_chassis),
+				"tank is '%s', lobby chose '%s'" % [p_ch.chassis_id, match_state.player_chassis])
+
+	# Класс применён к каждому танку: визуальный пивот и HP совпадают с узлом Chassis.
+	for t in tanks:
+		var ch := t.get_node_or_null("Chassis")
+		var hull := t.get_node_or_null("Hull")
+		var hp := t.get_node_or_null("HealthComponent")
+		if ch == null or hull == null or hp == null:
+			continue
+		_expect("chassis applied: %s" % t.name,
+			is_equal_approx(float(hull.chassis_scale), float(ch.size_scale)) and int(hp.max_hits) == int(ch.max_hits),
+			"hull scale %.3f vs %.3f, max_hits %d vs %d" % [float(hull.chassis_scale), float(ch.size_scale),
+				int(hp.max_hits), int(ch.max_hits)])
 
 	var bot_count := 0
 	for t in tanks:
@@ -272,31 +291,41 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 				var moved: float = near.distance_to(em._reachable_drop_point(near, 4.0, 3.0))
 				_expect("walkable drop point stays put", moved <= 4.5, "moved %.1f" % moved)
 
-	# Трюм и его связка с маскировкой — центральная сцепка концепции (§5).
+	# Трюм и его связка с маскировкой. «Груз блокирует маскировку» — больше НЕ общее правило, а
+	# черта среднего класса; штраф скорости — общий (GameConfig, 15% за ящик), грузовой освобождён.
+	# Ожидания читаются из класса танка игрока (Chassis), чтобы проверка работала на любом классе.
 	var player := cs.get_node_or_null("PlayerTank")
 	if player != null:
 		var hold := player.get_node_or_null("CargoHold")
 		var disguise := player.get_node_or_null("DisguiseController")
+		var chassis := player.get_node_or_null("Chassis")
 		_expect("PlayerTank/CargoHold present", hold != null, "missing cargo hold component")
-		if hold != null and disguise != null and gc != null:
+		if hold != null and disguise != null and gc != null and chassis != null:
+			_expect("hold capacity comes from chassis", int(hold.capacity) == int(chassis.cargo_capacity),
+				"hold %d vs chassis %d" % [int(hold.capacity), int(chassis.cargo_capacity)])
 			_expect("empty hold does not block disguise", not hold.blocks_disguise(), "blocked while empty")
 			_expect("empty hold has no speed penalty", is_equal_approx(hold.speed_multiplier(), 1.0),
 				"got %.3f" % hold.speed_multiplier())
 			hold.try_take(100, false)
-			_expect("loaded hold blocks disguise", hold.blocks_disguise(), "cargo does not block disguise")
-			_expect("disguise controller agrees", disguise.blocked_by_cargo(), "controller disagrees with hold")
-			_expect("loaded hold slows the tank",
-				hold.speed_multiplier() < 1.0, "got %.3f" % hold.speed_multiplier())
-			# Вместимость: любой ящик (сырой / дозревший) — 1 место, набор до cargo_capacity.
-			# Отдельного «со склада только один за рейс» больше нет.
+			var want_block: bool = bool(chassis.cargo_blocks_disguise)
+			_expect("loaded hold blocks disguise only for the chassis trait", hold.blocks_disguise() == want_block,
+				"blocks=%s, chassis trait=%s" % [hold.blocks_disguise(), want_block])
+			_expect("disguise controller agrees", disguise.blocked_by_cargo() == hold.blocks_disguise(),
+				"controller disagrees with hold")
+			var want_mult: float = 1.0
+			if bool(chassis.cargo_speed_penalty_enabled):
+				want_mult = 1.0 - float(gc.cargo_speed_penalty_per_lot)
+			_expect("one crate speed multiplier matches the rule", is_equal_approx(hold.speed_multiplier(), want_mult),
+				"got %.3f, want %.3f" % [hold.speed_multiplier(), want_mult])
+			# Вместимость: любой ящик (сырой / дозревший) — 1 место, набор до вместимости класса.
 			hold.clear()
-			var cap: int = int(gc.cargo_capacity)
+			var cap: int = int(hold.capacity)
 			var took := 0
 			for i in range(cap + 2):  # пробуем набрать БОЛЬШЕ вместимости, чередуя сырой/дозревший
 				if hold.try_take(50, i % 2 == 0):
 					took += 1
-			_expect("hold fills to cargo_capacity, mixed raw/ripe", took == cap,
-				"took %d, cargo_capacity %d" % [took, cap])
+			_expect("hold fills to class capacity, mixed raw/ripe", took == cap,
+				"took %d, capacity %d" % [took, cap])
 			_expect("hold reports full at capacity", hold.is_full(), "is_full() false at %d lots" % hold.lot_count())
 			hold.clear()
 			# Подбор — ДЕЙСТВИЕ, а не телепорт. Танк появляется в круге своей базы, и Area3D ящика

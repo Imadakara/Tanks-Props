@@ -1,0 +1,19 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_base"]
+
+[node name="HeavyTank" instance=ExtResource("1_base")]
+
+[node name="Chassis" parent="."]
+chassis_id = &"heavy"
+display_name = "Тяжёлый"
+trait_text = "Пружинный двигатель: 3 с заводится перед тем, как тронуться с места"
+size_scale = 1.5
+move_speed = 4.2
+max_hits = 5
+cargo_capacity = 2
+ammo_capacity = 15
+disguise_duration_sec = 30.0
+disguise_charges = 1
+cargo_blocks_disguise = false
+spring_engine_delay_sec = 3.0

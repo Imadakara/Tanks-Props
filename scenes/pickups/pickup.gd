@@ -83,6 +83,17 @@ func _on_body_entered(body: Node) -> void:
 			ammo.add_ammo(amount_override if amount_override > 0 else ammo_amt)
 			applied = true
 
+	# Ящик боеприпасов заодно возвращает заряды маскировки (маскировка — расходуемый ресурс, как
+	# снаряды; см. disguise_controller.gd). Считается «применённым» только если хоть один заряд
+	# реально вернулся — но ящик боеприпасов и так уже применён снарядами выше, так что это важно
+	# лишь для будущих бонусов, несущих одни заряды.
+	var charges: int = int(_cfg.get("disguise_charges", 0))
+	if charges > 0:
+		var disguise: Node = body.get_node_or_null("DisguiseController")
+		if disguise != null and disguise.has_method("add_charges"):
+			if disguise.add_charges(charges) > 0:
+				applied = true
+
 	var heal: int = int(_cfg.get("heal_hits", 0))
 	if heal > 0:
 		var hp: Node = body.get_node_or_null("HealthComponent")

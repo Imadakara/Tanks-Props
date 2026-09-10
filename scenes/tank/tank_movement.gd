@@ -108,6 +108,26 @@ extends Node
 ## гусеницы, если траектория позволяет. Больше — почти гарантированное приземление на крышу.
 @export var tumble_spin_max: float = 0.8
 
+## ПРУЖИННЫЙ ДВИГАТЕЛЬ — черта тяжёлого класса (chassis.gd выставляет задержку, у остальных 0).
+## Нажал любую клавишу хода (вперёд/назад/разворот на месте) из покоя — танк сначала «заводит
+## пружину» `spring_engine_delay_sec` секунд и только потом трогается. Пока ввод держится, двигатель
+## остаётся заведён: переход «вперёд — поворот» без отпускания клавиш задержку НЕ повторяет.
+## Отпустил всё дольше `spring_engine_release_grace_sec` — пружина спускается, следующее нажатие
+## опять ждёт. Гейтится сам ВВОД, а не скорость: поэтому ассист порожка и крен у кромки видят
+## честный «газ ноль», а не ложное «упёрся». Боты идут тем же путём — это цена класса и для них.
+## Намерение сдвинуться при этом распознаётся по СЫРОМУ вводу: попытка тронуться в маскировке
+## сбрасывает её сразу, не дожидаясь пружины.
+var spring_engine_delay_sec: float = 0.0
+@export var spring_engine_release_grace_sec: float = 0.25
+var _spring_wound: float = 0.0
+var _spring_engaged: bool = false
+var _spring_idle: float = 0.0
+
+## Множитель размера класса (chassis.gd, set_size_scale). Масштабирует всё, что меряется в метрах
+## корпуса: центр масс, порожек ассиста, щупы опоры/края. Базовые значения — у среднего (1.0).
+var _size_scale: float = 1.0
+var _base_geom: Dictionary = {}
+
 ## Программный ввод для ботов — TankAIController пишет сюда каждый кадр перед тем,
 ## как эта нода их считает. Не используется, если is_player_controlled=true.
 var ai_move_input: float = 0.0
@@ -181,6 +201,13 @@ const _CENTER_REACH_DOWN := 1.3
 ## Старт луча ВЫШЕ опорной плоскости — должен перекрывать подъём точки замера на предельном
 ## проходимом пандусе (иначе луч стартует под полотном и «повисает», давая ложный обрыв).
 const _SUPPORT_PROBE_UP := 1.0
+## Рабочие (отмасштабированные под класс) значения констант выше — см. set_size_scale().
+var _edge_march_step: float = _EDGE_MARCH_STEP
+var _edge_march_max: float = _EDGE_MARCH_MAX
+var _wall_probe_y: float = _WALL_PROBE_Y
+var _center_reach_down: float = _CENTER_REACH_DOWN
+var _support_probe_up: float = _SUPPORT_PROBE_UP
+var _disguise: Node
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
@@ -190,6 +217,7 @@ func _ready() -> void:
 	_cargo = get_parent().get_node_or_null("CargoHold")
 	_health = get_parent().get_node_or_null("HealthComponent")
 	_tumble = get_parent().get_node_or_null("TumbleController")
+	_disguise = get_parent().get_node_or_null("DisguiseController")
 	_default_snap = _body.floor_snap_length
 	_fall_peak_y = _body.global_position.y
 	# Респавн телепортирует танк (возможно, с большой высоты вниз) — без сброса отсчёта приземление
@@ -209,6 +237,69 @@ func _on_respawned() -> void:
 	_airborne_time = 0.0
 	_edge_approach = 0.0
 	_was_tipping = false
+	_spring_wound = 0.0
+	_spring_engaged = false
+	_spring_idle = 0.0
+
+## Масштаб класса (chassis.gd). Идемпотентно: считает от базовых значений среднего, запомненных на
+## первом вызове, поэтому повторное применение класса не «перемасштабирует» уже отмасштабированное.
+func set_size_scale(s: float) -> void:
+	if _base_geom.is_empty():
+		_base_geom = {
+			"center_of_mass": center_of_mass,
+			"step_up_max": step_up_max,
+			"step_up_probe_y": step_up_probe_y,
+			"step_up_probe_dist": step_up_probe_dist,
+			"teeter_brink_margin": teeter_brink_margin,
+			"teeter_gravity_gain": teeter_gravity_gain,
+		}
+	_size_scale = s
+	center_of_mass = _base_geom["center_of_mass"] * s
+	step_up_max = _base_geom["step_up_max"] * s
+	step_up_probe_y = _base_geom["step_up_probe_y"] * s
+	step_up_probe_dist = _base_geom["step_up_probe_dist"] * s
+	teeter_brink_margin = _base_geom["teeter_brink_margin"] * s
+	# Скорость завала через кромку ОБРАТНО пропорциональна размеру: угловое ускорение тела,
+	# перевесившегося за край, ≈ g·плечо / момент инерции ∝ 1/длина. Мелкое тело валится быстрее.
+	# Без этого короткий быстрый лёгкий «перелетал» кромку раньше, чем успевал накопить крен до
+	# точки невозврата, и шлёпался плашмя вместо кувырка; крупный — наоборот, валился неправдоподобно
+	# резво для своей массы.
+	teeter_gravity_gain = _base_geom["teeter_gravity_gain"] / maxf(s, 0.05)
+	_edge_march_step = _EDGE_MARCH_STEP * s
+	_edge_march_max = _EDGE_MARCH_MAX * s
+	_wall_probe_y = _WALL_PROBE_Y * s
+	_center_reach_down = _CENTER_REACH_DOWN * s
+	_support_probe_up = _SUPPORT_PROBE_UP * s
+
+## Пружина заводится прямо сейчас (для HUD): задержка есть, ввод держится, ещё не завелась.
+func spring_engine_winding() -> bool:
+	return spring_engine_delay_sec > 0.0 and not _spring_engaged and _spring_wound > 0.0
+
+## Сколько секунд осталось до старта (для HUD). 0 — не заводится.
+func spring_engine_time_left() -> float:
+	if not spring_engine_winding():
+		return 0.0
+	return maxf(spring_engine_delay_sec - _spring_wound, 0.0)
+
+## Пропускает ли пружина ввод в этом кадре. `pressing` — держится ли хоть одна клавиша хода.
+func _spring_gate(delta: float, pressing: bool) -> bool:
+	if pressing:
+		_spring_idle = 0.0
+		if not _spring_engaged:
+			_spring_wound += delta
+			if _spring_wound >= spring_engine_delay_sec:
+				_spring_engaged = true
+		return _spring_engaged
+	_spring_idle += delta
+	if _spring_idle >= spring_engine_release_grace_sec:
+		_spring_engaged = false
+		_spring_wound = 0.0
+	return false
+
+## Подвижная маскировка (черта лёгкого): сейчас замаскирован И класс разрешает ехать.
+func _mobile_disguised() -> bool:
+	return _disguise != null and _disguise.mobile_disguise and _state_machine != null \
+		and _state_machine.state == TankStateMachineScript.State.DISGUISED
 
 func _physics_process(delta: float) -> void:
 	var turn_input: float
@@ -219,6 +310,13 @@ func _physics_process(delta: float) -> void:
 	else:
 		turn_input = ai_turn_input
 		move_input = ai_move_input
+	# Сырой ввод — для распознавания НАМЕРЕНИЯ (попытка тронуться сбрасывает маскировку сразу).
+	var raw_move: float = move_input
+	var raw_turn: float = turn_input
+	if spring_engine_delay_sec > 0.0:
+		if not _spring_gate(delta, move_input != 0.0 or turn_input != 0.0):
+			move_input = 0.0
+			turn_input = 0.0
 	last_move_input = move_input
 
 	# Кувырок уже идёт (TumbleController ведёт двойника и телепортирует корень) — эта нода молчит.
@@ -246,8 +344,9 @@ func _physics_process(delta: float) -> void:
 			last_move_input = 0.0
 			return
 		# Корпус зафиксирован во время маскировки; попытка движения — триггер досрочного снятия.
-		if disguised:
-			if turn_input != 0.0 or move_input != 0.0:
+		# Исключение — подвижная маскировка лёгкого: едет дальше, медленнее (_effective_move_speed).
+		if disguised and not _mobile_disguised():
+			if raw_turn != 0.0 or raw_move != 0.0:
 				_state_machine.break_disguise("movement")
 			return
 	elif disguised:
@@ -271,7 +370,7 @@ func _physics_process(delta: float) -> void:
 		_body.velocity.y -= _gravity * delta
 
 	if not teetering:
-		_body.rotate_y(-turn_input * turn_speed * delta)
+		_body.rotate_y(-turn_input * turn_speed * _disguise_speed_factor() * delta)
 		# Стадия BRINK: у самого края СРЕЗАЕМ ход «к пустоте» (не «от неё») пропорционально
 		# _edge_approach — танк сам притормаживает, давая время отвернуть/сдать назад.
 		var eff_move: float = move_input
@@ -418,10 +517,10 @@ func _update_support(delta: float) -> void:
 
 	# Пол под центром + его нормаль. Широкое вертикальное окно: танк, «вздёрнутый» носом на крутом
 	# (до 45°) пандусе, висит центром заметно над полотном — узкий луч давал ложное «в воздухе».
-	# Обрыв же — это провал НАМНОГО глубже _CENTER_REACH_DOWN.
+	# Обрыв же — это провал НАМНОГО глубже _center_reach_down.
 	var cq := PhysicsRayQueryParameters3D.create(
-		xf * Vector3(0.0, _SUPPORT_PROBE_UP, 0.0),
-		xf * Vector3(0.0, -_CENTER_REACH_DOWN, 0.0), 1)
+		xf * Vector3(0.0, _support_probe_up, 0.0),
+		xf * Vector3(0.0, -_center_reach_down, 0.0), 1)
 	cq.exclude = [_body.get_rid()]
 	var chit: Dictionary = space.intersect_ray(cq)
 	_center_grounded = not chit.is_empty()
@@ -431,22 +530,22 @@ func _update_support(delta: float) -> void:
 
 	# Вынос ЦМ в каждом из направлений (лок.): F −z, B +z, L −x, R +x.
 	var com_off := [-center_of_mass.z, center_of_mass.z, -center_of_mass.x, center_of_mass.x]
-	var clearance := [_EDGE_MARCH_MAX, _EDGE_MARCH_MAX, _EDGE_MARCH_MAX, _EDGE_MARCH_MAX]
-	var raw_edge := [_EDGE_MARCH_MAX, _EDGE_MARCH_MAX, _EDGE_MARCH_MAX, _EDGE_MARCH_MAX]
+	var clearance := [_edge_march_max, _edge_march_max, _edge_march_max, _edge_march_max]
+	var raw_edge := [_edge_march_max, _edge_march_max, _edge_march_max, _edge_march_max]
 	for d in 4:
 		var dir: Vector3 = _EDGE_DIRS[d]
-		var edge_dist: float = _EDGE_MARCH_MAX
+		var edge_dist: float = _edge_march_max
 		# Сначала ГОРИЗОНТАЛЬНЫЙ луч: если впереди СТЕНА (а не обрыв), вертикальный «щуп» стартовал
 		# бы ВНУТРИ неё и вернул ложный край. Стена — направление считаем безопасным.
 		var wall := PhysicsRayQueryParameters3D.create(
-			xf * Vector3(0.0, _WALL_PROBE_Y, 0.0),
-			xf * (dir * _EDGE_MARCH_MAX + Vector3(0.0, _WALL_PROBE_Y, 0.0)), 1)
+			xf * Vector3(0.0, _wall_probe_y, 0.0),
+			xf * (dir * _edge_march_max + Vector3(0.0, _wall_probe_y, 0.0)), 1)
 		wall.exclude = [_body.get_rid()]
 		if space.intersect_ray(wall).is_empty():
-			var dist: float = _EDGE_MARCH_STEP
-			while dist <= _EDGE_MARCH_MAX + 0.001:
+			var dist: float = _edge_march_step
+			while dist <= _edge_march_max + 0.001:
 				var base: Vector3 = dir * dist
-				var up_start: float = _SUPPORT_PROBE_UP + _EDGE_CLIMB_TAN * dist
+				var up_start: float = _support_probe_up + _EDGE_CLIMB_TAN * dist
 				# Нижняя граница добивания — не тоньше 0.6 м даже у самого центра: гасит дрожь на
 				# стыках/переломах пандусов (там пол на кадр «проваливается» на пол-метра).
 				var down_reach: float = maxf(slope_tan * dist, 0.6) + ledge_slack
@@ -459,11 +558,11 @@ func _update_support(delta: float) -> void:
 					# Пропал пол — но это может быть СТЫК (мебель / рампа на кромке), не обрыв.
 					# Пробуем дальше: если в пределах ledge_gap_tolerance пол снова есть — идём дальше.
 					var resumed: bool = false
-					var gd: float = dist + _EDGE_MARCH_STEP
-					while gd <= dist + ledge_gap_tolerance + 0.001 and gd <= _EDGE_MARCH_MAX + 0.001:
+					var gd: float = dist + _edge_march_step
+					while gd <= dist + ledge_gap_tolerance + 0.001 and gd <= _edge_march_max + 0.001:
 						var gb: Vector3 = dir * gd
 						var gq := PhysicsRayQueryParameters3D.create(
-							xf * (gb + Vector3(0.0, _SUPPORT_PROBE_UP + _EDGE_CLIMB_TAN * gd, 0.0)),
+							xf * (gb + Vector3(0.0, _support_probe_up + _EDGE_CLIMB_TAN * gd, 0.0)),
 							xf * (gb + Vector3(0.0, -(maxf(slope_tan * gd, 0.6) + ledge_slack), 0.0)), 1)
 						gq.exclude = [_body.get_rid()]
 						var gh: Dictionary = space.intersect_ray(gq)
@@ -472,16 +571,16 @@ func _update_support(delta: float) -> void:
 							normal_hits += 1
 							resumed = true
 							break
-						gd += _EDGE_MARCH_STEP
+						gd += _edge_march_step
 					if resumed:
-						dist = gd + _EDGE_MARCH_STEP
+						dist = gd + _edge_march_step
 						continue
 					# Настоящий обрыв. Первый шаг без пола → край у центра (или позади).
-					edge_dist = 0.0 if dist <= _EDGE_MARCH_STEP + 0.001 else dist - _EDGE_MARCH_STEP * 0.5
+					edge_dist = 0.0 if dist <= _edge_march_step + 0.001 else dist - _edge_march_step * 0.5
 					break
 				normal_sum += h.get("normal", Vector3.UP)
 				normal_hits += 1
-				dist += _EDGE_MARCH_STEP
+				dist += _edge_march_step
 		raw_edge[d] = edge_dist
 		clearance[d] = edge_dist - com_off[d]
 
@@ -596,12 +695,16 @@ func edge_approach() -> float:
 ## Складывается с уклоном (_slope_speed_multiplier) мультипликативно: гружёный в гору медленнее
 ## обоих эффектов по отдельности — это осознанно, подъём с грузом и должен быть тяжёлым.
 func _effective_move_speed() -> float:
-	var mult: float = 1.0
+	var mult: float = _disguise_speed_factor()
 	if _mod != null:
 		mult *= _mod.carry_speed_multiplier()
 	if _cargo != null:
 		mult *= _cargo.speed_multiplier()
 	return move_speed * mult
+
+## Замедление подвижной маскировки лёгкого (и хода, и разворота). Вне её — ровно 1.
+func _disguise_speed_factor() -> float:
+	return _disguise.disguised_speed_mult if _mobile_disguised() else 1.0
 
 func _slope_speed_multiplier(travel_dir: Vector3) -> float:
 	if not slope_speed_enabled or not _body.is_on_floor():

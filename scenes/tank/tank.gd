@@ -25,9 +25,16 @@ var _team_material: StandardMaterial3D
 var _hp_label: Label3D
 
 @onready var _health: Node = get_node_or_null("HealthComponent")
+## Игровой класс танка (chassis.gd). Узел есть в базовом Tank.tscn, значит и у каждого наследника.
+@onready var _chassis: Node = get_node_or_null("Chassis")
 
 func _ready() -> void:
 	add_to_group("tanks")
+	# Класс применяется ЗДЕСЬ, а не в _ready() самого Chassis: корень готов последним, когда каждый
+	# компонент уже прочитал свои дефолты из GameConfig, — класс их перезаписывает. До покраски и
+	# HP-метки: их высота/цвет не зависят от класса, но пусть корпус уже будет нужного размера.
+	if _chassis != null:
+		_chassis.apply()
 	if _health != null:
 		_health.damaged.connect(_on_damaged)
 		_health.destroyed.connect(_on_destroyed)
@@ -38,6 +45,16 @@ func _ready() -> void:
 
 func is_attacker() -> bool:
 	return team == Team.ATTACK
+
+## Идентификатор и имя класса (для HUD, лобби, отладки). Без Chassis — средний.
+func chassis_id() -> StringName:
+	return _chassis.chassis_id if _chassis != null else &"medium"
+
+func chassis_name() -> String:
+	return _chassis.display_name if _chassis != null else "Средний"
+
+func chassis_scale() -> float:
+	return _chassis.size_scale if _chassis != null else 1.0
 
 ## Что НЕ красится в цвет команды, а остаётся своим «железным» цветом из hull_rig.gd: ходовая
 ## (гусеницы `Track*`, катки `Wheel*`) — она должна читаться как механика на танке любой команды.
@@ -102,10 +119,10 @@ func _setup_hp_label() -> void:
 	_hp_label.outline_size = 12
 	_hp_label.modulate = Color(1, 1, 1)
 	_hp_label.outline_modulate = Color(0, 0, 0)
-	_hp_label.position = Vector3(0.0, _HP_LABEL_Y, 0.0)
+	_hp_label.position = Vector3(0.0, _HP_LABEL_Y * chassis_scale(), 0.0)
 	add_child(_hp_label)
-	# call_deferred: team_spawner._apply_tank_config() проставляет health.max_hits уже ПОСЛЕ
-	# add_child(tank) (то есть после этого _ready()) — читаем актуальное значение на кадр позже.
+	# call_deferred — страховка: max_hits выставляет класс (chassis.gd) в этом же _ready() выше, но
+	# любой, кто поправит здоровье сразу после add_child(), будет учтён — читаем на кадр позже.
 	_refresh_hp_label.call_deferred()
 
 func _refresh_hp_label() -> void:

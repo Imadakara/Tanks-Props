@@ -31,8 +31,9 @@ system works **now**; deep history is in `git log`.
   rules, round/series flow, HUD block, round-loop code, full map list. "Game modes" below is a
   summary; that doc is the detail.
 - `Tank_Prop_Hunt_Extraction_Loop_Concept.md` — **the design doc for the current core loop**: the
-  four states of value, why this is deliberately *not* CTF, and the single connection the design
-  rests on — **cargo forbids disguise**. Read before touching anything in EXTRACTION.
+  four states of value, why this is deliberately *not* CTF, and the connection the design rests on —
+  **cargo costs you your cover** (now: 15% speed per crate for everyone, and a full disguise ban
+  for the medium class — see the dated note in its §5). Read before touching anything in EXTRACTION.
 - `Tank_Prop_Hunt_Extraction_Loop_TZ.md` — the implementation spec derived from that concept
   (entities, ownership, where each rule lives).
 - `Tank_Prop_Hunt_Extraction_Mode.md` — **current-state reference for EXTRACTION** (`KitchenMap.tscn`):
@@ -44,9 +45,13 @@ system works **now**; deep history is in `git log`.
 - `Tank_Prop_Hunt_Bot_AI_Sandbox.md` — the single universal bot AI (`TankAIController`): states,
   driving stack, per-tier params, scene inventory.
 - `Tank_Prop_Hunt_Tank_Chassis.md` — **how the tank looks and reacts to terrain**: the `Hull`
-  visual pivot (`hull_rig.gd`), running gear, terrain tilt / suspension; why the turret stays level
+  visual pivot (`hull_rig.gd`), running gear, terrain tilt / suspension; the turret tilting with it
   and why `VehicleBody3D` was not used; per-side track/wheel speeds; the slope→speed multiplier;
   the edge brink → teeter → tumble system; the `TestGroundMap.tscn` proving ground.
+- `Tank_Prop_Hunt_Tank_Classes.md` — **the chassis-based game classes**: the four tank prefabs
+  (light / medium / heavy / cargo) and their numbers and key traits, the `Chassis` node that owns
+  them, what `size_scale` scales, disguise as a consumable (charges), the per-class cargo rules, the
+  roster `chassis` key, and the lobby + the `PlayerTank` swap in the map root's `_enter_tree()`.
 - `Tank_Prop_Hunt_Ammo_Drops.md` — **ammo drops**: the `AmmoDropZone` prefab, drop/pickup/anti-overlap
   rules, per-map placement, `GameConfig` defaults.
 - `Tank_Prop_Hunt_Disguise.md` — **disguise**: activation (player-only, key **M**), the
@@ -135,6 +140,17 @@ preference.
 11. **`ledge_max_slope_deg` must stay well above the ~44–45° climb limit**, and the centre/march
     support probes need generous vertical reach, or a tank perched nose-up on a steep ramp reads as
     "off a cliff". → "Tank as a composed entity" (ledge / brink / tumble).
+12. **The player's class is swapped in the map root's `_enter_tree()`, never later.** Each map's
+    `.tscn` holds a static `PlayerTank` (base `Tank.tscn` = medium); `map_scene.gd` / `test_ground.gd`
+    replace it with the lobby's class in `_enter_tree()` (`chassis_catalog.swap_player_tank`). In
+    `_ready()` it is too late — the HUD already bound itself to the old tank in its own `_ready()`.
+    → "Tank as a composed entity" (`Chassis`).
+13. **Class-owned stats are never applied from the JSON profiles.** `move_speed` / `max_hits` belong
+    to `Chassis`; `team_spawner._apply_tank_config()` runs *after* the class and ignores (with a
+    warning) those keys if they reappear in `config/*_tank_config.json`, or every class would be
+    silently flattened into one. Likewise nothing may read a removed global like
+    `GameConfig.cargo_capacity` — capacity is `CargoHold.capacity` (per class). → "Autoloads and
+    per-tank config".
 
 ## Architecture
 
@@ -223,6 +239,14 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
     picking up or handing over a load mid-drive produces no jerk. Stacks multiplicatively with the
     slope multiplier and with `CargoHold.speed_multiplier()` — the EXTRACTION cargo bay is the load
     that actually bites today. No `Modification` sets a weight; the field is the generic hook.
+  - **Class hooks** (set by `Chassis`): the heavy's **spring engine** (`spring_engine_delay_sec`,
+    `_spring_gate()`: from rest any movement key waits 3 s; stays engaged while any key is held,
+    released longer than `spring_engine_release_grace_sec` 0.25 s ⇒ winds again; HUD reads
+    `spring_engine_time_left()`), the light's **mobile disguise** speed factor
+    (`_disguise_speed_factor()` in `_effective_move_speed()` and the hull turn), and
+    `set_size_scale()` — centre of mass, step-up, edge/support probes and brink margin scale with the
+    class, `teeter_gravity_gain` scales **÷ size** (a smaller body tips faster; without it the fast
+    short light tank jumped clear of an edge instead of tumbling).
   - **Step-up assist** (`step_up_*` exports): after `move_and_slide()`, if the tank advanced far
     less than commanded and a low near-vertical face is dead ahead with walkable ground ≤
     `step_up_max` (0.35) on top, lift the body onto it — the chamfer only clears 0.20 lips, and
@@ -277,6 +301,26 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   `TumbleController` is excluded from `RespawnController._set_frozen` so it can finish. **This is
   the only time the root is not upright** — safe because every reader of the root basis is frozen
   meanwhile. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §8.1.
+- `Chassis` (`chassis.gd`) — the tank's **game class**, one node holding every number and trait that
+  makes one class differ from another. Four prefabs: `Tank.tscn` is the base **and** the medium
+  class; `LightTank.tscn` / `HeavyTank.tscn` / `CargoTank.tscn` *inherit* it and override only this
+  node. `tank.gd._ready()` calls `Chassis.apply()` (the root is ready last, after every component
+  read its `GameConfig` defaults) which pushes: `move_speed`, `max_hits`, `ammo_capacity`
+  (`AmmoComponent.set_capacity`), `cargo_capacity` / penalty flag / `cargo_blocks_disguise`
+  (`CargoHold`), `disguise_duration_sec` (`TankStateMachine.set_disguise_duration`),
+  `disguise_charges` / `mobile_disguise` (`DisguiseController`), `spring_engine_delay_sec`
+  (`TankMovement`), and **`size_scale`**: the root never scales (Jolt + scale on a physics body is
+  a bad pair) — instead a scaled *copy* of the convex collider and the `CollisionDetector` box,
+  `Hull.chassis_scale` (scales the whole visual pivot incl. turret/barrel), camera distances, muzzle
+  offset, the suspension and support/edge probes, and the disguise AABB extents. `apply()` is
+  idempotent (scales from base resources remembered in `meta`). Key traits: **light** — drives while
+  disguised at ×0.4 without breaking it (turret freezes relative to the hull and doesn't break it
+  either); **medium** — can't disguise with cargo; **heavy** — spring engine, 3 s wind-up before
+  moving from rest on any movement key incl. turn-in-place (input is gated, raw input still breaks
+  disguise); **cargo** — no cargo speed penalty. Id ↔ scene, lobby profiles and the `PlayerTank`
+  swap: `chassis_catalog.gd` (preload, no `class_name`). Inherited scenes store only differences
+  from the base — editing a medium value in `Tank.tscn` leaks into any class that doesn't override
+  it. Full detail: `Tank_Prop_Hunt_Tank_Classes.md`.
 - `TurretController` — yaw. When `is_player_controlled`, reads `target_yaw` from `CameraRig`; for
   bots, the AI writes `target_yaw` directly. The turn is `rotate_toward(rotation.y, target_yaw,
   turn_speed*delta)` — constant angular velocity (not `lerp_angle` — non-linear feel).
@@ -290,6 +334,12 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   overrides `GameConfig.reload_duration_sec` from its own root's `_ready()` (which runs after every
   child) wouldn't get a stale value. No current map does this; both use the 3 s default.
 - `DisguiseController` — the disguise mechanic (full detail: `Tank_Prop_Hunt_Disguise.md`).
+  **A consumable, like shells**: each successful activation spends a charge (`charges` /
+  `max_charges` per class); a full refill on respawn, **+3 from an ammo crate** (`pickups.json`
+  `ammo.disguise_charges`, capped at the class max). Duration is per class. The one predicate
+  "can disguise right now" is `can_disguise_now()` (charge left, cargo doesn't block, `NORMAL`) —
+  the HUD and all three bot ambush scenarios read it. `mobile_disguise` (light class) lets the tank
+  drive disguised (`TankMovement._mobile_disguised()`, speed ×`disguised_speed_mult`).
   Player-usable: key **M** anywhere → tank looks like a `GameConfig`-configured obstacle prop (brown
   box for MVP; the meta-game picks the prop later; no per-map `DisguiseSlot` markers). The
   disguising player sees the prop with an x-ray silhouette of their tank; everyone else sees the
@@ -334,8 +384,8 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   mortar-specific node in `Tank.tscn` being `Turret/MortarCamera`. Bots pick it up and use it
   (`MOD_SEEK` / `MOD_RETRIEVE` / `MORTAR_ATTACK`). Full detail: `Tank_Prop_Hunt_Modifications.md`.
 - `HealthComponent` — `take_hit(killer, damage := 1)`; `current_hits += damage`, `destroyed` at
-  `current_hits >= max_hits`. Tanks use `max_hits` **3** (`config/*_tank_config.json`, script
-  default also 3; normal `Projectile.damage` is 1; a non-fatal hit updates only the debug HP
+  `current_hits >= max_hits`. Tanks' `max_hits` comes from their class (`Chassis.max_hits`: light 2,
+  medium 3, heavy 5, cargo 4; script default 3; normal `Projectile.damage` is 1; a non-fatal hit updates only the debug HP
   `Label3D`). The objective uses this as an **HP pool** — `match_manager.gd` sets its `max_hits =
   GameConfig.objective_hits_required` (**100**), a normal shell does 1, the mortar special does
   `GameConfig.mortar_objective_damage`. `attackers_only` lets an objective ignore friendly fire;
@@ -356,10 +406,14 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   `HealthComponent.force_destroy()` — works on the invincible player too; the respawn cycle then
   brings it back at its spawn zone. `halt()` (called on round end) permanently stops it for this
   scene load — no more respawn, fall-check off.
-- `CargoHold` — the EXTRACTION cargo bay: holds value **as data** (no nodes) and imposes the two
-  costs that make carrying a decision — `blocks_disguise()` (read by `DisguiseController`, the HUD
-  and the bot alike) and a per-crate speed penalty (`speed_multiplier()`). `try_take(value, frozen,
-  rarity)` accepts any crate — raw or ripened — for one slot, up to `GameConfig.cargo_capacity` (3);
+- `CargoHold` — the EXTRACTION cargo bay: holds value **as data** (no nodes) and imposes the costs
+  that make carrying a decision — a per-crate speed penalty (`speed_multiplier()`, a rule for every
+  class: minus `GameConfig.cargo_speed_penalty_per_lot` = 15% per crate, **additive**,
+  `max(1 − 0.15·n, 0.1)`; the cargo class is exempt via `speed_penalty_enabled`) and
+  `blocks_disguise()` = `blocks_disguise_when_loaded and is_loaded()` — **only the medium class**
+  can't disguise loaded (read by `DisguiseController`, the HUD and the bot alike). `capacity` is per
+  class (set by `Chassis`). `try_take(value, frozen, rarity)` accepts any crate — raw or ripened —
+  for one slot, up to `capacity`;
   the old "warehouse crate only into an empty hold, no top-up" lock was removed (raw and ripe loot
   now carry identically). Instant re-deposit of a just-withdrawn crate is instead blocked by
   `ExtractionManager._deposit_lock` (keyed off `LootCrate.owner_team`). `block_pickup()` refuses all
@@ -415,7 +469,9 @@ defensive backup on the first `_physics_process()` tick.
 
 `GameConfig` (balance knobs shared project-wide) and `MatchState` (survives
 `get_tree().reload_current_scene()`, where ordinary `@export` fields on scene nodes don't).
-`MatchState` holds: `player_team: int` (the player's *side* this round, flipped by the HUD restart
+`MatchState` holds: `player_chassis: StringName` (the player's class for this match, set by the
+lobby, survives reloads, untouched by `reset_series()`) and `pending_map_path` (the map the menu
+sent the lobby to); `player_team: int` (the player's *side* this round, flipped by the HUD restart
 button); `match_mode: Mode {TARGET_OBJECTIVE, TEAM_ARENA, EXTRACTION}` — a **per-map setting**
 (`map_scene.gd` `@export_enum`, set in each map's `.tscn`; the HUD reads it lazily since its own
 `_ready()` precedes the root's); a round-series score (`series_wins_attack` / `series_wins_defense`,
@@ -428,9 +484,10 @@ from the main menu or the "Новый матч" button after `series_complete()`
 
 `config/*.json` layers (each loaded by its own consumer via a local `FileAccess` + `JSON.parse_string`
 helper; missing/broken file is non-fatal — `push_warning` + code defaults):
-- `config/player_tank_config.json` / `config/bot_tank_config.json` — per-profile **physical stats**
-  (speed, turret turn rate, projectile speed, `max_hits`, `self_right_cooldown_sec`), read by
-  `team_spawner.gd._apply_tank_config()` regardless of roster.
+- `config/player_tank_config.json` / `config/bot_tank_config.json` — per-profile (player vs bot)
+  tuning: `acceleration`, `turret_turn_speed`, `projectile_launch_speed`, `self_right_cooldown_sec`,
+  read by `team_spawner.gd._apply_tank_config()` after the class. **No `move_speed` / `max_hits`** —
+  those belong to the class (Invariant 13).
 - `config/roster_*.json` — **who** (team / role / difficulty / count / waypoint routes), read by
   `team_spawner.gd`.
 - `config/extraction_kitchen.json` — **EXTRACTION drop balance** (per-map; path is
@@ -464,6 +521,8 @@ roster_config_path`. A roster is an array of "squad" dicts:
 - `reserve_for_player` (bool) — when `true` and this squad's `team == MatchState.player_team` that
   round, spawns one fewer bot (the player fills the slot). Neither current roster sets this — the
   player coexists *beside* a fixed bot roster; a future full-team map would set it on both squads.
+- `chassis` — the bots' class (`"light"` / `"medium"` / `"heavy"` / `"cargo"`), default medium; no
+  current roster sets it. AI tuning assumes medium size, hence the default.
 - Any subset of `TankAIController` fields (`role`, `difficulty`, `waypoint_name_prefix`,
   `waypoints_one_way`, `hunt_area_center` / `_half_extents`, `forward_look_bias`, `debug_ui_slot`,
   the three `show_*_debug` flags) — applied only if the key is present (`_apply_squad_to_brain()`);
@@ -559,9 +618,12 @@ the seed; the tier sets its raw-value range, ripen rate and cap, and its colour.
 round ≈10 min: five evacuation windows, first at 120 s then every 120 s, and it **ends the moment
 the last window closes** — `RoundTimer.wait_time` is set from `ExtractionManager.total_match_sec()`
 (`first + interval*(count-1) + duration` = 640 s), there is no fixed `extraction_round_sec`.
-Everything unbanked burns; the round never ends early. The load-bearing rule is
-`CargoHold.blocks_disguise()` — **cargo forbids disguise** (and slows you per crate) — which welds
-the economy to prop hunt; `DisguiseController`, the HUD and the bot all read that one predicate.
+Everything unbanked burns; the round never ends early. The cost of carrying is what welds the
+economy to prop hunt: every class loses 15% speed per crate (except the cargo class), and the
+**medium** class can't disguise at all while loaded — `CargoHold.blocks_disguise()`, which
+`DisguiseController`, the HUD and the bot all read. (Cargo forbidding disguise used to be the mode's
+universal rule; with classes it became the medium's trait, and the rest of the tension moved into
+limited disguise charges and per-class hold sizes — see the note in the concept doc §5.)
 Loot hides inside ordinary `Obstacle` cubes: every cube carries a `HealthComponent` and is
 destructible, and the allocation is seeded (`MatchState.loot_seed`) — a loot cube is
 indistinguishable from an empty one and from a disguised tank, which is the point.
@@ -887,10 +949,13 @@ editor-placed, and they act as placement constraints for the dynamic pass.
 
 ### Map inventory
 
-`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, four buttons, each
-calling `get_tree().change_scene_to_file()` at one of the scenes below; no game logic of its own.
-Launch any directly via `run_project`'s `scene:` param (or repoint `run/main_scene`) to skip the
-menu.
+`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, four buttons; each
+puts its map into `MatchState.pending_map_path` and opens **`scenes/lobby/Lobby.tscn`**, where the
+player picks a tank class (cards read straight from the class prefabs; keys 1–4 / Enter / Esc),
+then "В бой" loads the map. No game logic in either. Launch a map directly via `run_project`'s
+`scene:` param (or repoint `run/main_scene`) to skip both — the player then gets whatever
+`MatchState.player_chassis` holds (medium by default; set it in a `run_script` and
+`reload_current_scene()` to test another class).
 
 - `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
   centre `(0,1,0)` (no central wall — the centre is the objective), the `Waypoint1..4` defender

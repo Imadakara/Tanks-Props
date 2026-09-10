@@ -44,6 +44,7 @@ extends Node3D
 const StructureScene := preload("res://scenes/obstacles/Structure.tscn")
 const RampScene := preload("res://scenes/obstacles/ToyRamp.tscn")
 const TankScene := preload("res://scenes/tank/Tank.tscn")
+const ChassisCatalog := preload("res://scenes/tank/chassis_catalog.gd")
 const ExtractionManagerScript := preload("res://scenes/main/extraction_manager.gd")
 
 ## Тест выпадения лута (клавиша L). Полигон — не игровой режим, `ExtractionManager` здесь не
@@ -102,6 +103,11 @@ var _movement: Node
 var _info_label: Label
 var _loot_test_label: Label
 var _dummy: CharacterBody3D
+
+## Класс танка из лобби — та же подмена, что и на боевых картах (map_scene.gd._enter_tree): полигон
+## существует ровно для того, чтобы прогнать по нему каждый класс.
+func _enter_tree() -> void:
+	ChassisCatalog.swap_player_tank(self, MatchState.player_chassis)
 
 func _ready() -> void:
 	_build_ground()

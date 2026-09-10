@@ -47,10 +47,21 @@ var _round_timer: Timer
 var _barrel: Node3D
 var _camera: Camera3D
 var _mod: Node  # ModificationController танка игрока — слот модификации + режим прицеливания мортиры
+## Танк игрока целиком — ради имени класса (tank.gd, chassis_name()) в строке команды.
+var _player_tank: Node
+## Маскировка игрока — ради счётчика зарядов (расходуемый ресурс, как снаряды).
+var _disguise: Node
+## Движение игрока — ради отсчёта «пружинного двигателя» тяжёлого класса.
+var _movement: Node
 
 func _ready() -> void:
 	var tank: Node = get_tree().current_scene.get_node_or_null("PlayerTank")
 	if tank != null:
+		_player_tank = tank
+		_disguise = tank.get_node_or_null("DisguiseController")
+		if _disguise != null and _disguise.has_signal("charges_changed"):
+			_disguise.charges_changed.connect(_on_disguise_charges_changed)
+		_movement = tank.get_node_or_null("TankMovement")
 		_ammo = tank.get_node("AmmoComponent")
 		_fsm = tank.get_node("TankStateMachine")
 		_ammo.ammo_changed.connect(_on_ammo_changed)
@@ -128,7 +139,7 @@ func _refresh_mod_slot_label() -> void:
 		_mod_slot_label.text = _mod_text
 		return
 	_mod_slot_label.text = "%s   |   Трюм: %d/%d  (%d)" % [
-		_mod_text, _cargo.lot_count(), GameConfig.cargo_capacity, _cargo.total_value()]
+		_mod_text, _cargo.lot_count(), _cargo.capacity, _cargo.total_value()]
 
 func _update_crosshair() -> void:
 	if _barrel == null:
@@ -229,10 +240,15 @@ func _update_round_line() -> void:
 ## _ready(), поэтому обновляем лениво в _process. В TEAM_ARENA стороны — команды-цвета
 ## (Красные/Синие), никаких «атака/оборона».
 func _update_team_label() -> void:
+	var team_text: String
 	if _is_color_team_mode():
-		_team_label.text = "Команда: Красные" if MatchState.player_team == 0 else "Команда: Синие"
+		team_text = "Команда: Красные" if MatchState.player_team == 0 else "Команда: Синие"
 	else:
-		_team_label.text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
+		team_text = "Команда: Атака" if MatchState.player_team == 0 else "Команда: Оборона"
+	# Класс танка — выбран в лобби и фиксирован на матч; показываем, чтобы игрок помнил, чем играет.
+	if _player_tank != null and _player_tank.has_method("chassis_name"):
+		team_text += "   ·   Танк: %s" % _player_tank.chassis_name()
+	_team_label.text = team_text
 
 ## Серия по цвету команды: [красные, синие]. Серия хранится по стороне (attack/defense), а в
 ## TEAM_ARENA смены сторон нет: attack = команда 0 = Красные, defense = команда 1 = Синие.
@@ -386,11 +402,14 @@ func _update_state_label() -> void:
 	match _fsm.state:
 		TankStateMachineScript.State.NORMAL:
 			if _cargo != null and _cargo.blocks_disguise():
-				# Концепт §5: груз — сознательный отказ от главного защитного инструмента. Игрок должен
-				# видеть ПРИЧИНУ, а не молча жать бесполезную клавишу.
+				# Черта среднего класса: гружёный не маскируется. Игрок должен видеть ПРИЧИНУ, а не
+				# молча жать бесполезную клавишу.
 				base = "Статус: обычное  |  Маскировка НЕДОСТУПНА: гружён"
+			elif _disguise != null and not _disguise.has_charges():
+				# Заряды маскировки кончились — вернёт ящик боеприпасов или респавн.
+				base = "Статус: обычное  |  Маскировка: нет зарядов"
 			else:
-				base = "Статус: обычное  |  Маскировка: M"
+				base = "Статус: обычное  |  Маскировка: M%s" % _charges_suffix()
 		TankStateMachineScript.State.DISGUISED:
 			base = "Статус: маскировка (%.1f с)" % _fsm.get_node("DisguiseTimer").time_left
 		TankStateMachineScript.State.DISGUISE_COOLDOWN:
@@ -399,4 +418,16 @@ func _update_state_label() -> void:
 			base = "Статус: перезарядка (%.1f с)" % _fsm.get_node("ReloadTimer").time_left
 	if _shield_left > 0.0:
 		base += "  |  ЩИТ %d с" % int(ceil(_shield_left))
+	# Пружинный двигатель тяжёлого: сколько ещё заводится до старта с места.
+	if _movement != null and _movement.has_method("spring_engine_winding") and _movement.spring_engine_winding():
+		base += "  |  Пружина: %.1f с" % _movement.spring_engine_time_left()
 	_state_label.text = base
+
+## « (2/3)» — сколько маскировок осталось из максимума класса.
+func _charges_suffix() -> String:
+	if _disguise == null:
+		return ""
+	return " (%d/%d)" % [_disguise.charges, _disguise.max_charges]
+
+func _on_disguise_charges_changed(_current: int, _max: int) -> void:
+	_update_state_label()

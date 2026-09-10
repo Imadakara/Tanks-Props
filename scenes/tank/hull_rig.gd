@@ -147,6 +147,18 @@ extends Node3D
 ## десятки записей трансформов в кадр на каждом стоящем танке.
 @export var running_gear_epsilon: float = 0.02
 
+## Масштаб класса танка (chassis.gd, size_scale): лёгкий 1/1.5, тяжёлый и грузовой 1.5. Масштабируется
+## САМ ПИВОТ (`scale` узла) — под ним и броня, и ходовая, и башня со стволом, поэтому весь визуал
+## растёт одним движением. Габаритные @export'ы выше остаются «в единицах среднего» и геометрию
+## строят как раньше. Масштаб узла переживает запись `rotation` ниже (у Node3D поворот и масштаб
+## хранятся раздельно). Щупы подвески мерят в СИСТЕМЕ КОРНЯ, поэтому их выносы умножаются на этот
+## же множитель вручную (_sample_ground). Выставляется только в рантайме — в редакторе сцена класса
+## выглядит как средний: коллайдер тоже масштабируется лишь в рантайме, и так они хотя бы совпадают.
+var chassis_scale: float = 1.0:
+	set(value):
+		chassis_scale = maxf(value, 0.05)
+		scale = Vector3.ONE * chassis_scale
+
 ## Тангаж/крен ОПОРНОЙ ПЛОСКОСТИ (без динамики подвески), радианы — для отладочных экранов
 ## (полигон испытаний) и любой будущей логики по уклону. Только чтение.
 var ground_pitch: float = 0.0
@@ -301,10 +313,10 @@ func _sample_ground() -> Vector3:
 			_PROBE_X[i] * track_gauge,
 			0.0,
 			_PROBE_Z[i] * (hull_length * 0.5 - track_radius)
-		)
+		) * chassis_scale
 		var query := PhysicsRayQueryParameters3D.create(
-			xf * (local + Vector3(0.0, _PROBE_UP, 0.0)),
-			xf * (local + Vector3(0.0, -_PROBE_DOWN, 0.0)),
+			xf * (local + Vector3(0.0, _PROBE_UP * chassis_scale, 0.0)),
+			xf * (local + Vector3(0.0, -_PROBE_DOWN * chassis_scale, 0.0)),
 			1
 		)
 		query.exclude = [_body.get_rid()]
@@ -328,12 +340,12 @@ func _sample_ground() -> Vector3:
 	var rear: float = (heights[2] + heights[3]) * 0.5
 	var right: float = (heights[1] + heights[3]) * 0.5
 	var left: float = (heights[0] + heights[2]) * 0.5
-	var span_z: float = maxf(hull_length - 2.0 * track_radius, 0.01)
-	var span_x: float = maxf(2.0 * track_gauge, 0.01)
+	var span_z: float = maxf(hull_length - 2.0 * track_radius, 0.01) * chassis_scale
+	var span_x: float = maxf(2.0 * track_gauge, 0.01) * chassis_scale
 	return Vector3(
 		atan2(front - rear, span_z),
 		atan2(right - left, span_x),
-		clampf(average + ride_height, -max_ground_drop, 0.05)
+		clampf(average + ride_height, -max_ground_drop * chassis_scale, 0.05)
 	)
 
 # ---------------------------------------------------------------------------------------------

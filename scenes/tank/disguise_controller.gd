@@ -42,27 +42,50 @@ extends Node3D
 ##   маскировку, но стоит противнику выстрела; при invincible=true урона нет — нет и сигнала,
 ##   маскировка держится);
 ## - два правила относительно ПРОТИВНИКА, режим выбирается один раз при активации по размеру
-##   объекта имитации против коллайдера корпуса (HULL_HALF_EXTENTS):
+##   объекта имитации против коллайдера корпуса (hull_half_extents):
 ## - объект имитации МЕНЬШЕ танка хотя бы по одной оси → сброс при приближении врага к коллайдеру
 ##   танка ближе GameConfig.disguise_enemy_proximity_break_dist;
 ## - объект имитации БОЛЬШЕ танка по всем осям → сброс, когда вражеский танк въезжает в объём
 ##   объекта имитации.
 ## Для дефолтного объекта имитации (2×1.25×2 > 1.2×0.6×1.8) активно второе правило, первое спит.
+## У классов разного размера (chassis.gd, size_scale) это решается само: тяжёлый/грузовой крупнее
+## коробки по X/Z, поэтому у них работает правило «приближение», у лёгкого и среднего — «въезд в
+## объём».
+##
+## ЗАРЯДЫ. Маскировка — расходуемый ресурс, как снаряды: каждое успешное включение тратит заряд
+## (`charges`), максимум — у класса (`max_charges`, chassis.gd). Заряды возвращаются полностью на
+## респавне и частично — ящиком боеприпасов (pickups.json, ammo.disguise_charges, до максимума).
+## Длительность одной маскировки тоже своя у класса (TankStateMachine.set_disguise_duration).
+##
+## ПОДВИЖНАЯ МАСКИРОВКА (черта лёгкого, `mobile_disguise`). Движение маскировку НЕ сбрасывает —
+## танк едет со скоростью, умноженной на `disguised_speed_mult` (tank_movement.gd), башня замирает
+## относительно корпуса и её поворот тоже не сбрасывает (turret_controller.gd). Объект имитации и
+## габарит для лучей бота — дети этого узла, поэтому едут вместе с танком сами.
 
 signal disguise_started()
 signal disguise_ended()
+## Заряды маскировки изменились (трата / ящик боеприпасов / респавн / смена класса).
+signal charges_changed(current: int, max_charges: int)
 
 const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd")
 
-## Полугабариты коллайдера корпуса — из Tank.tscn. Сам коллайдер там ConvexPolygonShape3D (коробка
-## 1.2 × 0.6 × 1.8 со срезанными фаской нижними рёбрами носа и кормы, см. Tank_Prop_Hunt_Tank_Chassis.md
-## §4.1); здесь нужны именно ГАБАРИТНЫЕ полуразмеры, а фаска на них не влияет — правила сброса
-## маскировки считаются по AABB, а не по точной форме. Центр коллайдера смещён на +0.3 по Y
-## относительно начала танка (см. Tank.tscn/CollisionShape3D).
-const HULL_HALF_EXTENTS := Vector3(0.6, 0.3, 0.9)
-const HULL_CENTER_OFFSET := Vector3(0.0, 0.3, 0.0)
+## Полугабариты коллайдера корпуса ЭТОГО танка и смещение его центра по Y. У среднего —
+## (0.6, 0.3, 0.9) и 0.3 (коробка 1.2 × 0.6 × 1.8; фаска нижних рёбер на габарит не влияет — правила
+## сброса считаются по AABB, а не по точной форме). У остальных классов chassis.gd масштабирует их
+## вместе с коллайдером (size_scale). Правила «враг рядом/въехал» берут габарит ВРАГА у него самого
+## (_half_extents_of), а не отсюда — танки теперь разного размера.
+var hull_half_extents: Vector3 = Vector3(0.6, 0.3, 0.9)
+var hull_center_offset: Vector3 = Vector3(0.0, 0.3, 0.0)
 
 @export var is_player_controlled: bool = true
+
+## Черта лёгкого: можно ехать в маскировке. Выставляет chassis.gd.
+var mobile_disguise: bool = false
+## Во сколько раз медленнее едет подвижная маскировка (скорость умножается на это). chassis.gd.
+var disguised_speed_mult: float = 0.4
+## Заряды маскировки: сейчас / максимум класса. См. заголовок, раздел «ЗАРЯДЫ».
+var charges: int = 3
+var max_charges: int = 3
 
 var _prop_mesh: MeshInstance3D
 ## Area3D размером объекта имитации на слое `disguise_obstacle` (4) — видна только лучам объезда
@@ -90,6 +113,37 @@ var _saved_overrides: Dictionary = {}
 func _ready() -> void:
 	_state_machine.state_changed.connect(_on_state_changed)
 	_health.damaged.connect(_on_health_damaged)
+	# Воскресший танк — снова с полным запасом маскировок, как и с полным боекомплектом.
+	var respawn: Node = get_parent().get_node_or_null("RespawnController")
+	if respawn != null:
+		respawn.respawned.connect(refill_charges)
+
+## Максимум зарядов класса (chassis.gd). Заодно заливает запас до полного — класс применяется на
+## спавне, танк выходит в бой со всеми маскировками.
+func set_max_charges(value: int) -> void:
+	max_charges = maxi(value, 0)
+	refill_charges()
+
+func refill_charges() -> void:
+	charges = max_charges
+	charges_changed.emit(charges, max_charges)
+
+## Вернуть заряды (ящик боеприпасов). Не выше максимума класса. Возвращает, сколько РЕАЛЬНО
+## вернулось — 0, если запас и так полон.
+func add_charges(amount: int) -> int:
+	var before: int = charges
+	charges = mini(charges + maxi(amount, 0), max_charges)
+	if charges != before:
+		charges_changed.emit(charges, max_charges)
+	return charges - before
+
+func has_charges() -> bool:
+	return charges > 0
+
+## Можно ли включить маскировку прямо сейчас — единый предикат для HUD и бота: есть заряд, груз не
+## мешает (черта среднего) и автомат состояний в NORMAL.
+func can_disguise_now() -> bool:
+	return has_charges() and not blocked_by_cargo() and _state_machine.can_enter_disguise()
 
 ## Прямое попадание снаряда по замаскированному танку — маскировка спадает (прострел «обманки»).
 ## Сигнатура — ровно 3 параметра, как эмитит HealthComponent.damaged (Godot не отбрасывает лишние).
@@ -121,15 +175,22 @@ func try_enter_disguise() -> bool:
 	# картах без трюма (узла нет) условие спит.
 	if blocked_by_cargo():
 		return false
+	# Заряды кончились — клавиша молчит, пока ящик боеприпасов или респавн их не вернут. Проверка ДО
+	# request_disguise() по той же причине, что и груз: отказ не должен стоить кулдауна.
+	if not has_charges():
+		return false
 	if not _state_machine.request_disguise():
 		return false
+	charges -= 1
+	charges_changed.emit(charges, max_charges)
 	_build_prop_if_needed()
 	_compute_break_mode()
 	_show_disguise()
 	disguise_started.emit()
 	return true
 
-## Мешает ли маскировке груз в трюме. Отдельный публичный предикат, а не проверка внутри
+## Мешает ли маскировке груз в трюме (черта СРЕДНЕГО класса — у остальных всегда false, см.
+## CargoHold.blocks_disguise()). Отдельный публичный предикат, а не проверка внутри
 ## try_enter_disguise(): HUD показывает игроку ПРИЧИНУ, почему клавиша не работает, а ИИ решает,
 ## стоит ли вообще планировать засаду. Все трое обязаны читать одно и то же правило.
 func blocked_by_cargo() -> bool:
@@ -160,26 +221,36 @@ func _physics_process(_delta: float) -> void:
 func _compute_break_mode() -> void:
 	_prop_half = GameConfig.disguise_prop_size * 0.5
 	_proximity_mode = (
-		_prop_half.x < HULL_HALF_EXTENTS.x
-		or _prop_half.y < HULL_HALF_EXTENTS.y
-		or _prop_half.z < HULL_HALF_EXTENTS.z
+		_prop_half.x < hull_half_extents.x
+		or _prop_half.y < hull_half_extents.y
+		or _prop_half.z < hull_half_extents.z
 	)
+
+## Габарит и смещение центра ДРУГОГО танка — у него самого (классы разного размера). Танк без
+## DisguiseController (не должно быть, но на всякий случай) — считаем средним.
+func _half_extents_of(other: Node) -> Vector3:
+	var dc: Node = other.get_node_or_null("DisguiseController")
+	return dc.hull_half_extents if dc != null else Vector3(0.6, 0.3, 0.9)
+
+func _center_offset_of(other: Node) -> Vector3:
+	var dc: Node = other.get_node_or_null("DisguiseController")
+	return dc.hull_center_offset if dc != null else Vector3(0.0, 0.3, 0.0)
 
 ## true — этот вражеский танк сейчас нарушает активное правило сброса.
 func _enemy_triggers_break(other: Node3D) -> bool:
-	var enemy_center: Vector3 = other.global_position + HULL_CENTER_OFFSET
+	var enemy_center: Vector3 = other.global_position + _center_offset_of(other)
 	if _proximity_mode:
 		# Дистанция от точки-центра врага до AABB коллайдера ЭТОГО танка (см. ТЗ: «для расчётов
 		# используем коллайдер замаскированного танка»).
-		var my_center: Vector3 = _body.global_position + HULL_CENTER_OFFSET
-		var d: Vector3 = (other.global_position - my_center).abs() - HULL_HALF_EXTENTS
+		var my_center: Vector3 = _body.global_position + hull_center_offset
+		var d: Vector3 = (other.global_position - my_center).abs() - hull_half_extents
 		var outside := Vector3(maxf(d.x, 0.0), maxf(d.y, 0.0), maxf(d.z, 0.0))
 		return outside.length() <= GameConfig.disguise_enemy_proximity_break_dist
 	# «Въезд в объём»: AABB корпуса врага пересекается с AABB объекта имитации (центр объекта имитации
 	# приподнят на его полувысоту — стоит на земле, как настоящий Obstacle).
 	var prop_center: Vector3 = _body.global_position + Vector3(0.0, _prop_half.y, 0.0)
 	var delta: Vector3 = (enemy_center - prop_center).abs()
-	var reach: Vector3 = HULL_HALF_EXTENTS + _prop_half
+	var reach: Vector3 = _half_extents_of(other) + _prop_half
 	return delta.x <= reach.x and delta.y <= reach.y and delta.z <= reach.z
 
 func _build_prop_if_needed() -> void:

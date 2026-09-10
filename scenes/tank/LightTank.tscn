@@ -1,0 +1,20 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_base"]
+
+[node name="LightTank" instance=ExtResource("1_base")]
+
+[node name="Chassis" parent="."]
+chassis_id = &"light"
+display_name = "Лёгкий"
+trait_text = "Едет в маскировке — в 2.5 раза медленнее, без сброса"
+size_scale = 0.6667
+move_speed = 7.8
+max_hits = 2
+cargo_capacity = 1
+ammo_capacity = 5
+disguise_duration_sec = 60.0
+disguise_charges = 5
+cargo_blocks_disguise = false
+mobile_disguise = true
+disguised_speed_mult = 0.4

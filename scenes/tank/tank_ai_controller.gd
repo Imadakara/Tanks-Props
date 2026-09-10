@@ -2422,7 +2422,7 @@ func _enter_disguise() -> void:
 func _should_disguise_s1() -> bool:
 	if not disguise_bot_enabled or not disguise_s1_enabled or not enemy_reaction_enabled:
 		return false
-	if not _state_machine.can_enter_disguise():
+	if not _disguise.can_disguise_now():
 		return false
 	if not _body.is_attacker() or not _mod.can_pick_up() or _has_mortar():
 		return false
@@ -2471,7 +2471,7 @@ func _s1_current_predrop_threshold() -> float:
 func _should_ambush_mortar_zone_s3() -> bool:
 	if not disguise_bot_enabled or not disguise_s3_enabled or not enemy_reaction_enabled:
 		return false
-	if not _state_machine.can_enter_disguise():
+	if not _disguise.can_disguise_now():
 		return false
 	if _body.is_attacker() or _alert_is_active():
 		return false
@@ -2843,7 +2843,7 @@ func _ensure_home_state() -> void:
 	# State.ATTACK_OBJECTIVE в _physics_process() через _should_disguise_s1().
 	var reached_wp: bool = _just_reached_waypoint
 	_just_reached_waypoint = false
-	if disguise_bot_enabled and enemy_reaction_enabled and _state_machine.can_enter_disguise() \
+	if disguise_bot_enabled and enemy_reaction_enabled and _disguise.can_disguise_now() \
 			and (desired == State.IDLE or desired == State.PATROL or desired == State.HUNT):
 		var prep_yaw: float = _disguise_s2_prep_yaw(reached_wp)
 		if not is_nan(prep_yaw):

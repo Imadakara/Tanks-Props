@@ -75,6 +75,14 @@ func request_disguise() -> bool:
 	_disguise_timer.start()
 	return true
 
+## Длительность маскировки этого танка — у каждого класса своя (chassis.gd). Меняет таймер на
+## лету; если маскировка уже идёт, текущий отсчёт не трогает (новое значение со следующего раза).
+func set_disguise_duration(seconds: float) -> void:
+	_disguise_timer.wait_time = maxf(seconds, 0.1)
+
+func disguise_duration() -> float:
+	return _disguise_timer.wait_time
+
 ## Досрочное снятие маскировки: поворот башни / начало движения / столкновение с
 ## движущимся танком. Не действует, если маскировка уже не активна.
 func break_disguise(_reason: String) -> void:

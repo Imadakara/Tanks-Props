@@ -1,8 +1,8 @@
 extends Control
 ## MainMenu — стартовый экран (run/main_scene указывает сюда, см. CLAUDE.md "Map inventory" за
-## полным списком карт). Кнопки — переход на соответствующую карту через
-## get_tree().change_scene_to_file(); сама эта сцена никакой игровой логики не несёт, только выбор,
-## куда идти дальше.
+## полным списком карт). Кнопка режима не ведёт на карту сразу: выбранная карта кладётся в
+## MatchState.pending_map_path и открывается ЛОББИ (scenes/lobby/Lobby.tscn) — там игрок выбирает
+## класс танка, и уже оттуда «В бой». Сама эта сцена никакой игровой логики не несёт.
 
 const _TARGET_OBJECTIVE_SCENE := "res://scenes/maps/TargetObjectiveMap.tscn"
 const _TEAM_ARENA_SCENE := "res://scenes/maps/TeamArenaMap.tscn"
@@ -11,6 +11,8 @@ const _EXTRACTION_SCENE := "res://scenes/maps/KitchenMap.tscn"
 ## матча, ростера и HUD. В меню он стоит рядом с картами просто как самый быстрый способ туда
 ## попасть; никакой режим MatchState для него не выставляется, читать его там нечему.
 const _TEST_GROUND_SCENE := "res://scenes/maps/TestGroundMap.tscn"
+## Экран выбора класса танка между меню и боем.
+const _LOBBY_SCENE := "res://scenes/lobby/Lobby.tscn"
 
 @onready var _target_objective_button: Button = $VBoxContainer/AchieverButton
 @onready var _team_arena_button: Button = $VBoxContainer/KillerButton
@@ -55,5 +57,6 @@ func _go(scene_path: String) -> void:
 	MatchState.debug_enabled = _debug_mode_check.button_pressed
 	MatchState.debug_spawn_bots_on_start = _spawn_bots_immediately_check.button_pressed if MatchState.debug_enabled else true
 	MatchState.dynamic_obstacles = _dynamic_obstacles_check.button_pressed
-	MatchState.reset_series()  # среди прочего зануляет dynamic_obstacles_seed → новый матч = новая раскладка
-	get_tree().change_scene_to_file(scene_path)
+	MatchState.reset_series()  # среди прочего зануляет dynamic_obstacles_seed: новый матч = новая раскладка
+	MatchState.pending_map_path = scene_path
+	get_tree().change_scene_to_file(_LOBBY_SCENE)

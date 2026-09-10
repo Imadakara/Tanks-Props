@@ -29,6 +29,9 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## ни камеры, ни стейт-машины нет вовсе: поиск обязан возвращать null, а не падать.
 @onready var _camera_rig: Node3D = _find_on_body("CameraRig")
 @onready var _state_machine: Node = _find_on_body("TankStateMachine")
+## Для черты лёгкого класса (подвижная маскировка, DisguiseController.mobile_disguise). У турели
+## узла нет — null.
+@onready var _disguise: Node = _find_on_body("DisguiseController")
 
 ## Ближайший предок-физтело (CharacterBody3D танка или StaticBody3D турели) — на нём и висят
 ## компоненты. Поиск вверх, а не по фиксированному пути: глубина вложенности башни у танка и у
@@ -46,6 +49,12 @@ func _physics_process(delta: float) -> void:
 		target_yaw = _camera_rig.rotation.y
 
 	if _state_machine != null and _state_machine.state == TankStateMachineScript.State.DISGUISED:
+		# Подвижная маскировка (лёгкий): танк едет и поворачивает корпус, поэтому «башня отстала от
+		# камеры» здесь не намерение игрока, а следствие хода. Башня просто замирает ОТНОСИТЕЛЬНО
+		# КОРПУСА и маскировку не сбрасывает; камера при этом свободна. Сбросит выстрел / попадание /
+		# враг рядом — как у всех.
+		if _disguise != null and _disguise.mobile_disguise:
+			return
 		var diff := absf(wrapf(target_yaw - rotation.y, -PI, PI))
 		if rad_to_deg(diff) > freeze_epsilon_deg:
 			_state_machine.break_disguise("turret_rotation")

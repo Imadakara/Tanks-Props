@@ -11,7 +11,9 @@ extends Node
 ## `begin_match()`/`_ready()` — весь состав уже должен быть заспавнен и зарегистрирован к этому
 ## моменту (см. корневой CLAUDE.md, "Scene bring-up ordering").
 
-const BotTankScene := preload("res://scenes/tank/Tank.tscn")
+## Класс танка бота берётся из ростера (ключ отряда "chassis": "light"/"medium"/"heavy"/"cargo"),
+## по умолчанию — средний. Каталог id ↔ сцена — chassis_catalog.gd.
+const ChassisCatalog := preload("res://scenes/tank/chassis_catalog.gd")
 const SpawnZoneScript := preload("res://scenes/main/spawn_zone.gd")
 const TankAIControllerScript := preload("res://scenes/tank/tank_ai_controller.gd")
 
@@ -128,7 +130,11 @@ func _find_spawn_zone(node_name: String) -> Node3D:
 	return get_tree().current_scene.find_child(node_name, true, false)
 
 func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, index: int) -> void:
-	var bot: CharacterBody3D = BotTankScene.instantiate()
+	var chassis_id := StringName(str(squad.get("chassis", ChassisCatalog.DEFAULT_ID)))
+	if not ChassisCatalog.is_known(chassis_id):
+		push_warning("TeamSpawner: неизвестный класс '%s' в ростере — бот будет средним" % chassis_id)
+		chassis_id = ChassisCatalog.DEFAULT_ID
+	var bot: CharacterBody3D = ChassisCatalog.load_scene(chassis_id).instantiate()
 	# Дефолтное имя инстанса Tank.tscn при instantiate() — движковое "@CharacterBody3D@N" (root
 	# без явно заданного unique-имени в самой сцене) — нечитаемо в дебаг-виджете бота
 	# ("BOT BRAIN"-панель использует _body.name, см. tank_ai_controller.gd).
@@ -310,12 +316,19 @@ func _load_json_config(path: String) -> Dictionary:
 	push_warning("TeamSpawner: некорректный JSON в %s" % path)
 	return {}
 
+## Профиль «игрок/бот» из config/*_tank_config.json. Скорость и HP сюда больше НЕ входят — ими
+## владеет игровой класс танка (chassis.gd), и применять их здесь значило бы молча сплющить все
+## классы в один: этот вызов идёт ПОСЛЕ того, как класс уже раздал свои числа. Если такие ключи
+## всё же окажутся в JSON — предупреждаем и игнорируем.
+const _CHASSIS_OWNED_KEYS := ["move_speed", "max_hits"]
+
 func _apply_tank_config(tank: Node, config: Dictionary) -> void:
 	if config.is_empty():
 		return
+	for key in _CHASSIS_OWNED_KEYS:
+		if config.has(key):
+			push_warning("TeamSpawner: '%s' в профиле танка игнорируется — им владеет класс (chassis.gd)" % key)
 	var movement: Node = tank.get_node("TankMovement")
-	if config.has("move_speed"):
-		movement.move_speed = float(config["move_speed"])
 	if config.has("acceleration"):
 		movement.acceleration = float(config["acceleration"])
 	var turret: Node = tank.get_node("Hull/Turret")
@@ -324,9 +337,6 @@ func _apply_tank_config(tank: Node, config: Dictionary) -> void:
 	var weapon: Node = tank.get_node("WeaponController")
 	if config.has("projectile_launch_speed"):
 		weapon.launch_speed = float(config["projectile_launch_speed"])
-	var health: Node = tank.get_node("HealthComponent")
-	if config.has("max_hits"):
-		health.max_hits = int(config["max_hits"])
 	var tumble: Node = tank.get_node_or_null("TumbleController")
 	if tumble != null and config.has("self_right_cooldown_sec"):
 		tumble.self_right_cooldown_sec = float(config["self_right_cooldown_sec"])

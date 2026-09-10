@@ -4,6 +4,8 @@ extends Node
 ## defense_wins_ties, ai_can_see_disguised_tanks) — решения по открытым вопросам баланса,
 ## подлежат пересмотру на плейтесте.
 
+## Длительность одной маскировки ПО УМОЛЧАНИЮ — у каждого класса танка своя (chassis.gd →
+## TankStateMachine.set_disguise_duration); это значение действует только на танк без узла Chassis.
 @export var disguise_duration_sec: float = 30.0
 @export var disguise_cooldown_sec: float = 10.0
 
@@ -108,6 +110,7 @@ func _load_pickups() -> void:
 			"ammo_amount": int(d.get("ammo_amount", 0)),
 			"heal_hits": int(d.get("heal_hits", 0)),
 			"shield_sec": float(d.get("shield_sec", 0.0)),
+			"disguise_charges": int(d.get("disguise_charges", 0)),
 		}
 
 ## [r, g, b] из JSON → Color. null/битое → белый.
@@ -118,13 +121,12 @@ func _color_from(v: Variant) -> Color:
 
 ## Конфиг одного типа бонуса. Неизвестный id → пустой эффект (Pickup просто ничего не сделает).
 func pickup_kind(id: StringName) -> Dictionary:
-	return _pickup_kinds.get(id, {"color": Color(1, 1, 1), "ammo_amount": 0, "heal_hits": 0, "shield_sec": 0.0})
+	return _pickup_kinds.get(id, {"color": Color(1, 1, 1), "ammo_amount": 0, "heal_hits": 0, "shield_sec": 0.0, "disguise_charges": 0})
 
-## Трюм. Вместимость — сколько ящиков танк увозит за раз; сырой с земли и дозревший со склада
-## занимают по одному месту одинаково (правило в cargo_hold.gd, не число).
-@export var cargo_capacity: int = 3
-## Штраф к скорости за КАЖДЫЙ ящик в трюме (мультипликативно). 0.85 при трёх ящиках даёт ×0.61.
-@export var cargo_speed_penalty_per_lot: float = 0.85
+## Трюм. Вместимость — СВОЯ У КАЖДОГО КЛАССА танка (chassis.gd → CargoHold.capacity), здесь её нет.
+## Штраф к скорости за КАЖДЫЙ ящик в трюме — общее правило всех классов, аддитивно: 0.15 = минус
+## 15% за ящик (1 ящик ×0.85, 3 ящика ×0.55). Грузовой класс от него освобождён (chassis.gd).
+@export var cargo_speed_penalty_per_lot: float = 0.15
 ## Сколько секунд после респавна трюм не принимает добычу. Танк МАТЕРИАЛИЗУЕТСЯ в круге своей базы,
 ## а `Area3D` ящика шлёт `body_entered` и на телепорт — воскресший танк молча всасывал лут, лежащий
 ## в точке спавна (в первую очередь свой же, выпавший при гибели рядом с базой), и следующим кадром

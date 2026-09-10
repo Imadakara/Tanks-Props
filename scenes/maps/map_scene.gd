@@ -32,6 +32,7 @@ extends Node3D
 const ScoreManagerScript := preload("res://scenes/main/score_manager.gd")
 const MatchManagerScript := preload("res://scenes/main/match_manager.gd")
 const ObjectiveAlertStateScript := preload("res://scenes/main/objective_alert_state.gd")
+const ChassisCatalog := preload("res://scenes/tank/chassis_catalog.gd")
 const ExtractionManagerScript := preload("res://scenes/main/extraction_manager.gd")
 const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obstacle_placer.gd")
 
@@ -108,6 +109,13 @@ var _bot_spawn_buttons: Array[Button] = []  # debug-кнопки «+ Бот», �
 ## ОДНО И ТО ЖЕ значение. Логика самого таймера/гео-проверки — переиспользуемый класс
 ## (scenes/main/objective_alert_state.gd), этот скрипт просто владеет своим экземпляром.
 var _alert_state := ObjectiveAlertStateScript.new()
+
+## Танк игрока выбранного в лобби класса (MatchState.player_chassis). Подмена — ИМЕННО здесь, в
+## `_enter_tree()` корня: он срабатывает до того, как дети войдут в дерево и выполнят `_ready()`,
+## поэтому и HUD (берёт `PlayerTank` в своём `_ready()`), и `@onready`-ссылки ниже, и спавнер видят
+## уже нужный класс. Подробности и почему не в `_ready()` — chassis_catalog.swap_player_tank().
+func _enter_tree() -> void:
+	ChassisCatalog.swap_player_tank(self, MatchState.player_chassis)
 
 ## $TeamSpawner.spawn_team() встаёт ПЕРЕД _setup_match_context() — та сканирует группу "tanks"
 ## через ScoreManager/MatchManager.begin_match()/setup(), должна видеть уже полный состав (см.
