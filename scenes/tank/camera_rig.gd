@@ -123,8 +123,10 @@ func _physics_process(delta: float) -> void:
 	if reverse_camera_follow and is_active and _movement != null and _movement.last_move_input < -0.1:
 		var behind_yaw: float = _body.rotation.y + PI
 		_world_yaw = lerp_angle(_world_yaw, behind_yaw, reverse_follow_speed * delta)
-	rotation.y = wrapf(_world_yaw - _body.rotation.y, -PI, PI)
-	rotation.x = _pitch
+	# Все три оси задаём ЯВНО каждый кадр — крена у камеры нет по построению. Иначе после
+	# tumble-follow (где global_transform писался напрямую поверх кренящегося корня) в локальном
+	# rotation.z оставался компенсирующий крен и камера выходила из кувырка «завалённой набок».
+	rotation = Vector3(_pitch, wrapf(_world_yaw - _body.rotation.y, -PI, PI), 0.0)
 	_apply_pitch_framing()
 
 ## Доля хода прицела вверх: 0 — смотрим вперёд или вниз, 1 — упёрлись в верхнюю границу.

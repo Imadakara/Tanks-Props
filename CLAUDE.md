@@ -99,11 +99,12 @@ preference.
    carve-out: `TumbleController` during a cliff tumble — safe only because every root-basis reader
    is frozen meanwhile. → "Tank as a composed entity".
 2. **World vs local gun angles.** The turret tilts, so a local gun angle ≠ a world angle.
-   `BarrelController.target_pitch` is the *ordered* elevation in **world** terms. Any "is the gun
-   on target?" check reads `world_pitch()` / `world_pitch_limits()`, **never `rotation.x`** — on a
-   slope a compare against the local angle never converges and bots stop firing. Normal-shell world
-   elevation is capped 20° (mortar raises it to 85° while aiming, then restores). → "Tank as a
-   composed entity".
+   `BarrelController.target_pitch` is a **world** angle for the bot and the mortar (subtract
+   `mount_pitch()` → local, then clamp); for the player it is **deck-relative** (camera pitch is
+   the local order directly, `player_pitch_deck_relative`). Any "is the gun on target?" check reads
+   `world_pitch()` / `world_pitch_limits()`, **never `rotation.x`** — on a slope a compare against
+   the local angle never converges and bots stop firing. Normal-shell elevation is capped 20°
+   (mortar raises it to 85° while aiming, then restores). → "Tank as a composed entity".
 3. **No `await` before tree-independent setup in a map root's `_ready()`.** `await` (navmesh bake,
    dynamic obstacles) voids the "root `_ready()` beats every `_process()`" assumption that
    `ammo_drop_zone.gd` / `hud.gd` / `tank_ai_controller.gd` lazy-inits rely on. Anything needing no
@@ -165,27 +166,33 @@ after `team` is assigned and by `RespawnController.on_respawned()`. The tint is 
   the deck and the turret keeps one degree of freedom — rotation about the tilted deck normal.
   Track/wheel speeds are per side (`v = v_forward ± ω·gauge`), so a neutral turn spins the tracks
   in opposite directions. Full detail: `Tank_Prop_Hunt_Tank_Chassis.md`.
-- **Gun angles: world vs local.** `BarrelController.target_pitch` is the *ordered* elevation in
-  **world** terms (that is what the player camera pitch, the bot ballistic solution and the mortar
-  solution all produce). `barrel_controller.gd` converts it to a local angle by subtracting
-  `mount_pitch()` (the ring's tilt along the turret's facing) and clamps *that* to
-  `min_pitch_deg` / `max_pitch_deg` (elevation limits are set by the trunnions, not the horizon).
-  On flat ground `mount_pitch()` is 0. Any "is the gun on target?" check reads `world_pitch()`,
-  never `rotation.x` — on a slope those differ and a compare against the local angle never
-  converges (three call sites in `tank_ai_controller.gd`, plus `world_pitch_limits()` to clamp the
-  ballistic solution). By design, on a climb the gun can't depress to the horizon — on a 24° ramp
-  the reachable world window is `[+7°, +42°]`, and the crosshair shows it honestly since it is
-  built from the barrel's live basis. Normal-shell elevation cap is **20°**; the mortar raises the
-  cap to 85° while aiming and restores it. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §4.
+- **Gun angles: world vs local.** `BarrelController.target_pitch` is the *ordered* elevation. For
+  the **bot** and the **mortar** it is a **world** angle (ballistic solutions are relative to the
+  horizon); `barrel_controller.gd` subtracts `mount_pitch()` (the ring's tilt along the turret's
+  facing) and clamps *that* to `min_pitch_deg` / `max_pitch_deg` (trunnion limits, not the
+  horizon). For the **player** (`player_pitch_deck_relative`, default on) the camera pitch is taken
+  as the desired barrel angle **relative to the deck** — `mount_pitch()` is **not** subtracted — so
+  on a climb the player elevates to the same `max_pitch_deg` *above the tilted hull* (world
+  `mount + 20°`, ~44° on a 24° ramp) instead of losing the ramp angle to a world cap. Depression
+  still can't reach the horizon on a climb (world floor `mount + min_pitch_deg`, ~+9° on 24°). Flat
+  ground: `mount_pitch()` is 0, both paths identical. The mortar sets `is_player_controlled = false`
+  while aiming, so its world angle routes through the subtract path regardless of the flag. Any "is
+  the gun on target?" check reads `world_pitch()`, never `rotation.x` — on a slope those differ and
+  a compare against the local angle never converges (three call sites in `tank_ai_controller.gd`,
+  plus `world_pitch_limits()` to clamp the ballistic solution). Normal-shell cap is **20°**; the
+  mortar raises it to 85° while aiming and restores it. Detail: `Tank_Prop_Hunt_Tank_Chassis.md` §4.
 - `CameraRig` (`SpringArm3D`) — on the **root** (must not rock with the hull). Player only;
   free-look orbit, `rotation.y = world_yaw − body.rotation.y` recomputed every physics frame so
   turning the hull never drags the camera. It **lifts as the aim rises**: `pivot_height` and
   `spring_length` interpolate by `smoothstep` over the up-pitch range so at the top of the aim the
   camera clears the turret roof and sits close behind; looking down is untouched. Camera
   `pitch_max_deg` 25° keeps a margin over the gun's 20°. GTA-style level-follow during a tumble
-  (`set_tumble_follow(true)`). Orientation lives entirely in `_world_yaw` / `_pitch`, which death
-  and respawn don't touch — so `reset_to_default()` is wired to `RespawnController.respawned`
-  (else the camera stays tilted after a fall+respawn).
+  (`set_tumble_follow(true)`). The rig's local `rotation` is written whole every frame as
+  `Vector3(_pitch, world_yaw − body.rotation.y, 0.0)` — **roll is structurally 0**; without the
+  explicit `.z = 0` a compensating roll left over from tumble-follow's direct `global_transform`
+  writes made the camera exit a tumble banked. Orientation lives entirely in `_world_yaw` /
+  `_pitch`, which death and respawn don't touch — so `reset_to_default()` is wired to
+  `RespawnController.respawned` (else the camera stays tilted after a fall+respawn).
 - root **collider** (`CollisionShape3D` on the root) — a `ConvexPolygonShape3D`, not a box: same
   `1.2 × 0.6 × 1.8` bounding size at `+0.3` y, but the bottom **nose and tail edges are chamfered**
   (0.24 × 0.28, ≈40°; the sides stay square — that's where the tracks are). Result: lips up to
