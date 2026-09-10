@@ -39,11 +39,6 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 20
 
-[node name="AchieverButton" type="Button" parent="VBoxContainer" unique_id=109292456]
-custom_minimum_size = Vector2(380, 56)
-layout_mode = 2
-text = "Уничтожить цель (TARGET_OBJECTIVE)"
-
 [node name="KillerButton" type="Button" parent="VBoxContainer" unique_id=1190121093]
 custom_minimum_size = Vector2(380, 56)
 layout_mode = 2

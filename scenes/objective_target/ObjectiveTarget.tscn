@@ -1,0 +1,66 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scenes/objective_target/objective_target.gd" id="1_objt"]
+[ext_resource type="Script" path="res://scenes/tank/health_component.gd" id="2_health"]
+[ext_resource type="PackedScene" path="res://scenes/turret/Turret.tscn" id="3_turret"]
+[ext_resource type="Script" path="res://scenes/main/spawn_zone.gd" id="4_zone"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_core"]
+resource_local_to_scene = true
+size = Vector3(2, 2, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_core"]
+resource_local_to_scene = true
+size = Vector3(2, 2, 2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_core"]
+resource_local_to_scene = true
+albedo_color = Color(0.25, 0.28, 0.35, 1)
+
+[node name="ObjectiveTarget" type="Node3D"]
+script = ExtResource("1_objt")
+
+[node name="Core" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Core"]
+shape = SubResource("BoxShape3D_core")
+
+[node name="Mesh" type="MeshInstance3D" parent="Core"]
+material_override = SubResource("StandardMaterial3D_core")
+mesh = SubResource("BoxMesh_core")
+
+[node name="HealthComponent" type="Node" parent="Core"]
+script = ExtResource("2_health")
+max_hits = 100
+free_on_destroy = false
+immune_team = 2
+
+[node name="Turret" parent="." instance=ExtResource("3_turret")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+team = 2
+
+[node name="NpcAlertZone" type="Node3D" parent="."]
+script = ExtResource("4_zone")
+radius = 11.0
+
+[node name="NpcPatrol1" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0, 0)
+script = ExtResource("4_zone")
+radius = 3.0
+
+[node name="NpcPatrol2" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7)
+script = ExtResource("4_zone")
+radius = 3.0
+
+[node name="NpcPatrol3" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, 0)
+script = ExtResource("4_zone")
+radius = 3.0
+
+[node name="NpcPatrol4" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -7)
+script = ExtResource("4_zone")
+radius = 3.0

@@ -9,14 +9,20 @@ var attack_kills: int = 0
 var defense_kills: int = 0
 
 ## Вызывается из корневого _ready() карты (см. map_scene.gd), ПОСЛЕ TeamSpawner.spawn_team().
+## NPC-танки (охрана objective-целей, третья сторона) в счёт команд не входят ни как жертвы, ни как
+## убийцы — счёт остаётся «команда против команды».
 func begin_match() -> void:
 	for tank in get_tree().get_nodes_in_group("tanks"):
+		if tank.has_method("is_npc") and tank.is_npc():
+			continue
 		var health: Node = tank.get_node_or_null("HealthComponent")
 		if health != null:
 			health.destroyed.connect(_on_tank_destroyed)
 
 func _on_tank_destroyed(killer: Node) -> void:
 	if killer == null or not killer.has_method("is_attacker"):
+		return
+	if killer.has_method("is_npc") and killer.is_npc():
 		return
 	if killer.is_attacker():
 		attack_kills += 1

@@ -264,7 +264,10 @@ func _roll_rarity() -> int:
 ## что уронить. `node` же — `ignore_body` для рейкаста опоры: его коллайдер в этот момент ЕЩЁ ЖИВ
 ## (queue_free() отрабатывает после сигнала destroyed), без исключения луч нашёл бы КРЫШУ куба и
 ## ящик завис бы на его высоте, физически неподбираемый.
-func spawn_node_drop(node: Node3D) -> void:
+## `extra_exclude` — ещё тела, которые луч должен пропустить: у objective-цели
+## (scenes/objective_target/) `node` — не само тело, а корень-префаб, тело цели и турель на её
+## крыше — отдельные коллайдеры, оба ещё живы в момент вызова.
+func spawn_node_drop(node: Node3D, extra_exclude: Array = []) -> void:
 	if _halted:
 		return
 	var dk: int = int(node.get("drop_kind"))
@@ -272,8 +275,10 @@ func spawn_node_drop(node: Node3D) -> void:
 		return
 	# Проецируем на проходимое место ДО спавна: место снесённого куба само по себе — навмеш-дыра,
 	# в которую бот не доедет (см. _reachable_drop_point).
+	var ignore: Array = [node]
+	ignore.append_array(extra_exclude)
 	var ground: Vector3 = _reachable_drop_point(
-			_ground_under(node.global_position, node), _NAV_FARM_MAX_XZ, _NAV_FARM_MAX_Y)
+			_ground_under(node.global_position, ignore), _NAV_FARM_MAX_XZ, _NAV_FARM_MAX_Y)
 	if dk == FarmDrop.LOOT:
 		if int(node.get("loot_value")) > 0:
 			_spawn_crate(ground, int(node.get("loot_value")), int(node.get("loot_rarity")), false)
@@ -344,13 +349,16 @@ func _reachable_drop_point(raw: Vector3, max_xz: float, max_y: float) -> Vector3
 
 ## Опора под точкой. Ничего не нашли (танк провалился ниже карты / куб висел над пустотой) —
 ## возвращаем саму точку: ящик хотя бы не исчезнет из игры бесследно.
-func _ground_under(p: Vector3, ignore_body: Node = null) -> Vector3:
+func _ground_under(p: Vector3, ignore_bodies: Array = []) -> Vector3:
 	var space: PhysicsDirectSpaceState3D = get_viewport().find_world_3d().direct_space_state
 	var origin: Vector3 = p + Vector3(0.0, _GROUND_PROBE_UP, 0.0)
 	var q := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * _GROUND_PROBE_DOWN)
 	q.collision_mask = 1
-	if ignore_body is CollisionObject3D:
-		q.exclude = [(ignore_body as CollisionObject3D).get_rid()]
+	var rids: Array[RID] = []
+	for b in ignore_bodies:
+		if is_instance_valid(b) and b is CollisionObject3D:
+			rids.append((b as CollisionObject3D).get_rid())
+	q.exclude = rids
 	var hit: Dictionary = space.intersect_ray(q)
 	return hit["position"] if not hit.is_empty() else p
 
@@ -384,6 +392,8 @@ func _physics_process(delta: float) -> void:
 		if hold == null:
 			continue
 		var team: int = int(tank.team)
+		if team < 0 or team >= _bases.size():
+			continue  # NPC-сторона (охрана objective-целей) — ни базы, ни банка
 		var base: Node3D = _bases[team]
 		var in_base: bool = base != null and _inside(tank, base)
 		# В какой из активных точек стоит танк (окно открыто). Точек в окне до двух — берём первую,

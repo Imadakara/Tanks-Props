@@ -25,13 +25,21 @@ func time_since_hit() -> float:
 ## своего get_tree() нет). "Противник" — любой танк is_attacker()==true, tank.visible-фильтр —
 ## тот же паттерн, что уже применён в _can_see()/tank_ai_controller.gd — труп, ждущий
 ## respawn (visible=false), не считается "противником в круге".
-func enemy_in_zone(alert_zone: Node3D, tree: SceneTree) -> bool:
+## friendly_team >= 0 — "противник" любой танк с ДРУГОЙ `team` (NPC-цель, scenes/objective_target/:
+## враги — обе команды). max_dy — допуск по высоте над/под центром круга: на многоуровневой карте
+## круг под столом не должен срабатывать от танка НА столе прямо над ним (INF — только XZ).
+func enemy_in_zone(alert_zone: Node3D, tree: SceneTree, friendly_team: int = -1, max_dy: float = INF) -> bool:
 	if alert_zone == null or not is_instance_valid(alert_zone):
 		return false
 	var radius: float = float(alert_zone.get("radius"))
 	var zone_pos: Vector3 = alert_zone.global_position
 	for tank in tree.get_nodes_in_group("tanks"):
-		if not is_instance_valid(tank) or not tank.is_attacker() or not tank.visible:
+		if not is_instance_valid(tank) or not tank.visible:
+			continue
+		var hostile: bool = tank.is_attacker() if friendly_team < 0 else int(tank.team) != friendly_team
+		if not hostile:
+			continue
+		if absf(tank.global_position.y - zone_pos.y) > max_dy:
 			continue
 		var dist: float = Vector2(tank.global_position.x - zone_pos.x, tank.global_position.z - zone_pos.z).length()
 		if dist <= radius:

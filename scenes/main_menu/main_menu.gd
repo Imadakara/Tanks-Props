@@ -4,7 +4,6 @@ extends Control
 ## MatchState.pending_map_path и открывается ЛОББИ (scenes/lobby/Lobby.tscn) — там игрок выбирает
 ## класс танка, и уже оттуда «В бой». Сама эта сцена никакой игровой логики не несёт.
 
-const _TARGET_OBJECTIVE_SCENE := "res://scenes/maps/TargetObjectiveMap.tscn"
 const _TEAM_ARENA_SCENE := "res://scenes/maps/TeamArenaMap.tscn"
 const _EXTRACTION_SCENE := "res://scenes/maps/KitchenMap.tscn"
 ## Полигон испытаний ходовой (scenes/maps/test_ground.gd) — не игровой режим и не карта: без
@@ -14,7 +13,6 @@ const _TEST_GROUND_SCENE := "res://scenes/maps/TestGroundMap.tscn"
 ## Экран выбора класса танка между меню и боем.
 const _LOBBY_SCENE := "res://scenes/lobby/Lobby.tscn"
 
-@onready var _target_objective_button: Button = $VBoxContainer/AchieverButton
 @onready var _team_arena_button: Button = $VBoxContainer/KillerButton
 @onready var _extraction_button: Button = $VBoxContainer/ExtractionButton
 @onready var _test_ground_button: Button = $VBoxContainer/TestGroundButton
@@ -30,7 +28,6 @@ const _LOBBY_SCENE := "res://scenes/lobby/Lobby.tscn"
 var _dynamic_obstacles_check: CheckBox
 
 func _ready() -> void:
-	_target_objective_button.pressed.connect(_go.bind(_TARGET_OBJECTIVE_SCENE))
 	_team_arena_button.pressed.connect(_go.bind(_TEAM_ARENA_SCENE))
 	_extraction_button.pressed.connect(_go.bind(_EXTRACTION_SCENE))
 	_test_ground_button.pressed.connect(_go.bind(_TEST_GROUND_SCENE))

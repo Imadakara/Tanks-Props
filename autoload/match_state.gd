@@ -6,7 +6,8 @@ extends Node
 ## - player_team — сторона игрока в этом раунде. Инвертируется кнопкой рестарта в HUD ТОЛЬКО в
 ##   режимах со сменой сторон (TARGET_OBJECTIVE); в TEAM_ARENA команды-цвета постоянны, не меняются.
 ## - match_mode — НАСТРОЙКА СЦЕНЫ: map_scene.gd читает @export_enum var match_mode со своего
-##   корня (значение в .tscn: TargetObjectiveMap=0, TeamArenaMap=1) и копирует сюда. HUD читает
+##   корня (значение в .tscn: TeamArenaMap=1, KitchenMap=2; у TARGET_OBJECTIVE=0 карты сейчас нет)
+##   и копирует сюда. HUD читает
 ##   его ЛЕНИВО (в _process), т.к. дочерние _ready() (в т.ч. HUD) раньше корневого.
 ##   Полное описание режимов — vault/Tank_Prop_Hunt_Game_Modes.md.
 ## - current_round_num — номер ИДУЩЕГО раунда (1..total_rounds). Инкрементируется РОВНО при старте

@@ -18,10 +18,12 @@ extends StaticBody3D
 ##
 ## @tool — куб корпуса/цвет синхронизируются в редакторе (как у `Obstacle`).
 
-enum Team { ATTACK, DEFENSE }
+## Значения совпадают с tank.gd Team: NPC (2) — третья сторона, враждебная обеим командам
+## (турель на крыше objective-цели, scenes/objective_target/).
+enum Team { ATTACK, DEFENSE, NPC }
 
-## Сторона турели. Турель стреляет по танкам ПРОТИВОПОЛОЖНОЙ команды; свои снаряды по своей
-## objective гасятся её `attackers_only` (турель обороны бьёт мимо цели без вреда).
+## Сторона турели. Турель стреляет по танкам ЛЮБОЙ чужой стороны (сравнение `team` на равенство,
+## turret_ai.gd); иммунитет своей цели к её снарядам — `HealthComponent.immune_team` цели.
 @export var team: Team = Team.DEFENSE:
 	set(value):
 		team = value
@@ -62,6 +64,9 @@ func _ready() -> void:
 func is_attacker() -> bool:
 	return team == Team.ATTACK
 
+func is_npc() -> bool:
+	return team == Team.NPC
+
 ## Куб корпуса → дочерние BoxShape3D/BoxMesh; локальный центр приподнят на полувысоту, чтобы
 ## origin узла лежал на нижней грани (инстанс ставится ровно на поверхность-опору).
 func _apply_body_size() -> void:
@@ -79,7 +84,12 @@ func _apply_body_size() -> void:
 func _apply_team_visuals() -> void:
 	if _team_material == null:
 		_team_material = StandardMaterial3D.new()
-	_team_material.albedo_color = GameConfig.team_defense_color if team == Team.DEFENSE else GameConfig.team_attack_color
+	# Не GameConfig.team_color(): скрипт @tool, а GameConfig — нет; в редакторе у не-tool автолоада
+	# доступны только экспорт-поля (плейсхолдер), вызов метода там упал бы.
+	match team:
+		Team.DEFENSE: _team_material.albedo_color = GameConfig.team_defense_color
+		Team.NPC: _team_material.albedo_color = GameConfig.team_npc_color
+		_: _team_material.albedo_color = GameConfig.team_attack_color
 	for path in ["BaseMesh", "TurretPivot/TurretMesh", "TurretPivot/Barrel/BarrelMesh"]:
 		var mesh: MeshInstance3D = get_node_or_null(path)
 		if mesh != null:

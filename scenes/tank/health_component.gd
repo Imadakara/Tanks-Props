@@ -26,6 +26,11 @@ signal shield_changed(seconds_left: float)
 ## не должна вредить цели (см. «Игровые режимы»/Destroy Target). Определяем атакующего через
 ## killer.is_attacker() — killer это корень танка-стрелка (см. weapon_controller.gd).
 @export var attackers_only: bool = false
+## Сторона, чьи попадания НЕ наносят урон (-1 — таких нет). Для NPC-сущностей objective-цели
+## (scenes/objective_target/): цель, турель на её крыше и танк-охранник выставляют сюда свою команду,
+## чтобы снаряды своих гасились без урона — как `attackers_only`, только по равенству `team`, а не
+## по «атакующий/нет». Проверяется по `killer.team` (корень стрелявшего: танк или турель).
+@export var immune_team: int = -1
 ## true (дефолт) — владелец удаляется из сцены при уничтожении (Objective: разрушенная цель должна
 ## пропасть с карты). false — на танках (см. Tank.tscn), респаун берёт на себя RespawnController:
 ## он подписан на destroyed и решает, что делать с телом сам, поэтому здесь освобождать узел нельзя.
@@ -88,6 +93,8 @@ func take_hit(killer: Node = null, damage: int = 1) -> void:
 		return
 	if attackers_only and (killer == null or not killer.has_method("is_attacker") or not killer.is_attacker()):
 		return  # снаряд обороны просто гасится о цель, урона нет — без сигнала damaged
+	if immune_team >= 0 and killer != null and "team" in killer and int(killer.team) == immune_team:
+		return  # свой снаряд (та же сторона) — без урона и без сигнала, как attackers_only
 	current_hits += damage
 	damaged.emit(current_hits, max_hits, killer)
 	if current_hits >= max_hits:

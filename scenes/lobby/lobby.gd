@@ -222,8 +222,6 @@ func _back_to_menu() -> void:
 ## Подзаголовок: какой бой ждёт после лобби (по пути карты — меню кладёт его в MatchState).
 func _map_title() -> String:
 	var path: String = MatchState.pending_map_path
-	if path.ends_with("TargetObjectiveMap.tscn"):
-		return "Уничтожить цель"
 	if path.ends_with("TeamArenaMap.tscn"):
 		return "Командный бой"
 	if path.ends_with("KitchenMap.tscn"):

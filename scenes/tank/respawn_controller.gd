@@ -49,6 +49,14 @@ const _FELL_BELOW_Y := -3.0
 ## делать ему нечего, раунд заморожен.
 var _halted: bool = false
 
+## Куда воскресать вместо зоны спавна своей команды. Выставляет objective-цель своему охраннику
+## (scenes/objective_target/objective_target.gd): NPC-танк возрождается в круге СВОЕЙ цели, у NPC
+## нет зоны спавна команды. null — обычный выбор по команде (_pick_spawn_zone).
+var spawn_zone_override: Node3D = null
+## false — этот танк больше не возрождается (сам танк живёт, пока жив). В отличие от halt() не
+## глушит проверку провала за карту. Цель охранника уничтожена — охранять нечего.
+var respawn_enabled: bool = true
+
 func _ready() -> void:
 	_respawn_timer.one_shot = true
 	_respawn_timer.wait_time = GameConfig.respawn_cooldown_sec
@@ -66,9 +74,13 @@ func _physics_process(_delta: float) -> void:
 	if _health.is_alive and _tank.global_position.y < _FELL_BELOW_Y:
 		_health.force_destroy()
 
+func disable_respawn() -> void:
+	respawn_enabled = false
+	_respawn_timer.stop()
+
 func _on_destroyed(_killer: Node) -> void:
 	_set_frozen(true)  # труп прячем/замораживаем всегда
-	if not _halted:
+	if not _halted and respawn_enabled:
 		_respawn_timer.start()
 
 func _on_respawn_timeout() -> void:
@@ -143,5 +155,7 @@ func time_until_respawn() -> float:
 ## TeamSpawner при старте матча. Рекурсивный find_child по всей сцене, не завязан на конкретную
 ## структуру дерева конкретной карты.
 func _pick_spawn_zone() -> Node3D:
+	if is_instance_valid(spawn_zone_override):
+		return spawn_zone_override
 	var zone_name: String = "AttackSpawnZone" if _tank.is_attacker() else "DefenseSpawnZone"
 	return get_tree().current_scene.find_child(zone_name, true, false)

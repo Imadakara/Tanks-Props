@@ -953,6 +953,23 @@ editor-placed, and they act as placement constraints for the dynamic pass.
   toggle, same default off), cast ground-level — a barrel-height ray from the turret's perch atop
   the objective sails over normal-height obstacles (`Tank_Prop_Hunt_Turrets.md` §4).
 
+### NPC objective targets — `scenes/objective_target/` (EXTRACTION)
+
+> `TargetObjectiveMap.tscn` + `roster_target_objective.json` were **deleted** (2026-09-10); the
+> TARGET_OBJECTIVE mode code stays, but no map uses it — mentions of that map below are historical.
+
+Third side `Team.NPC = 2` (`tank.gd` / `turret.gd`), hostile to both teams via plain `team`
+equality. `ObjectiveTarget.tscn` prefab: `Core` (HP pool, `HealthComponent.immune_team = 2`),
+NPC `Turret` on its roof, `NpcAlertZone`, `NpcPatrol1..4`; exports for turret / guard / zones /
+drop. `map_scene._spawn_objective_guards()` → `TeamSpawner.spawn_npc_guard()` spawns `NpcTank.tscn`
+(medium copy, infinite ammo, cargo 0) and `TankAIController.bind_npc_guard()` hands it route/circle/
+core (prefab acts as `_arena`). Respawns at a patrol point while the target lives; on destroy →
+`ExtractionManager.spawn_node_drop(self, [core, turret])` (fixed drop, default epic loot), guard
+`disable_respawn()` + `unbind_npc_guard()` (→ KILLER), prefab freed. Prefab internals must never be
+named `Objective` / `ObjectiveAlertZone` nor join `objective_health`. NPC skips economy
+(`_economy_enabled()`), ScoreManager, ExtractionManager bases. KitchenMap: two instances (under
+table, on `Oven` — lowered so its lip is 0.15). Full detail: `Tank_Prop_Hunt_Extraction_Mode.md` §4.3.
+
 ### Map inventory
 
 `run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, four buttons; each

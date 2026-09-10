@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" path="res://scenes/obstacles/Structure.tscn" id="10_struct"]
 [ext_resource type="PackedScene" path="res://scenes/obstacles/ToyRamp.tscn" id="11_ramp"]
 [ext_resource type="Environment" uid="uid://cmcelifda8lnj" path="res://scenes/maps/sky_environment.tres" id="12_env"]
+[ext_resource type="PackedScene" path="res://scenes/objective_target/ObjectiveTarget.tscn" id="13_objt"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_kitchen"]
 geometry_parsed_geometry_type = 1
@@ -123,7 +124,7 @@ size = Vector3(12, 8, 8)
 color = Color(0.25, 0.25, 0.28, 1)
 
 [node name="Oven" parent="NavigationRegion3D" unique_id=1270419035 instance=ExtResource("10_struct")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26.016144, 18.152882, -32.73027)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26.016144, 17.861649, -32.73027)
 size = Vector3(16, 1, 18)
 color = Color(0.25, 0.25, 0.28, 1)
 
@@ -379,6 +380,15 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.625, -22)
 
 [node name="Obstacle23" parent="NavigationRegion3D" unique_id=933975722 instance=ExtResource("9_obst")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51.91677, 0.625, -21.298872)
+
+[node name="ObjectiveTargetTable" parent="NavigationRegion3D" unique_id=1780001001 instance=ExtResource("13_objt")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -35.58426, 0, 27.841484)
+
+[node name="ObjectiveTargetOven" parent="NavigationRegion3D" unique_id=1780001002 instance=ExtResource("13_objt")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26.016144, 18.361649, -32.73027)
+alert_radius = 8.0
+patrol_radius = 5.0
+patrol_point_radius = 2.0
 
 [node name="AttackSpawnZone" type="Node3D" parent="." unique_id=1168132884]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -31.205853, 18, 23.716263)

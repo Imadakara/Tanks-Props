@@ -1,0 +1,29 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/tank/Tank.tscn" id="1_base"]
+
+[node name="NpcTank" instance=ExtResource("1_base")]
+team = 2
+
+[node name="AmmoComponent" parent="."]
+infinite = true
+
+[node name="HealthComponent" parent="."]
+immune_team = 2
+
+[node name="Chassis" parent="."]
+chassis_id = &"npc"
+display_name = "NPC-охранник"
+trait_text = "Охрана objective-цели: копия среднего, бесконечный боезапас, без трюма"
+size_scale = 1.0
+move_speed = 6.0
+max_hits = 3
+cargo_capacity = 0
+cargo_speed_penalty_enabled = true
+ammo_capacity = 10
+disguise_duration_sec = 20.0
+disguise_charges = 3
+cargo_blocks_disguise = true
+mobile_disguise = false
+disguised_speed_mult = 0.4
+spring_engine_delay_sec = 0.0

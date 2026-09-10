@@ -1,6 +1,6 @@
 extends Node
-## TeamSpawner — единый динамический спавнер ботов для ЛЮБОЙ карты (`TargetObjectiveMap.tscn`/
-## `TeamArenaMap.tscn`, обе — шаблоны игровых режимов, см. корневой CLAUDE.md "Map inventory").
+## TeamSpawner — единый динамический спавнер ботов для ЛЮБОЙ карты (`TeamArenaMap.tscn`/
+## `KitchenMap.tscn` — шаблоны игровых режимов, см. корневой CLAUDE.md "Map inventory").
 ## Каждая карта держит СВОЙ узел `TeamSpawner` с этим же скриптом, отличаясь только
 ## `@export var roster_config_path` — тот же паттерн, что уже используют `map_scene.gd`'s
 ## `@export_enum var match_mode`/`spawn_zone.gd`'s переиспользуемый скрипт на разных картах.
@@ -26,7 +26,7 @@ const BotConfigPath := "res://config/bot_tank_config.json"
 
 ## Ростер ботов этой карты — массив "отрядов" (см. `_load_roster()`/`_apply_squad_to_brain()`),
 ## один и тот же формат/загрузчик для любой карты, разное только САМО содержимое JSON-файла на
-## конкретном инстансе узла (`config/roster_target_objective.json`/`config/roster_team_arena.json`).
+## конкретном инстансе узла (`config/roster_team_arena.json`/`config/roster_kitchen.json`).
 ## Дефолт пуст намеренно — карта без явно заданного пути не должна молча спавнить чужой ростер.
 @export var roster_config_path: String = ""
 
@@ -70,8 +70,8 @@ func spawn_team() -> void:
 	_apply_tank_config(player, player_config)
 
 	# Состав читается из ростер-JSON (см. _load_roster()) — один и тот же путь для любой карты,
-	# только счёт отряда разный: TargetObjectiveMap.tscn генерирует полные команды по
-	# GameConfig.team_size, TeamArenaMap.tscn явно перечисляет 1-2 конкретных бота. "Минус один
+	# только счёт отряда разный: `count` 0/отсутствует — полная команда по GameConfig.team_size,
+	# иначе ровно столько (текущие ростеры явно перечисляют 1-2 конкретных бота). "Минус один
 	# слот на стороне игрока" — JSON-поле squad'а (reserve_for_player), не ветка кода.
 	# Счётчик по команде (не по отряду) — сквозной, чтобы имена не повторялись, даже если у одной
 	# команды несколько отрядов с разными ролями (сейчас так не бывает, но не завязываемся на это).
@@ -134,12 +134,27 @@ func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, 
 	if not ChassisCatalog.is_known(chassis_id):
 		push_warning("TeamSpawner: неизвестный класс '%s' в ростере — бот будет средним" % chassis_id)
 		chassis_id = ChassisCatalog.DEFAULT_ID
-	var bot: CharacterBody3D = ChassisCatalog.load_scene(chassis_id).instantiate()
 	# Дефолтное имя инстанса Tank.tscn при instantiate() — движковое "@CharacterBody3D@N" (root
 	# без явно заданного unique-имени в самой сцене) — нечитаемо в дебаг-виджете бота
 	# ("BOT BRAIN"-панель использует _body.name, см. tank_ai_controller.gd).
 	# Явное имя по команде+порядку — до add_child(), чтобы дебаг-узлы бота уже создавались под ним.
-	bot.name = "%sBot%d" % ["Attack" if team == 0 else "Defense", index]
+	var bot_name := "%sBot%d" % ["Attack" if team == 0 else "Defense", index]
+	_spawn_tank(ChassisCatalog.load_scene(chassis_id), team, bot_name, zone, config, squad)
+
+## Охранник objective-цели (scenes/objective_target/objective_target.gd): танк NPC-стороны из
+## префаба цели (`guard_scene`, по умолчанию NpcTank.tscn) у её круга. Та же процедура, что у бота
+## ростера (камера, профиль bot_tank_config, подписки уже живых ботов), но сцена/имя/зона — от цели,
+## а не из ростера. Зовёт map_scene.gd после spawn_team() — из корневого _ready(), где add_child()
+## на current_scene разрешён. Мозг уже enabled, но ещё не инициализирован (ленивая _initialize() —
+## на первом физ.тике), так что цель успевает передать ему свой маршрут/круг (bind_npc_guard).
+func spawn_npc_guard(scene: PackedScene, team: int, bot_name: String, zone: Node3D, squad: Dictionary) -> Node:
+	if _halted or scene == null:
+		return null
+	return _spawn_tank(scene, team, bot_name, zone, _load_json_config(BotConfigPath), squad)
+
+func _spawn_tank(scene: PackedScene, team: int, bot_name: String, zone: Node3D, config: Dictionary, squad: Dictionary) -> Node:
+	var bot: CharacterBody3D = scene.instantiate()
+	bot.name = bot_name
 	# CameraRig.is_active гасит Camera3D.current уже В СВОЁМ _ready() — тот срабатывает
 	# синхронно ВНУТРИ add_child() (нода уже в активном дереве), раньше следующей строки.
 	# Выставляем is_active=false ДО add_child(), пока бот ещё orphan (это safe — свойства
@@ -168,6 +183,7 @@ func _spawn_bot(team: int, zone: Node3D, config: Dictionary, squad: Dictionary, 
 	brain.enabled = true
 	_apply_tank_config(bot, config)
 	_notify_existing_bots_of_new_enemy(bot)
+	return bot
 
 ## [ДОБАВЛЕНО, по прямому запросу — регрессия "защитник перестал прятаться после килла и спада
 ## тревоги"] TankAIController подписывается на destroyed каждого ВРАГА, но ТОЛЬКО в момент своей

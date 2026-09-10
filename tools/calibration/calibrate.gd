@@ -25,12 +25,9 @@ extends RefCounted
 const _MODE_NAMES := ["TARGET_OBJECTIVE", "TEAM_ARENA", "EXTRACTION"]
 
 ## Per-map expectations. Keyed by scene basename (no dir, no extension).
+## Режим TARGET_OBJECTIVE (0) сейчас без карты — его шаблон TargetObjectiveMap удалён, логика режима
+## в коде осталась; карте этого режима понадобится своя запись здесь и своя per-map функция.
 const _MAP_EXPECT := {
-	"TargetObjectiveMap": {
-		"mode": 0, "total_rounds": 3, "round_sec": 180.0,
-		"objectives": 1, "turrets_min": 1,
-		"final_stage": false, "border": true,
-	},
 	"TeamArenaMap": {
 		"mode": 1, "total_rounds": 3, "round_sec": 180.0,
 		"objectives": 0, "turrets_min": 0,
@@ -38,7 +35,8 @@ const _MAP_EXPECT := {
 	},
 	"KitchenMap": {
 		"mode": 2, "total_rounds": 1, "round_sec": 640.0,  # 120 + 120*4 + 40 — момент закрытия 5-го (последнего) окна эвакуации
-		"objectives": 0, "turrets_min": 0,
+		"objectives": 0, "turrets_min": 2,  # две NPC objective-цели, у каждой турель на крыше
+		"npc_targets": 2,
 		"final_stage": false, "border": false,  # kitchen furniture is the boundary; .tscn sets map_border_enabled = false
 	},
 }
@@ -76,9 +74,10 @@ func execute(scene_tree: SceneTree) -> Variant:
 	var exp: Dictionary = _MAP_EXPECT[base]
 	_check_common(scene_tree, cs, exp)
 	match int(exp["mode"]):
-		0: _check_target_objective(scene_tree, cs)
 		1: _check_team_arena(scene_tree, cs)
 		2: _check_kitchen(scene_tree, cs)
+	if exp.has("npc_targets"):
+		_check_npc_targets(scene_tree, int(exp["npc_targets"]))
 	return _verdict(base, _MODE_NAMES[int(exp["mode"])])
 
 
@@ -179,20 +178,36 @@ func _check_common(st: SceneTree, cs: Node, exp: Dictionary) -> void:
 
 # ---- per-map ---------------------------------------------------------------
 
-func _check_target_objective(st: SceneTree, cs: Node) -> void:
-	var objs := st.get_nodes_in_group("objective_health")
-	_expect("exactly 1 objective", objs.size() == 1, "group 'objective_health' has %d" % objs.size())
+## NPC objective-цели (scenes/objective_target/): третья сторона, своя охрана, не протекает в
+## командную objective (группа "objective_health" пуста, счёт команд их не видит).
+func _check_npc_targets(st: SceneTree, expected: int) -> void:
 	var gc := st.root.get_node_or_null("GameConfig")
-	if objs.size() == 1 and gc != null:
-		var o = objs[0]
-		if "max_hits" in o:
-			_expect("objective max_hits == objective_hits_required",
-				int(o.max_hits) == int(gc.objective_hits_required),
-				"objective max_hits=%d, GameConfig.objective_hits_required=%d" % [int(o.max_hits), int(gc.objective_hits_required)])
-	var alert := _find_by_name(cs, "ObjectiveAlertZone")
-	_expect("ObjectiveAlertZone present", is_instance_valid(alert), "not found (should be a child of the objective)")
-	var turrets := st.get_nodes_in_group("turrets")
-	_expect("guard turret present", turrets.size() >= 1, "group 'turrets' is empty; expected the ObjectiveTurret")
+	var targets := st.get_nodes_in_group("objective_targets")
+	_expect("NPC objective targets == %d" % expected, targets.size() == expected, "got %d" % targets.size())
+	_expect("NPC targets not in 'objective_health'", st.get_nodes_in_group("objective_health").is_empty(),
+		"a team objective group is populated - team bots/HUD would treat the NPC target as theirs")
+	_expect("turrets >= NPC targets", st.get_nodes_in_group("turrets").size() >= expected,
+		"%d turret(s)" % st.get_nodes_in_group("turrets").size())
+	for t in targets:
+		var h: Node = t.get_node_or_null("Core/HealthComponent")
+		_expect("%s core HP pool" % t.name, h != null and gc != null and int(h.immune_team) == 2
+			and (int(t.core_max_hits) > 0 or int(h.max_hits) == int(gc.objective_hits_required)),
+			"core HealthComponent missing / immune_team != 2 / max_hits != objective_hits_required")
+		var tr: Node = t.get_node_or_null("Turret")
+		_expect("%s turret is NPC" % t.name, tr != null and int(tr.team) == 2, "turret missing or team != 2")
+		if not bool(t.guard_enabled):
+			continue
+		var g: Node = t._guard
+		_expect("%s guard spawned" % t.name, is_instance_valid(g), "no guard tank")
+		if not is_instance_valid(g):
+			continue
+		var ai: Node = g.get_node("TankAIController")
+		_expect("%s guard is NPC, bound to its target" % t.name,
+			int(g.team) == 2 and ai._npc_guard == t and ai._waypoints.size() == 4,
+			"team %d, bound %s, %d waypoint(s)" % [int(g.team), ai._npc_guard == t, ai._waypoints.size()])
+		_expect("%s guard: infinite ammo, no cargo" % t.name,
+			bool(g.get_node("AmmoComponent").infinite) and int(g.get_node("CargoHold").capacity) == 0,
+			"infinite=%s capacity=%d" % [g.get_node("AmmoComponent").infinite, int(g.get_node("CargoHold").capacity)])
 
 
 func _check_team_arena(st: SceneTree, cs: Node) -> void:

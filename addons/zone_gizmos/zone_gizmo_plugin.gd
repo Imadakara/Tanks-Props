@@ -24,7 +24,8 @@ extends EditorNode3DGizmoPlugin
 ## Цвет — тот же, что в рантайм-дебаге (spawn_zone.gd._draw_debug_circle()): Attack* — красный,
 ## Defense* — синий, голый Waypoint* (диамант защитника без командного префикса в имени) — ТОЖЕ
 ## синий (историческое соответствие: старая _build_waypoint_debug() трактовала любое имя без
-## "Attack" как оборону), MortarHide* — фиолетовый (зона ожидания маскировки), иначе — жёлтый
+## "Attack" как оборону), MortarHide* — фиолетовый (зона ожидания маскировки), Npc* — зелёный
+## (круги objective-цели NPC-стороны), иначе — жёлтый
 ## (истинно нейтральные ObjectiveAlertZone/AmmoDropZone), Objective — пурпурный.
 ##
 ## [ИСПРАВЛЕНО, по прямому запросу — "радиус должен пересчитываться под то что реально видно"]
@@ -52,6 +53,8 @@ const _C_OBJECTIVE := Color(0.95, 0.2, 0.95)
 ## Тот же фиолетовый, что spawn_zone.gd._draw_debug_circle() даёт зонам "MortarHide*" — зона
 ## ожидания маскировки (см. tank_ai_controller.gd, сценарий 1).
 const _C_HIDE := Color(0.6, 0.25, 0.85)
+## Зелёный NPC-стороны — круги objective-цели "Npc*" (scenes/objective_target/), как в spawn_zone.gd.
+const _C_NPC := Color(0.35, 0.75, 0.2)
 
 
 func _init() -> void:
@@ -62,6 +65,7 @@ func _init() -> void:
 	create_material("neutral", _C_NEUTRAL, false, true)
 	create_material("objective", _C_OBJECTIVE, false, true)
 	create_material("hide", _C_HIDE, false, true)
+	create_material("npc", _C_NPC, false, true)
 
 
 func _get_gizmo_name() -> String:
@@ -88,6 +92,8 @@ func _material_key(node: Node3D) -> String:
 			return "hide"
 		if n.begins_with("Waypoint"):
 			return "defense"  # голый "WaypointN" — исторически цвет обороны, см. spawn_zone.gd
+		if n.begins_with("Npc"):
+			return "npc"
 		return "neutral"
 	if n.contains("Waypoint"):
 		return "attack" if n.begins_with("Attack") else "defense"

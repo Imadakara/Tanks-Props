@@ -18,8 +18,8 @@ extends StaticBody3D
 ## себя неочевидно и путает запекатель (гайд §6.2). Размер — только `size` здесь.
 
 ## Габариты коробки. Применяются к дочернему `CollisionShape3D` (`BoxShape3D`) и `Mesh`
-## (`BoxMesh`) синхронно. Дефолт совпадает с прежними `Obstacle*` в `TargetObjectiveMap.tscn`
-## (и с `GameConfig.disguise_prop_size` — объект имитации маскировки).
+## (`BoxMesh`) синхронно. Дефолт — стандартный куб-укрытие (совпадает с
+## `GameConfig.disguise_prop_size` — объект имитации маскировки).
 @export var size: Vector3 = Vector3(2.0, 1.25, 2.0):
 	set(value):
 		size = value

@@ -7,6 +7,11 @@ extends Node
 signal ammo_changed(current: int, max: int)
 signal ammo_depleted()
 
+## Бесконечный боезапас: выстрел не расходует снаряд (has_ammo() всегда true, ammo_depleted не
+## шлётся). Для NPC-охранника objective-цели (NpcTank.tscn) — ему нельзя уезжать с поста за
+## патронами к зонам сброса.
+@export var infinite: bool = false
+
 var current_ammo: int
 var max_ammo: int
 
@@ -23,9 +28,11 @@ func set_capacity(value: int) -> void:
 	ammo_changed.emit(current_ammo, max_ammo)
 
 func has_ammo() -> bool:
-	return current_ammo > 0
+	return infinite or current_ammo > 0
 
 func consume() -> void:
+	if infinite:
+		return
 	if current_ammo <= 0:
 		return
 	current_ammo -= 1

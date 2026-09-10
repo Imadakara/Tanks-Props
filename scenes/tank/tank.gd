@@ -14,7 +14,11 @@ extends CharacterBody3D
 ## Уничтожение танка не удаляет узел — HealthComponent.free_on_destroy=false, респаун ведёт
 ## RespawnController (см. respawn_controller.gd).
 
-enum Team { ATTACK, DEFENSE }
+## NPC — третья сторона, враждебная обеим командам: танк-охранник objective-цели
+## (scenes/objective_target/, NpcTank.tscn). Все проверки «свой/чужой» в проекте — сравнение
+## `team` на равенство, поэтому NPC чужой для обеих команд без спец-кода; а `is_attacker()` у него
+## false — в логике «атака/оборона» он ведёт себя как ЗАЩИТНИК своей цели (ALERT/патруль).
+enum Team { ATTACK, DEFENSE, NPC }
 
 @export var team: Team = Team.ATTACK
 
@@ -46,6 +50,9 @@ func _ready() -> void:
 func is_attacker() -> bool:
 	return team == Team.ATTACK
 
+func is_npc() -> bool:
+	return team == Team.NPC
+
 ## Идентификатор и имя класса (для HUD, лобби, отладки). Без Chassis — средний.
 func chassis_id() -> StringName:
 	return _chassis.chassis_id if _chassis != null else &"medium"
@@ -70,7 +77,7 @@ const _DARK_PART_PREFIXES := ["Track", "Wheel", "Mortar"]
 func apply_team_visuals() -> void:
 	if _team_material == null:
 		_team_material = StandardMaterial3D.new()
-	_team_material.albedo_color = GameConfig.team_defense_color if team == Team.DEFENSE else GameConfig.team_attack_color
+	_team_material.albedo_color = GameConfig.team_color(team)
 	# Одного обхода `Hull` хватает на весь танк: башня со стволом — тоже его потомки
 	# (`Hull/Turret`, она кренится вместе с корпусом, см. hull_rig.gd).
 	var hull: Node = get_node_or_null("Hull")

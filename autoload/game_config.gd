@@ -12,7 +12,7 @@ extends Node
 ## Маскировка имитирует объект-препятствие карты (см. Tank_Prop_Hunt_Disguise.md). Выбор
 ## конкретного объекта позже уедет в мета-гейм — для MVP параметры объекта имитации фиксированы
 ## здесь, а не задаются узлом на карте. Дефолт = коричневая коробка `Obstacle*`
-## (scenes/maps/TargetObjectiveMap.tscn): размер и цвет совпадают с её BoxMesh/StandardMaterial3D.
+## (префаб scenes/obstacles/Obstacle.tscn): размер и цвет совпадают с его дефолтами `size`/`color`.
 @export var disguise_prop_size: Vector3 = Vector3(2.0, 1.25, 2.0)
 @export var disguise_prop_color: Color = Color(0.6, 0.35, 0.15)
 ## Правило сброса «объект имитации меньше танка хотя бы по одной оси»: маскировка спадает, когда
@@ -32,9 +32,20 @@ extends Node
 ## Цвет мешей танка (корпус + башня + ствол) по его команде — единственная точка настройки
 ## «подкраски танков цветом команды». Применяет tank.gd (apply_team_visuals()), вызывается
 ## сразу после присвоения tank.team (team_spawner.gd) и на респавне. ATTACK (team 0) = Красные,
-## DEFENSE (team 1) = Синие — те же названия, что в HUD режима TEAM_ARENA.
+## DEFENSE (team 1) = Синие — те же названия, что в HUD режима TEAM_ARENA. NPC (team 2) — третья
+## сторона, враждебная обеим (охрана objective-целей, scenes/objective_target/): танк-охранник и
+## турель на крыше цели.
 @export var team_attack_color: Color = Color(0.75, 0.2, 0.15)
 @export var team_defense_color: Color = Color(0.2, 0.4, 0.8)
+@export var team_npc_color: Color = Color(0.35, 0.55, 0.2)
+
+## Цвет стороны по её индексу (0 атака / 1 оборона / 2 NPC) — единственная точка выбора, её зовут
+## tank.gd и turret.gd. Неизвестный индекс — цвет атаки (как было до появления третьей стороны).
+func team_color(team: int) -> Color:
+	match team:
+		1: return team_defense_color
+		2: return team_npc_color
+	return team_attack_color
 
 ## Кулдаун на выстрел — общий дефолт для всех танков (игрок + боты). Каждый выстрел уводит
 ## TankStateMachine в RELOAD на это время.

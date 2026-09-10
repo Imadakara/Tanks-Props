@@ -1,11 +1,11 @@
 extends Node3D
-## MapScene — оркестрация одной игровой карты (`TargetObjectiveMap.tscn`/`TeamArenaMap.tscn`, обе —
-## шаблоны игровых режимов, см. корневой CLAUDE.md "Game modes"/"Map inventory"). Маленький явный
+## MapScene — оркестрация одной игровой карты (`TeamArenaMap.tscn`/`KitchenMap.tscn` — шаблоны
+## игровых режимов, см. корневой CLAUDE.md "Game modes"/"Map inventory"). Маленький явный
 ## orchestration-скрипт в корне сцены вместо разбрасывания правок по чужим `_ready()` — тот же
 ## паттерн, что и остальные общие оркестраторы проекта (`TeamSpawner`, `MatchManager`).
 ##
-## - Режим карты — `@export match_mode` на корне (задан в `.tscn`: `TargetObjectiveMap.tscn` =
-##   TARGET_OBJECTIVE, `TeamArenaMap.tscn` = TEAM_ARENA), НЕ детект по наличию узла `Objective`.
+## - Режим карты — `@export match_mode` на корне (задан в `.tscn`: `TeamArenaMap.tscn` =
+##   TEAM_ARENA, `KitchenMap.tscn` = EXTRACTION), НЕ детект по наличию узла `Objective`.
 ##   Это «настройка карты», не строка в HUD.
 ## - `_setup_match_context()` заводит из кода `ScoreManager` + узел `"MatchManager"` (см.
 ##   `scenes/main/match_manager.gd`) — полноценный постраундовый цикл. HUD находит
@@ -14,8 +14,8 @@ extends Node3D
 ##   `TeamSpawner` + все `RespawnController` и `force_destroy()` всем танкам (MVP-«заморозка поля»
 ##   на экран результата). Эти смерти не идут в счёт убийств (killer=null).
 ## - Финальная стадия (доп. время после основного таймера, если бой в тупике) — ОПЦИЯ КАРТЫ:
-##   `@export var final_stage_enabled`, задаётся в `.tscn`. По умолчанию вкл на `TeamArenaMap`,
-##   выкл на `TargetObjectiveMap` (там время вышло → сразу победа защиты). Условие/поведение —
+##   `@export var final_stage_enabled`, задаётся в `.tscn`. Вкл только на `TeamArenaMap`
+##   (в TARGET_OBJECTIVE время вышло — сразу победа защиты). Условие/поведение —
 ##   в `match_manager.gd`.
 ## - Кнопка "Objective On/OFF" — переключает `HealthComponent.invincible` на цели, текст отражает
 ##   состояние; появляется только там, где на карте вообще есть `Objective` (нет на
@@ -36,12 +36,12 @@ const ChassisCatalog := preload("res://scenes/tank/chassis_catalog.gd")
 const ExtractionManagerScript := preload("res://scenes/main/extraction_manager.gd")
 const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obstacle_placer.gd")
 
-## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TargetObjectiveMap.tscn` = 0,
-## `TeamArenaMap.tscn` = 1), не детектится по наличию узла Objective. Значения совпадают с
-## `MatchState.Mode` (0 = TARGET_OBJECTIVE, 1 = TEAM_ARENA).
-## Дефолт = -1 (sentinel, НЕ валидный режим) намеренно: и 0, и 1 тогда — НЕ-дефолтные значения,
+## Игровой режим карты — ЗАДАЁТСЯ В СЦЕНЕ (@export на корне: `TeamArenaMap.tscn` = 1,
+## `KitchenMap.tscn` = 2), не детектится по наличию узла Objective. Значения совпадают с
+## `MatchState.Mode` (0 = TARGET_OBJECTIVE, 1 = TEAM_ARENA, 2 = EXTRACTION).
+## Дефолт = -1 (sentinel, НЕ валидный режим) намеренно: все валидные значения тогда НЕ-дефолтные,
 ## и редактор Godot всегда сериализует их в .tscn. Дефолт 0 приводил к тому, что GUI-сейв карты
-## каждый раз вырезал строку `match_mode = 0` из TargetObjectiveMap.tscn (равно дефолту → не
+## каждый раз вырезал строку `match_mode = 0` из карты TARGET_OBJECTIVE (равно дефолту → не
 ## пишется), а пропавший `match_mode` молча читается как TARGET_OBJECTIVE — на карте, которой
 ## нужен TEAM_ARENA, это тихая поломка. Проверка на -1 — в _setup_match_context().
 @export_enum("TARGET_OBJECTIVE", "TEAM_ARENA", "EXTRACTION") var match_mode: int = -1
@@ -49,8 +49,8 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 ## Опция карты: наступает ли финальная стадия (доп. время + продолжающийся сброс ящиков), когда
 ## основное время раунда вышло, а у всех живых танков кончился боезапас. Условие/логику см.
 ## match_manager.gd. Дефолт false. В .tscn строка есть ТОЛЬКО у карт с true (TeamArenaMap) —
-## редактор Godot не пишет значения, равные дефолту; отсутствие строки в TargetObjectiveMap.tscn
-## это норма, не потеря (читается как false).
+## редактор Godot не пишет значения, равные дефолту; отсутствие строки у остальных карт — норма,
+## не потеря (читается как false).
 @export var final_stage_enabled: bool = false
 
 ## Опция карты: строить ли непроходимую красную границу по периметру пола (см. _build_map_borders).
@@ -61,8 +61,8 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 @export var map_border_enabled: bool = true
 
 ## Опция карты: печь ли навмеш ЗАНОВО при каждом старте сцены, вместо того чтобы хранить готовый
-## в .tscn. Дефолт false — обе «плоские» карты (TargetObjectiveMap/TeamArenaMap) держат запечённый
-## редактором навмеш в файле сцены, как и раньше, строки в их .tscn нет.
+## в .tscn. Дефолт false — плоская карта (TeamArenaMap) держит запечённый редактором навмеш в
+## файле сцены, строки в её .tscn нет.
 ## true имеет смысл на карте, геометрию которой активно двигают: ручная перепечка кнопкой
 ## «Bake NavigationMesh» в редакторе после КАЖДОЙ правки (см. Tank_Prop_Hunt_Obstacles_Navmesh_Guide.md)
 ## — главный тормоз итераций, а для многоуровневой карты правок в разы больше, чем для плоской.
@@ -142,6 +142,7 @@ func _ready() -> void:
 		_setup_bot_spawn_buttons()
 		_setup_ignore_player_toggle_button()
 	$TeamSpawner.spawn_team()
+	_spawn_objective_guards()
 	_setup_match_context()
 	# ObjectiveCamera смотрит на саму цель (не хардкод-точка): позиция берётся с узла Objective,
 	# если он на карте есть; иначе — центр поля (камера всё равно доступна только в debug, клавиша 2).
@@ -340,6 +341,16 @@ func _dynamic_layout_connected(nav: NavigationRegion3D, pairs: Array) -> bool:
 ## один и тот же общий оркестратор). Режим берётся из @export match_mode (задан в .tscn — «настройка
 ## карты»). Серию НЕ сбрасываем: она копится через reload_current_scene() между раундами; сброс —
 ## только из меню (main_menu.gd) и кнопкой «Новый матч» (hud.gd).
+## Охрана objective-целей NPC-стороны (scenes/objective_target/): каждая цель на карте (группа
+## "objective_targets") спавнит своего танка-охранника через TeamSpawner. Здесь, а не в _ready()
+## самой цели: add_child() на current_scene из _ready() узла сцены падает (Invariant 4). До
+## _setup_match_context() — чтобы охрана уже была в группе "tanks" к его сканам. Не зависит от
+## дебаг-галочки «спавнить ботов сразу»: охрана — часть карты, как турели.
+func _spawn_objective_guards() -> void:
+	for target in get_tree().get_nodes_in_group("objective_targets"):
+		if is_instance_valid(target) and target.has_method("spawn_guard"):
+			target.spawn_guard($TeamSpawner)
+
 func _setup_match_context() -> void:
 	# match_mode дефолт = -1 (см. @export выше). Если он всё ещё -1 — строку `match_mode` вырезали
 	# из .tscn (GUI-сейв при значении = старому дефолту 0) либо новая карта её не задала. Не молчим:

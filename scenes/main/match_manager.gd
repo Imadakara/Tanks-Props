@@ -22,7 +22,7 @@ extends Node
 ## по истечении раунд решается `_winner_by_kills()`. Триггерится РОВНО в момент истечения
 ## `RoundTimer` (не раньше, не по накоплению `ammo_depleted` в середине боя) и ТОЛЬКО если карта
 ## включила финальную стадию (`final_stage_enabled`, @export на map_scene.gd — по умолчанию вкл на
-## TeamArenaMap, выкл на TargetObjectiveMap).
+## TeamArenaMap, выкл на остальных).
 
 signal round_ended(winner: String)  # "attack" | "defense"
 signal final_stage_started()

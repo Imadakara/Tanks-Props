@@ -1,7 +1,7 @@
 @tool
 extends Node3D
 ## SpawnZone — круглая зона спавна команды, единый механизм на ЛЮБОЙ карте
-## (`TargetObjectiveMap.tscn`/`TeamArenaMap.tscn`).
+## (`TeamArenaMap.tscn`/`KitchenMap.tscn`).
 ##
 ## [ДОБАВЛЕНО, по прямому запросу — "радиус должен автоматом пересчитываться при изменении
 ## трансформа в редакторе, прежде всего скейла, а не расходиться с тем что видно"] `@tool` —
@@ -192,8 +192,7 @@ func _draw_debug_circle() -> void:
 		color = Color(0.2, 0.45, 0.9, 0.85)
 	# [ДОБАВЛЕНО, по прямому запросу — "зона ожидания маскировки должна быть видна в дебаг-режиме"]
 	# Свой цвет, не жёлтый общий "else" — иначе неотличима от соседних жёлтых кругов ammo-зон/
-	# ObjectiveAlertZone на одном экране (MortarHideZoneN стоят рядом с AmmoDropZone, см.
-	# TargetObjectiveMap.tscn).
+	# ObjectiveAlertZone на одном экране (MortarHideZoneN ставятся рядом с AmmoDropZone).
 	elif String(name).begins_with("MortarHide"):
 		color = Color(0.6, 0.25, 0.85, 0.85)
 	# [ДОБАВЛЕНО, по прямому запросу — регрессия "нет синих вейпоинтов защитников" после перевода
@@ -205,6 +204,10 @@ func _draw_debug_circle() -> void:
 	# те остаются жёлтыми.
 	elif String(name).begins_with("Waypoint"):
 		color = Color(0.2, 0.45, 0.9, 0.85)
+	# Круги NPC-стороны (objective-цель: NpcAlertZone, NpcPatrol1..4, scenes/objective_target/) —
+	# зелёные, цвет третьей стороны (GameConfig.team_npc_color).
+	elif String(name).begins_with("Npc"):
+		color = Color(0.35, 0.75, 0.2, 0.85)
 	else:
 		color = Color(0.9, 0.85, 0.15, 0.85)
 

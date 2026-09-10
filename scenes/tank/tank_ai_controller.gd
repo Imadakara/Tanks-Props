@@ -1,8 +1,9 @@
 extends Node
 ## TankAIController — единственный ИИ проекта. Живёт сиблингом на КАЖДОМ Tank.tscn (включая танк
-## игрока, дормантен там), развёртывается на любой карте/режиме — `TargetObjectiveMap.tscn`/
-## `TeamArenaMap.tscn` (обе — шаблоны игровых режимов, см. корневой CLAUDE.md "Map inventory"),
-## `team_spawner.gd` включает `enabled=true` при спавне. Ранее в проекте существовал отдельный,
+## игрока, дормантен там), развёртывается на любой карте/режиме — `TeamArenaMap.tscn`/
+## `KitchenMap.tscn` (шаблоны игровых режимов, см. корневой CLAUDE.md "Map inventory"),
+## `team_spawner.gd` включает `enabled=true` при спавне. Охрана NPC objective-целей — тот же мозг,
+## привязанный к своей цели через bind_npc_guard() (scenes/objective_target/). Ранее в проекте существовал отдельный,
 ## более простой продакшен-ИИ с тем же именем файла (включая свой Patrol/Disguise-цикл) — удалён
 ## целиком, не переиспользован (см. git log).
 ##
@@ -174,7 +175,7 @@ extends Node
 ## не тыкаться в него луч за лучом. Стандартный в индустрии (Unity/Unreal/сам Godot — не сторонний
 ## плагин) подход — ПРЕДИКТ маршрута заранее, потом только следование:
 ## - Статическая геометрия карты (Ground/Wall/Objective/ObstacleN/HazardZoneN) запечена ОДИН РАЗ
-##   в `NavigationRegion3D.navigation_mesh` (см. TargetObjectiveMap.tscn/TeamArenaMap.tscn) — A*
+##   в `NavigationRegion3D.navigation_mesh` (см. TeamArenaMap.tscn; KitchenMap печёт при старте) — A*
 ##   по этому навмешу гарантированно огибает всё известное, никаких проб лучами.
 ## - У бота — `NavigationAgent3D` (заводится в _ready(), ребёнок _body): `target_position` = точка
 ##   в круге текущего вейпоинта, `get_next_path_position()` каждый физ.кадр отдаёт СЛЕДУЮЩУЮ точку
@@ -759,8 +760,7 @@ const TankStateMachineScript := preload("res://scenes/tank/tank_state_machine.gd
 ## Текстовая панель "что сейчас в голове у бота" — роль/сложность/стейт/цель/объезд — в правом
 ## верхнем углу экрана (отдельный CanvasLayer поверх HUD, не часть его разметки).
 @export var show_brain_debug: bool = true
-## Несколько ботов с show_brain_debug на ОДНОЙ карте (по прямому запросу — второй ACHIEVER на
-## TargetObjectiveMap.tscn) иначе рисуют панель РОВНО в одном месте экрана, поверх друг друга,
+## Несколько ботов с show_brain_debug на ОДНОЙ карте иначе рисуют панель РОВНО в одном месте экрана, поверх друг друга,
 ## нечитаемо (нашли живьём на скриншоте с двумя ботами). debug_ui_slot сдвигает brain-панель
 ## этого конкретного бота вниз от верхнего края на debug_ui_slot× её высоту — 0 (дефолт) даёт
 ## СТАРОЕ положение, не трогает уже настроенного defense-бота; второй бот на карте — 1, третий — 2.
@@ -1061,6 +1061,13 @@ var _hunt_target_timer: float = 0.0
 ## прямоугольник: alert-зона круглая.
 var _alert_zone: Node3D = null
 var _arena: Node = null
+## Охранник objective-цели (NPC-сторона, scenes/objective_target/objective_target.gd): корень префаба
+## цели, которой он привязан через bind_npc_guard(). null — обычный бот, объекты цели ищутся по
+## карте глобально. У охранника всё «своё» передаёт цель: маршрут (4 точки вокруг неё), круг
+## тревоги, само тело цели, и `_arena` — сама цель (те же time_since_objective_hit() /
+## enemy_in_alert_zone(), что у корня карты), так что вся защитная логика ALERT/PATROL работает
+## без правок, а карт-глобальные поиски её не видят и не путают с «командной» objective.
+var _npc_guard: Node3D = null
 var _alert_target_pos: Vector3 = Vector3.ZERO
 var _has_alert_target: bool = false
 
@@ -1294,9 +1301,13 @@ func _initialize() -> void:
 	var _tumble_ctrl: Node = _body.get_node_or_null("TumbleController")
 	if _tumble_ctrl != null:
 		_tumble_ctrl.recovered.connect(_on_respawned)
-	_collect_waypoints()
+	# Охранник objective-цели получил маршрут/цель/круг от неё (bind_npc_guard) — глобальные поиски
+	# по карте их бы затёрли.
+	if _npc_guard == null:
+		_collect_waypoints()
 	_detect_hunt_area()
-	_find_objective()
+	if _npc_guard == null:
+		_find_objective()
 	# [ДОБАВЛЕНО, по прямому запросу — "ачиверы автоматически становятся киллерами, если карта
 	# имеет режим арены без заданного objective"] ACHIEVER целиком построен вокруг objective
 	# (патрулирует вокруг него/атакует его, см. заголовок файла) — на карте, где его физически нет
@@ -1307,7 +1318,8 @@ func _initialize() -> void:
 	# достаточен, не важно, из-за какого именно режима/настройки карты его нет).
 	if role == Role.ACHIEVER and _objective_node == null:
 		role = Role.KILLER
-	_find_alert_zone()
+	if _npc_guard == null:
+		_find_alert_zone()
 	_find_own_base_zone()
 	_cargo = _body.get_node_or_null("CargoHold")
 	# Ammo-стейты (AMMO_SEEK/RETRIEVE/WAIT, см. их doc-comment у enum State) — зоны сброса те же,
@@ -1335,7 +1347,7 @@ func _initialize() -> void:
 	# СИГНАЛ Objective/HealthComponent.damaged НАПРЯМУЮ, храня СВОЙ personal-таймер — теперь таймер
 	# живёт централизованно в map_scene.gd (корень сцены, никогда не замораживается на респавне),
 	# просто кэшируем ссылку на него, читаем через time_since_objective_hit() в _ensure_home_state().
-	_arena = get_tree().current_scene
+	_arena = _npc_guard if _npc_guard != null else get_tree().current_scene
 
 	# Первый ФИЗ.тик с enabled=true — раньше первого рендера, но не гарантированно: основная защита
 	# от вспышки смены камеры — `team_spawner.gd`, которое уже ставит `CameraRig.is_active=false`
@@ -1450,6 +1462,39 @@ func _find_objective() -> void:
 ## вместе с Objective — все дальнейшие проверки через is_instance_valid(), не == null.
 func _find_alert_zone() -> void:
 	_alert_zone = get_tree().current_scene.find_child("ObjectiveAlertZone", true, false)
+
+## Привязать бота охранником objective-цели (зовёт objective_target.gd сразу после спавна, до первого
+## физ.тика — ленивая _initialize() тогда пропускает глобальные поиски). Бот — ACHIEVER-защитник:
+## патруль по `waypoints` по кругу, ALERT в `alert_zone`, пока `core` жив и под обстрелом/в круге
+## враг (`objective_root` отвечает на time_since_objective_hit()/enemy_in_alert_zone()).
+func bind_npc_guard(objective_root: Node3D, waypoints: Array, alert_zone: Node3D, core: Node3D, core_health: Node) -> void:
+	_npc_guard = objective_root
+	_waypoints = waypoints.duplicate()
+	_waypoint_index = 0
+	_alert_zone = alert_zone
+	_objective_node = core
+	_objective_health = core_health
+	_arena = objective_root
+	role = Role.ACHIEVER
+	waypoints_one_way = false
+
+## Цель уничтожена — охранять нечего. Выживший охранник остаётся на карте обычным врагом обеих
+## команд: KILLER, охотится по всей зоне охоты карты. Зовёт цель ДО своего queue_free() — после
+## него ссылки на её узлы висячие.
+func unbind_npc_guard() -> void:
+	if _npc_guard == null:
+		return
+	_npc_guard = null
+	_waypoints.clear()
+	_alert_zone = null
+	_objective_node = null
+	_objective_health = null
+	_arena = null
+	role = Role.KILLER
+	_has_waypoint_target = false
+	_has_alert_target = false
+	if state == State.PATROL or state == State.ALERT:
+		state = State.IDLE
 
 func _physics_process(delta: float) -> void:
 	# [ИСПРАВЛЕНО] Сам гейт "дормантен, пока не enabled" — раньше упоминался только в
@@ -2137,7 +2182,7 @@ func _think() -> void:
 	# боезапаса»: везти ценность надо и безоружным, а бросать рейс ради патронов — значит потерять
 	# груз. В бой гружёный не ввязывается, только отстреливается снапфайром (концепт §5: гружёный —
 	# это медленная заметная мишень, его дело прорваться или бросить груз).
-	if _is_extraction_mode():
+	if _economy_enabled():
 		var mgr: Node = _extraction_manager()
 		# Реагируем на ОБЪЯВЛЕНИЕ точки, а не на открытие окна: точка объявляется заранее ровно затем,
 		# чтобы успеть выдвинуться (концепт §8). Ждать открытия — значит гарантированно не успеть:
@@ -2205,7 +2250,7 @@ func _think() -> void:
 	# [РЕЖИМ EXTRACTION] Вражеский носитель контейнера — приоритетная цель, выше любых
 	# мирных поручений ниже (тот же приоритет, что мортирщик в TARGET_OBJECTIVE). Работает для ОБЕИХ
 	# сторон: ролей «атака/оборона» в этом режиме нет, обе команды и добывают, и мешают.
-	if _is_extraction_mode() and _try_enter_priority_carrier_attack():
+	if _economy_enabled() and _try_enter_priority_carrier_attack():
 		return
 
 	# [ДОБАВЛЕНО — система модификаций] АТАКУЮЩИЙ с мортирой в слоте бьёт по objective и СТАРАЕТСЯ
@@ -2580,8 +2625,7 @@ func _nearest_ammo_drop_zone_area() -> Node3D:
 ## масштабируемая зона", затем "единый общий механизм подсасывания вейпоинтов каждого типа, а не
 ## поиск по имени под каждый случай"] Ближайшая к боту зона роли "MortarHideZone" (Godot group, см.
 ## spawn_zone.gd @export zone_role — тот же механизм, что и у обычных патрульных вейпоинтов,
-## _collect_waypoints()) — ручная разметка карты (см. TargetObjectiveMap.tscn, по одной рядом с
-## каждой AmmoDropZone, на диагонали между ними), тот же скрипт spawn_zone.gd, что у зон спавна/
+## _collect_waypoints()) — ручная разметка карты (по одной рядом с каждой AmmoDropZone), тот же скрипт spawn_zone.gd, что у зон спавна/
 ## сброса патронов: движимый transform + масштабируемый radius, готовый дебаг-круг (свой цвет —
 ## см. spawn_zone.gd._draw_debug_circle()), pick_spawn_position() даёт РАЗНУЮ точку внутри круга
 ## при каждом новом заходе в сценарий 1 (не одну и ту же координату каждый раз). null — на карте
@@ -2765,11 +2809,11 @@ func _ensure_home_state() -> void:
 	# ниже в этом режиме и так спят (карта без Objective, _alert_zone == null).
 	# [РЕЖИМ EXTRACTION] Порожний: сперва подобрать то, что уже лежит (чужая работа даром), и лишь
 	# потом фармить самому. НИЖЕ ammo-веток: безоружный добытчик бесполезен, сначала патроны.
-	elif _is_extraction_mode() and _cargo != null and not _cargo.is_full() and _nearest_free_loot() != null:
+	elif _economy_enabled() and _cargo != null and not _cargo.is_full() and _nearest_free_loot() != null:
 		desired = State.LOOT_SEEK
 	# Ничего не лежит — добываем сами: расстреливаем ближайший куб. Что в нём, бот не знает (узел
 	# неотличим от укрытия, концепт §6) — это ставка, и она тратит боезапас.
-	elif _is_extraction_mode() and _cargo != null and not _cargo.is_full() \
+	elif _economy_enabled() and _cargo != null and not _cargo.is_full() \
 			and _ammo.current_ammo > ammo_pickup_scan_threshold and _nearest_farm_node() != null:
 		desired = State.FARM_NODE
 	# [ИСПРАВЛЕНО, по прямому запросу — "измени условие выхода из ALERT — не если нет танков в
@@ -2822,7 +2866,8 @@ func _ensure_home_state() -> void:
 		desired = State.ATTACK_OBJECTIVE
 	# ЗАЩИТНИК к зонам не ездит: подбирает мортиру, только если красный ящик попал ему в поле
 	# зрения (_visible_mod_crate()). Ниже ALERT — под активной тревогой защита objective важнее.
-	elif not _body.is_attacker() and _mod.can_pick_up() and _visible_mod_crate() != null:
+	# NPC-охранник objective-цели с поста за ящиками не отлучается.
+	elif not _body.is_attacker() and not _body.is_npc() and _mod.can_pick_up() and _visible_mod_crate() != null:
 		desired = State.MOD_RETRIEVE
 	elif role == Role.ACHIEVER and _objective_mission_complete:
 		desired = State.IDLE  # objective уже уничтожен (waypoints_one_way) — см. _objective_mission_complete
@@ -2935,6 +2980,11 @@ func _ensure_home_state() -> void:
 func _is_extraction_mode() -> bool:
 	return MatchState.match_mode == MatchState.Mode.EXTRACTION
 
+## Экономический цикл (добыча, доставка, вывоз, охота на вражеского носителя) — только у команд.
+## NPC-охрана objective-целей в экономике не участвует: ни склада, ни трюма, свой пост.
+func _economy_enabled() -> bool:
+	return _is_extraction_mode() and not _body.is_npc()
+
 ## Трюм гружён. Единственный признак «везу ценность» — ни слот модификации, ни отдельные флаги.
 func _carrying_loot() -> bool:
 	return _cargo != null and _cargo.is_loaded()
@@ -2942,6 +2992,9 @@ func _carrying_loot() -> bool:
 ## Круг спавна своей команды = свой СКЛАД (и точка выгрузки, и место, откуда берут на вывоз). Тот
 ## же рекурсивный поиск по имени, что у respawn_controller.gd._pick_spawn_zone().
 func _find_own_base_zone() -> void:
+	if _body.is_npc():
+		_own_base_zone = null  # у NPC-стороны базы нет
+		return
 	var zone_name: String = "AttackSpawnZone" if _body.is_attacker() else "DefenseSpawnZone"
 	_own_base_zone = get_tree().current_scene.find_child(zone_name, true, false) as Node3D
 
@@ -3620,18 +3673,22 @@ func _is_target_alive(t: Node) -> bool:
 ## едет и целится, а не продолжает независимо прочёсывать круг). Ботов В БОЮ С ДРУГОЙ целью
 ## (ATTACK) не трогает — фильтр `state == State.ALERT` их не пропускает, ровно по формулировке
 ## запроса "только если сами при этом не находятся в бою или преследовании с другой целью".
+## Охранник objective-цели (`_npc_guard`) делится только в пределах СВОЕЙ цели: у NPC-стороны целей
+## несколько, и тревога у одной не должна сдёргивать охрану и турель другой через полкарты.
 func _notify_team_of_alert_target(target: Node) -> void:
 	for t in get_tree().get_nodes_in_group("tanks"):
 		if t == _body or not is_instance_valid(t) or t.team != _body.team:
 			continue
 		var brain: Node = t.get_node_or_null("TankAIController")
-		if brain != null and brain.enabled and brain.state == State.ALERT:
+		if brain != null and brain.enabled and brain.state == State.ALERT and brain._npc_guard == _npc_guard:
 			brain._enter_attack(target)
 	# [ДОБАВЛЕНО — шаринг цели по ALERT на союзные стационарные турели, см. scenes/turret/turret_ai.gd]
 	# Турель не «подключается к бою», а доворачивает башню на цель и берёт её, как только реально
 	# увидит (LOS/дальность/маскировка проверяются у неё). Группа "turrets" — регистрирует turret.gd.
 	for tr in get_tree().get_nodes_in_group("turrets"):
 		if not is_instance_valid(tr) or int(tr.team) != int(_body.team):
+			continue
+		if _npc_guard != null and not _npc_guard.is_ancestor_of(tr):
 			continue
 		var tai: Node = tr.get_node_or_null("TurretAI")
 		if tai != null:
@@ -4616,7 +4673,7 @@ func _scan_gap() -> float:
 
 ## [ИЗМЕНЕНО, по прямому запросу — "вейпоинты должны быть общей системой зон: движимых и
 ## масштабируемых, с единым визуалом"] Вейпоинты теперь — те же узлы на spawn_zone.gd, что и
-## spawn/ammo/alert/hide-зоны (см. TargetObjectiveMap.tscn/TeamArenaMap.tscn): pick_spawn_position()
+## spawn/ammo/alert/hide-зоны: pick_spawn_position()
 ## даёт случайную точку внутри РЕАЛЬНОГО radius ЭТОГО конкретного узла (не общий waypoint_radius на
 ## боте — теперь каждый вейпоинт можно двигать/масштабировать по отдельности прямо в редакторе) и
 ## сразу с раскастом на реальную землю под точкой (та же техника, что SpawnZone.pick_spawn_position()
