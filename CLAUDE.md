@@ -434,10 +434,12 @@ helper; missing/broken file is non-fatal — `push_warning` + code defaults):
 - `config/roster_*.json` — **who** (team / role / difficulty / count / waypoint routes), read by
   `team_spawner.gd`.
 - `config/extraction_kitchen.json` — **EXTRACTION drop balance** (per-map; path is
-  `@export_file extraction_config_path` on the map root). `farm_drop_weights`, `rarity_tiers`
-  (weight + raw range + ripen rate/cap + colour), `loot_node_count`. Read by
-  `ExtractionManager.setup()`; `LootCrate` gets tier meaning through `ExtractionManager.rarity_*()`
-  getters (no `GameConfig` rarity fields left).
+  `@export_file extraction_config_path` on the map root). `farm_drop_weights` (the literal
+  per-cube probability — `_allocate_loot_nodes()` rolls it on **every** cover cube; the `nothing`
+  weight is the density lever), `rarity_tiers` (weight + raw range + ripen rate/cap + colour). Read
+  by `ExtractionManager.setup()`; `LootCrate` gets tier meaning through `ExtractionManager.rarity_*()`
+  getters (no `GameConfig` rarity fields left). `TestGroundMap` key **L** runs a conformance test
+  (`test_ground.gd._loot_test_report()` — picker + real allocation vs config).
 - `config/pickups.json` — **pickup-bonus numbers** (global: `ammo`/`medkit`/`shield` → `color` +
   effect). Read by `GameConfig._ready()`; `Pickup` gets its via `GameConfig.pickup_kind(id)`.
 
@@ -563,12 +565,15 @@ the economy to prop hunt; `DisguiseController`, the HUD and the bot all read tha
 Loot hides inside ordinary `Obstacle` cubes: every cube carries a `HealthComponent` and is
 destructible, and the allocation is seeded (`MatchState.loot_seed`) — a loot cube is
 indistinguishable from an empty one and from a disguised tank, which is the point.
-`_allocate_loot_nodes()` rolls **two seeded picks** per cube (over `loot_node_count` cubes): first a
-**farm drop table** — `farm_drop_weights` `[loot, nothing, ammo, mortar, medkit, shield]`
-(`ExtractionManager.FarmDrop` / `obstacle.drop_kind`) — then, only on `LOOT`, the rarity tier. **All
-of it — farm weights, tier weights, tier meaning (raw range / ripen rate / cap / colour),
-`loot_node_count` — lives in `config/extraction_kitchen.json`** (per-map path via
-`@export_file extraction_config_path` on the map root; see "Autoloads and per-tank config"). A
+`_allocate_loot_nodes()` rolls **two seeded picks** on **every** cover cube (path-sorted so the
+seed maps 1:1 to cubes): first a **farm drop table** — `farm_drop_weights` `[loot, nothing, ammo,
+mortar, medkit, shield]` (`ExtractionManager.FarmDrop` / `obstacle.drop_kind`), the literal
+per-cube probability — then, only on `LOOT`, the rarity tier. (There used to be a `loot_node_count`
+cap that only rolled the first N cubes and left the rest `NOTHING` — it silently halved the real
+loot rate vs the config; removed, the `nothing` weight is the density lever now.) **Farm weights,
+tier weights and tier meaning (raw range / ripen rate / cap / colour) live in
+`config/extraction_kitchen.json`** (per-map path via `@export_file extraction_config_path` on the
+map root; see "Autoloads and per-tank config"). A
 non-loot roll drops the universal `Pickup` (ammo/medkit/shield — see "Pickups") or
 a `ModCrate` (mortar), placed straight on the ground. Nodes never respawn: the map is meant to run
 out of cover. The navmesh is **not** re-baked when a cube dies, so the cube's old footprint stays a

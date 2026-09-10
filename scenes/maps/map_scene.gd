@@ -79,8 +79,8 @@ const DynamicObstaclePlacerScript := preload("res://scenes/obstacles/dynamic_obs
 @export var dynamic_obstacles_supported: bool = true
 
 ## Настройка режима EXTRACTION (на других картах не используется): путь к JSON-файлу баланса
-## выпадения — farm_drop_weights (что выпадет: лут / ничего / патроны / мортира / аптечка / щит),
-## rarity_tiers (веса ярусов + диапазон ценности + дозревание + цвет), loot_node_count. Читает
+## выпадения — farm_drop_weights (вероятность на КАЖДЫЙ куб: лут / ничего / патроны / мортира /
+## аптечка / щит), rarity_tiers (веса ярусов + диапазон ценности + дозревание + цвет). Читает
 ## `ExtractionManager.setup()`. Формат/справочник — Tank_Prop_Hunt_Extraction_Mode.md §8. Одна
 ## карта = один файл; своя карта может указать свой (например config/extraction_rich.json).
 @export_file("*.json") var extraction_config_path: String = "res://config/extraction_kitchen.json"

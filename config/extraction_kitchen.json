@@ -1,6 +1,5 @@
 {
-  "_comment": "Баланс выпадения в режиме EXTRACTION. Путь задаётся @export extraction_config_path на корне карты (map_scene.gd); одна карта = один файл. Читает ExtractionManager.setup(). Справочник — Tank_Prop_Hunt_Extraction_Mode.md §8.",
-  "loot_node_count": 10,
+  "_comment": "Баланс выпадения в режиме EXTRACTION. Путь задаётся @export extraction_config_path на корне карты (map_scene.gd); одна карта = один файл. Читает ExtractionManager.setup(). Справочник — Tank_Prop_Hunt_Extraction_Mode.md §8. farm_drop_weights роллит КАЖДЫЙ куб-укрытие: это литеральная вероятность на куб, вес 'nothing' и регулирует, насколько карта пустая.",
   "farm_drop_weights": {
     "loot": 0.5,
     "nothing": 0.2,

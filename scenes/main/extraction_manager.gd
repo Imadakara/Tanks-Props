@@ -92,7 +92,6 @@ var _halted: bool = false
 var _farm_weights: PackedFloat32Array = PackedFloat32Array()
 var _rarity_weights: PackedFloat32Array = PackedFloat32Array()
 var _rarity: Array = []
-var _node_count: int = 10
 ## Танки, которым запрещена автовыгрузка, пока они не покинут круг своей базы. Иначе ящик, взятый
 ## со склада для вывоза, тем же кадром лёг бы обратно. Ключ — instance id танка.
 var _deposit_lock: Dictionary = {}
@@ -165,8 +164,6 @@ func _load_config(path: String) -> void:
 	if _rarity.is_empty():
 		push_warning("ExtractionManager: в конфиге нет rarity_tiers — лут будет пустым")
 
-	_node_count = int(data.get("loot_node_count", 10))
-
 
 # --- Смысл яруса редкости (для LootCrate, у которого своего доступа к конфигу нет) ------------
 
@@ -200,8 +197,16 @@ func rarity_color(i: int) -> Color:
 ## Лут раздаётся среди ОБЫЧНЫХ кубов-укрытий (группа "obstacles"), а не по особым узлам: ресурсный
 ## узел обязан быть неотличим от укрытия и от замаскированного танка (концепт §6) — иначе игрок
 ## приучится стрелять по помеченным кубам бесплатно и маскировка умрёт как явление.
-## Выбор детерминирован зерном `MatchState.loot_seed`: тот же приём, что у динамической расстановки
-## препятствий, и та же цель — один int от хоста даст всем пирам одинаковую карту добычи.
+##
+## КАЖДЫЙ куб роллит `farm_drop_weights` — веса из JSON и есть литеральная вероятность на куб
+## («ничего» — такой же исход таблицы, как лут/патроны/…, и он же регулирует, насколько карта
+## пустая). Прежде раздача обрезалась до `loot_node_count` кубов, остальные молча оставались
+## `NOTHING` — на карте с 21 кубом и `loot_node_count = 10` фактический P(лут) падал вдвое ниже
+## записанного в конфиге; лишний лимит убран.
+##
+## Порядок обхода — по `get_path()`: при одинаковом `MatchState.loot_seed` цепочка роллов `_rng`
+## ложится на кубы 1:1, раскладка байт-в-байт одинакова у всех пиров (задел под сеть). От порядка
+## РАЗРУШЕНИЯ кубов раскладка не зависит — узлы не респавнятся.
 func _allocate_loot_nodes() -> void:
 	var cubes: Array = []
 	for o in get_tree().get_nodes_in_group("obstacles"):
@@ -211,17 +216,9 @@ func _allocate_loot_nodes() -> void:
 	if cubes.is_empty():
 		push_warning("ExtractionManager: на карте нет кубов группы obstacles — добывать нечего")
 		return
-	# Тасуем СВОИМ rng: Array.shuffle() берёт глобальный и сломал бы детерминизм по зерну.
-	for i in range(cubes.size() - 1, 0, -1):
-		var j: int = _rng.randi_range(0, i)
-		var tmp = cubes[i]
-		cubes[i] = cubes[j]
-		cubes[j] = tmp
-	var count: int = mini(_node_count, cubes.size())
-	for i in range(count):
-		# На каждый узел, из того же зерна и в уже стасованном порядке: сперва ЧТО он даст
-		# (farm_drop_weights из JSON), и только если «лут» — ярус + сырая ценность. Раскладка
-		# детерминирована и не зависит от порядка разрушения кубов. Узлы не респавнятся.
+	for i in range(cubes.size()):
+		# На каждый узел: сперва ЧТО он даст (farm_drop_weights), и только если «лут» — ярус + сырая
+		# ценность.
 		var drop: int = _roll_farm_drop()
 		cubes[i].drop_kind = drop
 		if drop == FarmDrop.LOOT:

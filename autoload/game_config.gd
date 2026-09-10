@@ -77,8 +77,8 @@ extends Node
 
 ## --- Числа выпадения лута/бонусов вынесены в JSON:
 ##   config/extraction_kitchen.json (per-map, @export extraction_config_path на корне карты) —
-##     farm_drop_weights, rarity_tiers (веса + диапазон ценности + дозревание + цвет), loot_node_count.
-##     Читает ExtractionManager.setup(); LootCrate берёт смысл яруса через него.
+##     farm_drop_weights (вероятность на КАЖДЫЙ куб), rarity_tiers (веса + диапазон ценности +
+##     дозревание + цвет). Читает ExtractionManager.setup(); LootCrate берёт смысл яруса через него.
 ##   config/pickups.json (глобально) — цвет и эффект ammo/medkit/shield. Читает GameConfig._ready()
 ##     ниже; Pickup берёт своё через pickup_kind(id).
 

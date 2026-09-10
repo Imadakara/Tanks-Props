@@ -38,11 +38,27 @@ extends Node3D
 ##    можно катать многократно без урона.
 ##
 ## Клавиши: R — вернуть танк на старт, T — вкл/выкл наклон корпуса (сравнить «до/после»),
-## Y — вкл/выкл анимацию ходовой, F — вкл/выкл информационное табло.
+## Y — вкл/выкл анимацию ходовой, F — вкл/выкл информационное табло,
+## L — прогнать статистический тест выпадения лута (см. `_run_loot_test`).
 
 const StructureScene := preload("res://scenes/obstacles/Structure.tscn")
 const RampScene := preload("res://scenes/obstacles/ToyRamp.tscn")
 const TankScene := preload("res://scenes/tank/Tank.tscn")
+const ExtractionManagerScript := preload("res://scenes/main/extraction_manager.gd")
+
+## Тест выпадения лута (клавиша L). Полигон — не игровой режим, `ExtractionManager` здесь не
+## живёт; тест поднимает временный экземпляр, грузит боевой конфиг Кухни и проверяет ТРИ вещи:
+##  A. `_roll_farm_drop()` — частоты 6 исходов сходятся к нормированным `farm_drop_weights`;
+##  B. `_roll_rarity()` — частоты 4 ярусов сходятся к нормированным `rarity_tiers.weight`;
+##  C. `_allocate_loot_nodes()` на россыпи фейковых кубов — доля каждого исхода по кубам совпадает
+##     с конфигом (ловит перекос самой РАЗДАЧИ, а не только пикера — здесь и сидел баг с
+##     `loot_node_count`, обрезавшим раздачу и ронявшим фактический P(лут) вдвое).
+const LOOT_TEST_CONFIG := "res://config/extraction_kitchen.json"
+const LOOT_TEST_DRAWS := 200000      # розыгрышей на пикер (A/B); 3σ(p=0.5) ≈ 0.35 п.п.
+const LOOT_TEST_CUBES := 3000        # фейковых кубов для раздачи (C); 3σ(p=0.5) ≈ 2.7 п.п.
+const LOOT_TEST_TOL_PICKER := 1.0    # допуск отклонения, проц. пункты (A/B)
+const LOOT_TEST_TOL_ALLOC := 4.0     # допуск отклонения, проц. пункты (C)
+const LOOT_TEST_SEED := 20260910
 
 ## Половина стороны квадратного пола. Верх пола — ровно y = 0, как на боевых картах.
 const GROUND_HALF := 34.0
@@ -84,6 +100,7 @@ const COLOR_BORDER := Color(0.6, 0.15, 0.15)
 var _hull: Node3D
 var _movement: Node
 var _info_label: Label
+var _loot_test_label: Label
 var _dummy: CharacterBody3D
 
 func _ready() -> void:
@@ -96,6 +113,7 @@ func _ready() -> void:
 	_build_jump()
 	_build_overhang()
 	_build_info_panel()
+	_build_loot_test_panel()
 	_hull = _player.get_node("Hull")
 	_movement = _player.get_node("TankMovement")
 	_spawn_dummy_tank()
@@ -117,6 +135,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_hull.animate_running_gear = not _hull.animate_running_gear
 		KEY_F:
 			_info_label.visible = not _info_label.visible
+		KEY_L:
+			_run_loot_test()
 
 func _reset_player() -> void:
 	_player.global_position = START_POSITION
@@ -374,11 +394,126 @@ func _build_info_panel() -> void:
 	_info_label.add_theme_constant_override("outline_size", 6)
 	layer.add_child(_info_label)
 
+func _build_loot_test_panel() -> void:
+	_loot_test_label = Label.new()
+	_loot_test_label.name = "LootTestLabel"
+	_loot_test_label.position = Vector2(560.0, 16.0)
+	_loot_test_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	_loot_test_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	_loot_test_label.add_theme_constant_override("outline_size", 6)
+	_loot_test_label.add_theme_font_size_override("font_size", 13)
+	_loot_test_label.visible = false
+	get_node("InfoLayer").add_child(_loot_test_label)
+
+## Клавиша L — статистический тест выпадения лута (см. doc-комментарий у LOOT_TEST_* в шапке).
+## Асинхронно: сперва рисуем «считаю…», через кадр — сам отчёт (иначе долгий синхронный прогон
+## подвесил бы кадр без обратной связи).
+func _run_loot_test() -> void:
+	_loot_test_label.visible = true
+	_loot_test_label.text = "ТЕСТ ВЫПАДЕНИЯ ЛУТА — считаю…"
+	await get_tree().process_frame
+	_loot_test_label.text = _loot_test_report()
+	print(_loot_test_label.text)
+
+func _loot_test_report() -> String:
+	var em: Node = ExtractionManagerScript.new()
+	em.set_physics_process(false)
+	em._load_config(LOOT_TEST_CONFIG)
+
+	var fw: PackedFloat32Array = em._farm_weights
+	var fsum: float = 0.0
+	for x in fw:
+		fsum += x
+	var rw: PackedFloat32Array = em._rarity_weights
+	var rsum: float = 0.0
+	for x in rw:
+		rsum += x
+	var farm_names: PackedStringArray = ["Лут", "Ничего", "Патроны", "Мортира", "Аптечка", "Щит"]
+
+	# --- A: пикер типа выпадения ---
+	em._rng.seed = LOOT_TEST_SEED
+	var farm_obs: PackedInt32Array = PackedInt32Array()
+	farm_obs.resize(6)
+	for i in LOOT_TEST_DRAWS:
+		var k: int = em._roll_farm_drop()
+		farm_obs[k] = farm_obs[k] + 1
+
+	# --- B: пикер яруса ---
+	em._rng.seed = LOOT_TEST_SEED + 1
+	var rar_obs: PackedInt32Array = PackedInt32Array()
+	rar_obs.resize(rw.size())
+	for i in LOOT_TEST_DRAWS:
+		var k2: int = em._roll_rarity()
+		rar_obs[k2] = rar_obs[k2] + 1
+
+	# --- C: реальная раздача _allocate_loot_nodes по россыпи фейковых кубов ---
+	var stub := GDScript.new()
+	stub.source_code = "extends Node3D\nvar loot_value: int = 0\nvar loot_rarity: int = 0\nvar drop_kind: int = 1\n"
+	stub.reload()
+	var stubs: Array = []
+	for i in LOOT_TEST_CUBES:
+		var c := Node3D.new()
+		c.set_script(stub)
+		c.name = "LootTestCube%05d" % i
+		c.add_to_group("obstacles")
+		add_child(c)
+		stubs.append(c)
+	add_child(em)
+	em._rng.seed = LOOT_TEST_SEED + 2
+	em._allocate_loot_nodes()
+	var alloc_obs: PackedInt32Array = PackedInt32Array()
+	alloc_obs.resize(6)
+	for c in stubs:
+		var k3: int = int(c.drop_kind)
+		if k3 >= 0 and k3 < 6:
+			alloc_obs[k3] = alloc_obs[k3] + 1
+	for c in stubs:
+		c.remove_from_group("obstacles")
+		c.queue_free()
+	em.queue_free()
+
+	# --- отчёт ---
+	var out: PackedStringArray = PackedStringArray()
+	out.append("=== ТЕСТ ВЫПАДЕНИЯ ЛУТА  (%s) ===" % LOOT_TEST_CONFIG.get_file())
+	out.append("")
+	var a_ok: bool = _loot_test_section(out, "A. Пикер типа  (farm_drop_weights, N=%d)" % LOOT_TEST_DRAWS,
+			farm_names, fw, fsum, farm_obs, LOOT_TEST_DRAWS, LOOT_TEST_TOL_PICKER)
+	out.append("")
+	var rar_names: PackedStringArray = PackedStringArray()
+	for i in rw.size():
+		rar_names.append(String(em.rarity_name(i)) if em.has_method("rarity_name") else str(i))
+	var b_ok: bool = _loot_test_section(out, "B. Пикер яруса  (rarity_tiers.weight, N=%d)" % LOOT_TEST_DRAWS,
+			rar_names, rw, rsum, rar_obs, LOOT_TEST_DRAWS, LOOT_TEST_TOL_PICKER)
+	out.append("")
+	var c_ok: bool = _loot_test_section(out, "C. Раздача _allocate_loot_nodes  (%d кубов)" % LOOT_TEST_CUBES,
+			farm_names, fw, fsum, alloc_obs, LOOT_TEST_CUBES, LOOT_TEST_TOL_ALLOC)
+	out.append("")
+	out.append("ИТОГ: A %s | B %s | C %s" % [
+		"OK" if a_ok else "ПРОВАЛ", "OK" if b_ok else "ПРОВАЛ", "OK" if c_ok else "ПРОВАЛ"])
+	return "\n".join(out)
+
+## Одна секция отчёта: строка на каждый исход (конфиг % / факт % / Δ п.п. / метка). Дописывает в
+## `out`, возвращает true, если ВСЕ отклонения в пределах `tol_pp`.
+func _loot_test_section(out: PackedStringArray, title: String, names: PackedStringArray,
+		weights: PackedFloat32Array, wsum: float, obs: PackedInt32Array, n: int, tol_pp: float) -> bool:
+	out.append(title)
+	out.append("  %-9s  конфиг    факт      Δ" % "исход")
+	var all_ok: bool = true
+	for i in names.size():
+		var cfg_pct: float = (weights[i] / wsum) * 100.0 if wsum > 0.0 else 0.0
+		var obs_pct: float = (float(obs[i]) / float(n)) * 100.0 if n > 0 else 0.0
+		var d: float = obs_pct - cfg_pct
+		var bad: bool = absf(d) > tol_pp
+		if bad:
+			all_ok = false
+		out.append("  %-9s  %6.2f%%  %6.2f%%  %+6.2f  %s" % [names[i], cfg_pct, obs_pct, d, "<< МИМО" if bad else ""])
+	return all_ok
+
 func _info_text() -> String:
 	var forward: Vector3 = -_player.global_transform.basis.z
 	var speed: float = _player.velocity.dot(forward)
 	var lines := [
-		"ПОЛИГОН ХОДОВОЙ — R: на старт | T: наклон корпуса | Y: анимация ходовой | F: табло",
+		"ПОЛИГОН — R: на старт | T: наклон | Y: анимация ходовой | F: табло | L: тест выпадения лута",
 		"Скорость: %+.2f м/с   На земле: %s" % [speed, "да" if _player.is_on_floor() else "нет"],
 		"Корпус (визуал): тангаж %+.1f°  крен %+.1f°" % [rad_to_deg(_hull.rotation.x), rad_to_deg(_hull.rotation.z)],
 		"Опора (лучи):    тангаж %+.1f°  крен %+.1f°  просадка %+.2f" % [
