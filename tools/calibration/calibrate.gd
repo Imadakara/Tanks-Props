@@ -259,6 +259,34 @@ func _check_kitchen(st: SceneTree, cs: Node) -> void:
 			"every cube holds something - the farming gamble is gone")
 	_expect("extraction points exist", st.get_nodes_in_group("ExtractionPoint").size() > 0,
 		"no zone_role 'ExtractionPoint' markers - evacuation impossible")
+
+	# Две точки выхода на окно: одна ближе к базе каждой команды (никогда две «свои» для одной).
+	# Вывоз к чужой точке — ×GameConfig.extraction_far_point_multiplier.
+	if em != null and em.has_method("_pick_active_points") and st.get_nodes_in_group("ExtractionPoint").size() >= 2:
+		em._pick_active_points()
+		var aps: Array = em._active_points
+		_expect("announce picks two evac points on KitchenMap", aps.size() == 2,
+			"got %d (expected one near each base)" % aps.size())
+		if aps.size() == 2:
+			var t0: int = int(em._active_near_team.get((aps[0] as Node3D).get_instance_id(), -1))
+			var t1: int = int(em._active_near_team.get((aps[1] as Node3D).get_instance_id(), -1))
+			_expect("evac points sit on opposite sides", (t0 == 0 and t1 == 1) or (t0 == 1 and t1 == 0),
+				"near-team tags: %d, %d" % [t0, t1])
+			var far_for0: Node3D = aps[0] if t0 == 1 else aps[1]   # точка НЕ у базы команды 0
+			var near_for0: Node3D = aps[0] if t0 == 0 else aps[1]
+			var mfar: float = float(em._bank_multiplier(far_for0, 0))
+			var mnear: float = float(em._bank_multiplier(near_for0, 0))
+			_expect("far point scores x extraction_far_point_multiplier",
+				is_equal_approx(mfar, float(gc.extraction_far_point_multiplier)),
+				"got x%.2f, config x%.2f" % [mfar, float(gc.extraction_far_point_multiplier)])
+			_expect("own near point scores x1", is_equal_approx(mnear, 1.0), "got x%.2f" % mnear)
+		# оставленное состояние безвредно (читается только при window_state == OPEN), но приберём
+		em._active_points.clear()
+		em._active_near_team.clear()
+	if em != null:
+		var em_src2 := FileAccess.get_file_as_string("res://scenes/main/extraction_manager.gd")
+		_expect("_bank applies the point multiplier", em_src2.find("_bank_multiplier(") != -1,
+			"_physics_process must pass _bank_multiplier() into _bank()")
 	# Выгрузка/банк — только у стоящего/едущего танка. Гружёный танк, проваливающийся сквозь объём
 	# зоны, раньше выгружал лут «в воздухе», и на fall-смерти добыча появлялась на складе вместо
 	# места гибели. Нужны ВСЕ ТРИ флага, каждый ловит своё: is_on_floor() — ровный свободный полёт

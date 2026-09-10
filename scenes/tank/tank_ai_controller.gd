@@ -3059,6 +3059,11 @@ func _extraction_run_destination() -> Node3D:
 	if mgr == null:
 		return null
 	if _carrying_loot():
+		# В окне открыты ДВЕ точки (одна ближе к своей базе, другая — к чужой, за ×1.5). Бот везёт в
+		# БЛИЖАЙШУЮ к себе — надёжный вывоз важнее бонуса; риск/награду за дальнюю точку взвешивает
+		# только игрок.
+		if mgr.has_method("nearest_active_point"):
+			return mgr.nearest_active_point(_body.global_position) as Node3D
 		return mgr.active_point as Node3D
 	return _own_base_zone
 

@@ -8,8 +8,8 @@ extends Node
 ##
 ## Что он делает и, главное, чего НЕ делает:
 ##  - раздаёт добычу по обычным кубам-укрытиям (детерминированно, по зерну);
-##  - принимает выгрузку на склад и банкует в открытом окне эвакуации;
-##  - ведёт расписание окон и выбирает точку выхода;
+##  - принимает выгрузку на склад и банкует в открытом окне эвакуации (вывоз к чужой базе — ×1.5);
+##  - ведёт расписание окон и выбирает две точки выхода (по одной ближе к базе каждой команды);
 ##  - рассыпает трюм погибшего.
 ## Он НЕ хранит склад списком и НЕ реализует отдельную «механику рейда»: склад — это физически
 ## лежащие в круге базы `LootCrate`, а рейд — обычный подбор ящика вражеским танком. См.
@@ -76,10 +76,16 @@ enum WindowState { CLOSED, ANNOUNCED, OPEN }
 
 var banked: Array[int] = [0, 0]  # вывезено, по командам 0/1 — единственный счёт победы
 var window_state: int = WindowState.CLOSED
+## ПЕРВАЯ из активных точек — для внешних null-проверок «окно активно» (бот, HUD). Полный список —
+## `_active_points` (в окне их ДВЕ: по одной ближе к базе каждой команды).
 var active_point: Node3D = null
 
 var _bases: Array = [null, null]  # SpawnZone каждой команды = её склад
 var _points: Array = []  # кандидаты на точку выхода
+## Активные точки текущего окна (1–2 шт). `_active_near_team`: instance_id точки → команда, к чьей
+## базе точка ближе (0/1); -1 — нейтральная (вырожденный случай: одна общая точка).
+var _active_points: Array[Node3D] = []
+var _active_near_team: Dictionary = {}
 var _elapsed: float = 0.0
 var _next_window_index: int = 0
 var _window_open_at: float = 0.0
@@ -96,7 +102,7 @@ var _rarity: Array = []
 ## со склада для вывоза, тем же кадром лёг бы обратно. Ключ — instance id танка.
 var _deposit_lock: Dictionary = {}
 var _park_cursor: int = 0
-var _beacon: MeshInstance3D = null
+var _beacons: Array[MeshInstance3D] = []  # столб над каждой активной точкой
 
 
 func setup() -> void:
@@ -119,7 +125,7 @@ func setup() -> void:
 func halt() -> void:
 	_halted = true
 	set_physics_process(false)
-	_clear_beacon()
+	_clear_beacons()
 
 
 # --- Конфиг баланса (config/extraction_*.json) ------------------------------------------------
@@ -380,8 +386,15 @@ func _physics_process(delta: float) -> void:
 		var team: int = int(tank.team)
 		var base: Node3D = _bases[team]
 		var in_base: bool = base != null and _inside(tank, base)
-		var window_here: bool = window_state == WindowState.OPEN and active_point != null \
-				and _inside(tank, active_point)
+		# В какой из активных точек стоит танк (окно открыто). Точек в окне до двух — берём первую,
+		# в чей круг он попал.
+		var here_point: Node3D = null
+		if window_state == WindowState.OPEN:
+			for p in _active_points:
+				if is_instance_valid(p) and _inside(tank, p):
+					here_point = p
+					break
+		var window_here: bool = here_point != null
 		var key: int = tank.get_instance_id()
 		if not in_base:
 			_deposit_lock.erase(key)  # покинул базу — автовыгрузка снова разрешена
@@ -415,7 +428,7 @@ func _physics_process(delta: float) -> void:
 		# Банк ВЫШЕ выгрузки: если точка выхода окажется рядом с базой, вывоз должен побеждать —
 		# он окончателен, а склад лишь промежуточен.
 		if window_here and hold.is_loaded():
-			_bank(hold, team)
+			_bank(hold, team, _bank_multiplier(here_point, team))
 			continue
 		if in_base and hold.is_loaded() and not _deposit_lock.has(key):
 			_deposit(hold, team, base)
@@ -435,14 +448,28 @@ func _deposit(hold: Node, team: int, base: Node3D) -> void:
 		crate.set_stored(_park_slot(base), team)
 
 
-func _bank(hold: Node, team: int) -> void:
+## Вывоз: весь трюм в счёт команды. `mult` — множитель за точку (см. `_bank_multiplier`): вывоз в
+## точку у чужой базы даёт ×`GameConfig.extraction_far_point_multiplier`, в свою ближнюю — ×1.
+func _bank(hold: Node, team: int, mult: float = 1.0) -> void:
 	var gained: int = 0
 	for lot in hold.take_all():
 		gained += int(lot["value"])
 	if gained <= 0:
 		return
-	banked[team] += gained
-	loot_banked.emit(team, gained)
+	var scored: int = int(round(float(gained) * mult))
+	banked[team] += scored
+	loot_banked.emit(team, scored)
+
+
+## Множитель очков за вывоз в ЭТУ точку для ЭТОЙ команды. Точка ближе к базе врага, а не к своей
+## (`_active_near_team[point] != team`) → ×`GameConfig.extraction_far_point_multiplier` (награда за
+## то, что везли дальше, через территорию врага). Своя ближняя точка или нейтральная (вырожденный
+## случай, одна точка на всех) → ×1.
+func _bank_multiplier(point: Node3D, team: int) -> float:
+	if point == null:
+		return 1.0
+	var near_team: int = int(_active_near_team.get(point.get_instance_id(), -1))
+	return GameConfig.extraction_far_point_multiplier if near_team >= 0 and near_team != team else 1.0
 
 
 ## Накоплено на складе команды — считается по РЕАЛЬНО лежащим ящикам, отдельного счётчика нет:
@@ -508,28 +535,73 @@ func _tick_window() -> void:
 		WindowState.ANNOUNCED:
 			if _elapsed >= _window_open_at:
 				window_state = WindowState.OPEN
-				_update_beacon()
+				_update_beacons()
 				window_opened.emit(active_point)
 		WindowState.OPEN:
 			if _elapsed >= _window_close_at:
 				window_state = WindowState.CLOSED
 				active_point = null
-				_clear_beacon()
+				_active_points = []
+				_active_near_team = {}
+				_clear_beacons()
 				_next_window_index += 1
 				_schedule_next_window()
 				window_closed.emit()
 
 
-## Точка объявляется заранее, но заранее НЕ известна: выбирается из кандидатов тем же зерном.
-## Предсказуемая география породила бы кемп у одной точки (концепт §8). Точка ОДНА и общая для
-## обеих команд — разные выходы превратили бы матч в два параллельных без контакта.
+## Точки объявляются заранее, но заранее НЕ известны: выбираются из кандидатов тем же зерном.
+## Предсказуемая география породила бы кемп у одной точки (концепт §8).
 func _announce() -> void:
 	if _points.is_empty():
 		return
-	active_point = _points[_rng.randi_range(0, _points.size() - 1)] as Node3D
+	_pick_active_points()
+	if _active_points.is_empty():
+		return
+	active_point = _active_points[0]
 	window_state = WindowState.ANNOUNCED
-	_update_beacon()
+	_update_beacons()
 	window_announced.emit(active_point, _window_open_at - _elapsed)
+
+
+## Две точки на окно: одна ближе к базе команды 0, другая — к базе команды 1. НИКОГДА две «свои»
+## для одной команды — обе стороны должны иметь короткий и длинный вариант вывоза. Каждая тянется
+## тем же зерном из своего подмножества кандидатов (разбивка по тому, к чьей базе точка ближе).
+## Вырожденный случай — все кандидаты ближе к одной базе, или точка всего одна: тогда одна общая
+## нейтральная точка без множителя, как было раньше (`near_team = -1`).
+func _pick_active_points() -> void:
+	_active_points = []
+	_active_near_team = {}
+	var b0: Node3D = _bases[0]
+	var b1: Node3D = _bases[1]
+	var near: Array = [[], []]  # near[0] — кандидаты ближе к базе 0, near[1] — к базе 1
+	if b0 != null and b1 != null:
+		for p in _points:
+			var d0: float = p.global_position.distance_to(b0.global_position)
+			var d1: float = p.global_position.distance_to(b1.global_position)
+			near[0 if d0 <= d1 else 1].append(p)
+	if not near[0].is_empty() and not near[1].is_empty():
+		var p0: Node3D = near[0][_rng.randi_range(0, near[0].size() - 1)]
+		var p1: Node3D = near[1][_rng.randi_range(0, near[1].size() - 1)]
+		_active_points = [p0, p1]
+		_active_near_team = {p0.get_instance_id(): 0, p1.get_instance_id(): 1}
+	else:
+		var p: Node3D = _points[_rng.randi_range(0, _points.size() - 1)] as Node3D
+		_active_points = [p]
+		_active_near_team = {p.get_instance_id(): -1}
+
+
+## Ближайшая к позиции `from` активная точка — куда боту ехать в рейс (см. `tank_ai_controller`).
+func nearest_active_point(from: Vector3) -> Node3D:
+	var best: Node3D = null
+	var best_d: float = INF
+	for p in _active_points:
+		if not is_instance_valid(p):
+			continue
+		var d: float = from.distance_to(p.global_position)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
 
 
 ## Сколько секунд до ближайшего события окна: до открытия (пока закрыто/объявлено) или до закрытия
@@ -542,17 +614,25 @@ func seconds_to_next_event() -> float:
 	return maxf(0.0, _window_open_at - _elapsed)
 
 
-## Столб над активной точкой. Объявление точки — событие, ЗАМЕНЯЮЩЕЕ переговоры (концепт §8): все
-## увидели маркер и сами решили, кто едет, кто прикрывает. Поэтому строится из кода и виден ВСЕГДА,
-## а не только в debug-режиме: это игровая информация, а не отладочный визуал.
-func _update_beacon() -> void:
-	_clear_beacon()
-	if active_point == null:
-		return
+## Столб над КАЖДОЙ активной точкой. Объявление точки — событие, ЗАМЕНЯЮЩЕЕ переговоры (концепт §8):
+## все увидели маркеры и сами решили, кто едет, кто прикрывает. Поэтому строится из кода и виден
+## ВСЕГДА, а не только в debug-режиме: это игровая информация, а не отладочный визуал.
+func _update_beacons() -> void:
+	_clear_beacons()
+	for p in _active_points:
+		if not is_instance_valid(p):
+			continue
+		_beacons.append(_make_beacon(p, int(_active_near_team.get(p.get_instance_id(), -1))))
+
+
+## Один столб. `near_team` — команда, к чьей базе точка ближе: подмешиваем её цвет в столб, чтобы
+## игрок выучил «синий столб у синей базы → красным за вывоз сюда ×1.5». -1 (нейтральная) — без
+## подмеса.
+func _make_beacon(point: Node3D, near_team: int) -> MeshInstance3D:
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.name = "ExtractionBeacon"
 	var cyl := CylinderMesh.new()
-	var r: float = float(active_point.get("radius")) * 0.9
+	var r: float = float(point.get("radius")) * 0.9
 	cyl.top_radius = r
 	cyl.bottom_radius = r
 	cyl.height = _BEACON_HEIGHT
@@ -561,19 +641,25 @@ func _update_beacon() -> void:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	# Объявлено, но ещё закрыто — тусклый янтарь; открыто — яркий зелёный.
-	mat.albedo_color = Color(0.2, 0.95, 0.35, 0.22) if window_state == WindowState.OPEN \
+	var col: Color = Color(0.2, 0.95, 0.35, 0.22) if window_state == WindowState.OPEN \
 		else Color(0.95, 0.7, 0.15, 0.13)
+	if near_team == 0:
+		col = col.lerp(Color(GameConfig.team_attack_color, col.a), 0.35)
+	elif near_team == 1:
+		col = col.lerp(Color(GameConfig.team_defense_color, col.a), 0.35)
+	mat.albedo_color = col
 	mesh_inst.material_override = mat
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	get_tree().current_scene.add_child(mesh_inst)
-	mesh_inst.global_position = active_point.global_position + Vector3(0.0, _BEACON_HEIGHT * 0.5, 0.0)
-	_beacon = mesh_inst
+	mesh_inst.global_position = point.global_position + Vector3(0.0, _BEACON_HEIGHT * 0.5, 0.0)
+	return mesh_inst
 
 
-func _clear_beacon() -> void:
-	if _beacon != null and is_instance_valid(_beacon):
-		_beacon.queue_free()
-	_beacon = null
+func _clear_beacons() -> void:
+	for b in _beacons:
+		if b != null and is_instance_valid(b):
+			b.queue_free()
+	_beacons = []
 
 
 # --- Смерть носителя ---------------------------------------------------------------------------

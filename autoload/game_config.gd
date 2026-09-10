@@ -135,7 +135,7 @@ func pickup_kind(id: StringName) -> Dictionary:
 ## повторится. См. cargo_hold.block_pickup() / respawn_controller._on_respawn_timeout().
 @export var cargo_respawn_pickup_block_sec: float = 2.0
 
-## Окна эвакуации. Расписание известно заранее, точка — нет (концепт §8). Первое окно через `first`
+## Окна эвакуации. Расписание известно заранее, точки — нет (концепт §8). Первое окно через `first`
 ## от старта, дальше каждые `interval`, всего `count` штук. Матч заканчивается ровно в момент
 ## закрытия последнего окна — см. `ExtractionManager.total_match_sec()`.
 @export var extraction_first_window_sec: float = 120.0
@@ -143,6 +143,11 @@ func pickup_kind(id: StringName) -> Dictionary:
 @export var extraction_window_duration_sec: float = 40.0
 @export var extraction_window_count: int = 5
 @export var extraction_announce_lead_sec: float = 15.0    # за сколько до открытия объявляется точка
+## В каждом окне открываются ДВЕ точки: одна ближе к базе команды 0, другая — к базе команды 1
+## (никогда две «свои» для одной команды). Вывоз в точку у ЧУЖОЙ базы (везти дальше, через
+## простреливаемую врагом территорию) множит очки за этот вывоз на столько; вывоз в свою ближнюю
+## точку — ×1. См. `ExtractionManager._pick_active_points()` / `_bank_multiplier()`.
+@export var extraction_far_point_multiplier: float = 1.5
 
 ## Каденс красного ящика мортиры в режиме EXTRACTION — РЕЖЕ, чем в TARGET_OBJECTIVE (30 с):
 ## мортира там эпизодическое усиление, а не постоянная опция.

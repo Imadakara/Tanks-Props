@@ -124,13 +124,19 @@ func _physics_process(delta: float) -> void:
 	_refresh_visual()
 
 ## Подбор — тем же контактом для ЛЮБОГО состояния и любой команды. Решение «влезет ли» целиком
-## принимает трюм (`CargoHold.try_take` — вместимость). `frozen` в лоте: со склада (`STORED`) взятый
-## ящик дальше не дозревает.
+## принимает трюм (`CargoHold.try_take` — вместимость).
+##
+## `frozen` в лоте (дальше не дозревает) — ТОЛЬКО для РЕЙДА: ящик взят с ЧУЖОГО склада
+## (`STORED` и `owner_team != team подобравшего`). Свой ящик, поднятый со своего же склада (передвинуть,
+## перепрятать, довезти до выхода и передумать), дозревать ПРОДОЛЖАЕТ — иначе «поправил раскладку на
+## складе» = «заморозил лут навсегда». Уже `frozen` ящик (был украден, потом выпал и снова поднят)
+## остаётся `frozen`.
 func _on_body_entered(body: Node) -> void:
 	var hold: Node = body.get_node_or_null("CargoHold")
 	if hold == null:
 		return
-	if not hold.try_take(current_value(), frozen or state == State.STORED, _rar()):
+	var raided: bool = state == State.STORED and "team" in body and int(owner_team) != int(body.team)
+	if not hold.try_take(current_value(), frozen or raided, _rar()):
 		return
 	picked_up.emit(self, body)
 	queue_free()

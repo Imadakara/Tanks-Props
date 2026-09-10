@@ -613,11 +613,17 @@ this mode (Атака/Оборона in TARGET_OBJECTIVE).
 score. Value passes four states and only the last one counts — a loose `LootCrate` on the map ⇒
 lots inside a `CargoHold` (no nodes) ⇒ a crate parked in your base circle, ripening **linearly** at
 a per-rarity rate toward a per-rarity cap ⇒ **banked** by driving it into an open evacuation point.
+Ripening resumes if you withdraw your own parked crate and re-deposit it — `LootCrate` only sets the
+no-ripen `frozen` flag on a **raid** pickup (a `STORED` crate whose `owner_team` isn't the picker's).
 Each crate is one of four **rarity tiers** (weights ~0.70/0.20/0.07/0.03), rolled at allocation from
 the seed; the tier sets its raw-value range, ripen rate and cap, and its colour. The match is one
 round ≈10 min: five evacuation windows, first at 120 s then every 120 s, and it **ends the moment
 the last window closes** — `RoundTimer.wait_time` is set from `ExtractionManager.total_match_sec()`
 (`first + interval*(count-1) + duration` = 640 s), there is no fixed `extraction_round_sec`.
+Each window opens **two** points (`_pick_active_points()`): one nearer each team's base — never two
+on one side. Banking at the point by the **enemy** base multiplies that bank by
+`GameConfig.extraction_far_point_multiplier` (1.5, `_bank_multiplier()`); your own near point is ×1.
+Bots run to whichever active point is nearest them (`nearest_active_point()`).
 Everything unbanked burns; the round never ends early. The cost of carrying is what welds the
 economy to prop hunt: every class loses 15% speed per crate (except the cargo class), and the
 **medium** class can't disguise at all while loaded — `CargoHold.blocks_disguise()`, which
@@ -646,7 +652,7 @@ nav path stops at the hole rim. `_reachable_drop_point()` projects every drop
 (`_NAV_DEATH_MAX_XZ/Y` — carry loot out of a pit the tank fell into; a normal-ground death is a zero
 move). Deterministic — `map_get_closest_point` is stable on the seeded bake.
 `ExtractionManager` (code-created node, like `ScoreManager`) owns allocation,
-deposits, ripening, window scheduling, the beacon and banking. Auto-deposit / bank in
+deposits, ripening, window scheduling, the per-point beacons and banking. Auto-deposit / bank in
 `_physics_process` skips a tank falling through a zone's cylinder (both zones sit on raised kitchen
 tiers), which used to dump its cargo mid-air — so on a fall death the hold was already empty when
 `_on_tank_destroyed` ran and the loot ended up on the warehouse instead of at the crash site. It

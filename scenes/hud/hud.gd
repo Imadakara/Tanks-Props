@@ -118,10 +118,13 @@ func _update_extraction_line() -> void:
 	if t < 0.0:
 		_objective_label.text = "Эвакуация: окон больше не будет"
 		return
+	# В окне открыты ДВЕ точки: своя ближняя (×1) и дальняя у чужой базы (×1.5). Столбы подкрашены
+	# цветом команды, к чьей базе точка ближе.
+	var far_hint := "  ·  дальняя точка (у чужой базы) ×%.1f" % GameConfig.extraction_far_point_multiplier
 	if em.window_state == em.WindowState.OPEN:
-		_objective_label.text = "ЭВАКУАЦИЯ ОТКРЫТА — %d с" % int(ceil(t))
+		_objective_label.text = "ЭВАКУАЦИЯ ОТКРЫТА — %d с%s" % [int(ceil(t)), far_hint]
 	elif em.window_state == em.WindowState.ANNOUNCED:
-		_objective_label.text = "Точка выхода объявлена — открытие через %d с" % int(ceil(t))
+		_objective_label.text = "Точки выхода объявлены — открытие через %d с%s" % [int(ceil(t)), far_hint]
 	else:
 		_objective_label.text = "Следующее окно эвакуации через %d с" % int(ceil(t))
 
