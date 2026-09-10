@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Tank Prop Hunt — a team tactical shooter with prop-hunt elements (disguise mechanic), Godot 4.7
-(GDScript), 3D, Jolt physics. Local prototype vs bots, no networking yet — the three maps are built
+(GDScript), 3D, Jolt physics. Local prototype vs bots, no networking yet — the maps are built
 as reusable game-mode templates (see "Map inventory") with a future networked PvP mode in mind, so
 architecture favors universal/data-driven mechanisms over map-specific code wherever the two don't
 conflict.
@@ -36,7 +36,8 @@ system works **now**; deep history is in `git log`.
   for the medium class — see the dated note in its §5). Read before touching anything in EXTRACTION.
 - `Tank_Prop_Hunt_Extraction_Loop_TZ.md` — the implementation spec derived from that concept
   (entities, ownership, where each rule lives).
-- `Tank_Prop_Hunt_Extraction_Mode.md` — **current-state reference for EXTRACTION** (`KitchenMap.tscn`):
+- `Tank_Prop_Hunt_Extraction_Mode.md` — **current-state reference for EXTRACTION** (`KitchenMap.tscn`)
+  incl. the NPC objective targets (§4.3):
   `LootCrate` as the single physical embodiment of value in every state, `CargoHold` and its costs,
   destructible cover cubes with seeded hidden loot, warehouses with per-crate ripening, evacuation
   windows, the bot cycle.
@@ -553,11 +554,10 @@ patrol routes) sort order within the group.
 
 `TankAIController.waypoint_routes: Array[String]` (falls back to the legacy `waypoint_name_prefix`
 string when empty — old rosters keep working) lists zone roles **in the order the bot walks them**,
-concatenated into one continuous patrol loop, not several independent cycles. `TargetObjectiveMap`'s
-roster has two squads (one bot each): the attacker follows role `AttackWaypointN` (one-way, ends in
-`ATTACK_OBJECTIVE`); the defender follows `["DefenseWaypoint", "Waypoint"]` — corner-to-centre
-approach from `DefenseSpawnZone` first, then the `Waypoint1..4` diamond around the objective,
-looping forever as one combined 6-point route. **A zone whose role no roster squad's
+concatenated into one continuous patrol loop, not several independent cycles (the deleted
+`TargetObjectiveMap` roster used `["DefenseWaypoint", "Waypoint"]` for its defender — worked example
+in `Tank_Prop_Hunt_Map_Creation_Guide.md` §3.5). NPC objective-target guards don't use rosters —
+their route comes from the target via `bind_npc_guard()`. **A zone whose role no roster squad's
 `waypoint_routes` references is dead weight** — delete it, don't leave it "just in case"
 (`Tank_Prop_Hunt_Map_Creation_Guide.md` §3.5).
 
@@ -591,7 +591,8 @@ below.
 
 Three modes, keyed off `MatchState.match_mode`, each map a template for one.
 
-**TARGET_OBJECTIVE** (`TargetObjectiveMap.tscn`): an `Objective` static body with a
+**TARGET_OBJECTIVE** (no map right now — its template `TargetObjectiveMap.tscn` was deleted; the
+mode code is intact): an `Objective` static body with a
 `HealthComponent` (`attackers_only = true`); **objective destroyed → attack win; round timer
 expires with it intact → defense win**. Round timer is `GameConfig.round_timer_sec` = **180 s**.
 **Buzzer-beater rule** (`match_manager._settling_last_shots`): at timeout the defense win is not
@@ -665,14 +666,14 @@ hold as loose `LootCrate`s at the death spot (projected onto reachable navmesh, 
 loose crates are never auto-collected — they lie there until a tank drives into one or the round ends. A warehouse **is** the crates parked in the
 base circle, which is why raiding — and scouting a rich enemy base by eye — need no code of their own.
 
-`match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (`TargetObjectiveMap`
-= 0, `TeamArenaMap` = 1, `KitchenMap` = 2). Its script default is **`-1`, a deliberate invalid
-sentinel** (Invariant 8): both real values are then non-default, so Godot's editor always
+`match_mode` is an `@export_enum` on each map root, **stored in the `.tscn`** (TARGET_OBJECTIVE
+= 0 — no map now, `TeamArenaMap` = 1, `KitchenMap` = 2). Its script default is **`-1`, a deliberate
+invalid sentinel** (Invariant 8): every real value is then non-default, so Godot's editor always
 serializes the line and a GUI scene-save can't strip it. Still `-1` in `_setup_match_context()` ⇒
 the line is missing ⇒ `map_scene.gd` `push_error`s and falls back to `TARGET_OBJECTIVE`.
-Default-valued option lines are legitimately absent from a `.tscn` — `TargetObjectiveMap` has no
-`final_stage_enabled` / `map_border_enabled` line, `TeamArenaMap` has no `map_border_enabled` line;
-not corruption, don't "restore" them.
+Default-valued option lines are legitimately absent from a `.tscn` — `TeamArenaMap` has no
+`map_border_enabled` line, `KitchenMap` has no `final_stage_enabled` line; not corruption, don't
+"restore" them.
 
 All maps run the **same round loop**: `map_scene.gd._setup_match_context()` creates a `ScoreManager`
 + a node named `"MatchManager"` (`scenes/main/match_manager.gd`), which picks its end-of-round
@@ -940,12 +941,15 @@ editor-placed, and they act as placement constraints for the dynamic pass.
 - **ALERT target-share**: `TankAIController._notify_team_of_alert_target()` — after its loop over
   allied tanks in `State.ALERT` — also loops `get_nodes_in_group("turrets")` of the same team and
   calls `turret_ai.on_alert_target_shared(target)`. The turret slews its barrel to that target and
-  enters ATTACK once it has real LOS/range (recon share, not vision teleport).
+  enters ATTACK once it has real LOS/range (recon share, not vision teleport). An NPC guard shares
+  only inside its own objective target (`_npc_guard.is_ancestor_of(turret)`).
+- Turrets currently exist only on top of NPC objective targets (see next section). Any side
+  (`team` 0/1/2) shoots every *other* side; `HealthComponent.immune_team` makes own-side shells
+  harmless to a target's core/turret/guard.
 - **"Mortar on the objective kills the guard turret first"** is geometry, not redirect code: the
-  test turret sits physically on the objective's top face (`ObjectiveTurret`, instance transform
-  `(0,2,0)` under `NavigationRegion3D` in `TargetObjectiveMap.tscn`), so a plunging mortar arc
-  aimed at the objective enters the turret's collider first and is consumed; a flat cannon shot
-  passes under the turret and still reaches the objective's side.
+  turret sits physically on the target's top face, so a plunging mortar arc aimed at the target
+  enters the turret's collider first and is consumed; a flat cannon shot passes under the turret
+  and still reaches the target's side.
 - Debug FOV/fire-sector overlay (`show_fov_debug`, gated by `MatchState.debug_enabled`) — an
   `ImmediateMesh` child of the turret root, ground-plane fan rotated by the live turret yaw:
   detection-cone fill (colour by state), `fire_range` arc, `min_fire_range` inner arc, barrel line.
@@ -954,9 +958,6 @@ editor-placed, and they act as placement constraints for the dynamic pass.
   the objective sails over normal-height obstacles (`Tank_Prop_Hunt_Turrets.md` §4).
 
 ### NPC objective targets — `scenes/objective_target/` (EXTRACTION)
-
-> `TargetObjectiveMap.tscn` + `roster_target_objective.json` were **deleted** (2026-09-10); the
-> TARGET_OBJECTIVE mode code stays, but no map uses it — mentions of that map below are historical.
 
 Third side `Team.NPC = 2` (`tank.gd` / `turret.gd`), hostile to both teams via plain `team`
 equality. `ObjectiveTarget.tscn` prefab: `Core` (HP pool, `HealthComponent.immune_team = 2`),
@@ -972,7 +973,7 @@ table, on `Oven` — lowered so its lip is 0.15). Full detail: `Tank_Prop_Hunt_E
 
 ### Map inventory
 
-`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, four buttons; each
+`run/main_scene` is `scenes/main_menu/MainMenu.tscn` — a plain `Control` scene, three buttons (two maps + proving ground); each
 puts its map into `MatchState.pending_map_path` and opens **`scenes/lobby/Lobby.tscn`**, where the
 player picks a tank class (cards read straight from the class prefabs; keys 1–4 / Enter / Esc),
 then "В бой" loads the map. No game logic in either. Launch a map directly via `run_project`'s
@@ -980,18 +981,12 @@ then "В бой" loads the map. No game logic in either. Launch a map directly v
 `MatchState.player_chassis` holds (medium by default; set it in a `run_script` and
 `reload_current_scene()` to test another class).
 
-- `scenes/maps/TargetObjectiveMap.tscn` — TARGET_OBJECTIVE template: an `Objective` at the map
-  centre `(0,1,0)` (no central wall — the centre is the objective), the `Waypoint1..4` defender
-  diamond around it, one defense bot (`ACHIEVER`) and one attack bot (`ACHIEVER`, one-way route to
-  the objective), plus an `ObjectiveTurret` (`Turret.tscn` instance, `team = 1`) on top of the
-  objective as a complication (see "Stationary turret system"). Balance knobs stay single-sourced:
-  mortar damage is `GameConfig.mortar_objective_damage`, the alert-circle radius is
-  `ObjectiveAlertZone.radius` in the `.tscn`; values live only in the two param tables
-  (`Tank_Prop_Hunt_Modifications.md` §8, `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.4).
+- TARGET_OBJECTIVE — **no map**: `TargetObjectiveMap.tscn` + `config/roster_target_objective.json`
+  were deleted (2026-09-10). The mode code stays; how to build a map for it (`Objective` +
+  `ObjectiveAlertZone` + waypoint diamond + roster) is in `Tank_Prop_Hunt_Map_Creation_Guide.md` §2.
 - `scenes/maps/TeamArenaMap.tscn` — TEAM_ARENA template, purpose-built for the `KILLER` role: one
-  `KILLER` bot roaming the whole map, `ObstacleN` bodies spread across the map (vs.
-  `TargetObjectiveMap`'s single cluster on the defense approach), its own rebaked NavMesh, no
-  objective node. Not the default scene — launch it explicitly.
+  `KILLER` bot roaming the whole map, `ObstacleN` bodies spread across the map, its own rebaked
+  NavMesh, no objective node.
 - `scenes/maps/KitchenMap.tscn` — EXTRACTION template and the project's only **multi-level** map: a
   toy-scale kitchen (**24 units = 1 m**, tank ≈ 7.5 cm) on a 108×84 floor, six height tiers (floor
   0 · chairs/stool 10.8 · sink 15.6 · table 18 · counter 21.6 · shelf+cabinet 30 · shelf+fridge
@@ -1001,7 +996,8 @@ then "В бой" loads the map. No game logic in either. Launch a map directly v
   **and** the farm nodes at once. EXTRACTION drop balance (farm weights, rarity tiers, node count)
   is in `config/extraction_kitchen.json`, pointed at by `@export_file extraction_config_path` on the
   root. It bakes its navmesh at load (`bake_navmesh_on_start`) instead of storing it, and opts out
-  of dynamic obstacles (`dynamic_obstacles_supported = false`). **Before
+  of dynamic obstacles (`dynamic_obstacles_supported = false`). Two NPC objective targets
+  (`ObjectiveTargetTable` on the floor under the table, `ObjectiveTargetOven` on the stove). **Before
   editing its geometry read `Tank_Prop_Hunt_Kitchen_Map.md`** — ramps must stay ≤ 24° (a box
   `CharacterBody3D` stalls dead at ~28° despite `floor_max_angle` 45°), must end exactly on a
   platform edge, must not lie flat across a platform, and a diagonal ramp needs a flat coplanar
